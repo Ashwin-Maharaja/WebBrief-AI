@@ -14,9 +14,13 @@ An AI-powered website summarizer that extracts useful content from a webpage and
 
 
 
+The current version provides a Flask-based web interface for extracting webpage content and generating AI-powered summaries.
+
+
+
 \## Version
 
 
 
-v0.1 - Basic Web Scraper
+v0.4 - Flask Web Interface
 
