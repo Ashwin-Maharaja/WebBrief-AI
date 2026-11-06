@@ -127,7 +127,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.4</span>
+                    <span class="badge">v1.5</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -428,11 +428,17 @@
                 <div class="status-box">
                     <div class="status-row">
                         <span class="status-label">Total Saved Summaries</span>
-                        <span class="status-val">{{ history_count }}</span>
+                        <span class="status-val">{% if is_hosted %}<span id="hosted-summary-count">IndexedDB Client</span>{% else %}{{ history_count }}{% endif %}</span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Data Persistence</span>
-                        <span class="status-val">Local SQLite Database</span>
+                        <span class="status-val">
+                            {% if is_hosted %}
+                                Browser IndexedDB (<code>WebBriefDB</code>)
+                            {% else %}
+                                Local SQLite Database
+                            {% endif %}
+                        </span>
                     </div>
                 </div>
 
@@ -440,11 +446,62 @@
                     <a href="{{ url_for('view_history') }}" class="btn btn-secondary" style="text-decoration: none; font-size: 0.88rem;">
                         Open Full History View
                     </a>
-                    {% if history_count > 0 %}
+                    {% if not is_hosted and history_count > 0 %}
                     <button type="button" onclick="clearAllHistory()" class="btn btn-secondary" style="font-size: 0.88rem; color: #f87171;">
                         Clear All History
                     </button>
                     {% endif %}
+                </div>
+            </div>
+
+            <!-- Deployment & Storage Architecture (v1.5) -->
+            <div class="settings-section">
+                <div class="section-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/>
+                        <polyline points="3.27 6.96 12 12.01 20.73 6.96"/>
+                        <line x1="12" y1="22.08" x2="12" y2="12"/>
+                    </svg>
+                    <h3>Deployment & Storage Architecture</h3>
+                </div>
+
+                <div class="status-box">
+                    <div class="status-row">
+                        <span class="status-label">Active Environment</span>
+                        <span class="status-val">
+                            {% if is_hosted %}
+                                <span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa;">Public Hosted (Serverless)</span>
+                            {% else %}
+                                <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399;">Local Self-Hosted</span>
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">BYOK Security Policy</span>
+                        <span class="status-val" style="color: #10b981;">
+                            {% if is_hosted %}
+                                In-Memory Active Tab Only (Zero Server Storage)
+                            {% else %}
+                                Local .env File / Session Store
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Storage Mechanism</span>
+                        <span class="status-val">
+                            {% if is_hosted %}
+                                Client-Side IndexedDB (Zero Multi-Tenant Sharing)
+                            {% else %}
+                                Local SQLite Database (<code>webbrief_history.db</code>)
+                            {% endif %}
+                        </span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Credential Redaction</span>
+                        <span class="status-val" style="color: #10b981;">
+                            Active (Auto-masks OpenAI keys in logs and errors)
+                        </span>
+                    </div>
                 </div>
             </div>
 
@@ -462,7 +519,7 @@
                 <div class="status-box">
                     <div class="status-row">
                         <span class="status-label">Release Version</span>
-                        <span class="status-val"><span class="badge">v1.4</span></span>
+                        <span class="status-val"><span class="badge">v1.5</span></span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Architecture</span>

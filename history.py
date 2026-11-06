@@ -153,8 +153,19 @@ def add_history_entry(
             "title_b": safe_title_b,
         }
     except Exception as e:
-        logger.warning("Failed to add history entry: %s", str(e))
-        return None
+        logger.warning("Failed to add SQLite history entry: %s", str(e))
+        return {
+            "id": entry_id,
+            "title": safe_title,
+            "url": safe_url,
+            "mode": mode,
+            "mode_name": mode_name,
+            "summary": summary,
+            "created_at_formatted": created_at_formatted,
+            "entry_type": entry_type,
+            "url_b": safe_url_b,
+            "title_b": safe_title_b,
+        }
 
 
 def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str, Any]]:

@@ -11,6 +11,7 @@ from byok import (
     clear_saved_api_key,
     is_serverless_env,
     get_configured_api_key,
+    redact_credentials,
 )
 from history import (
     add_history_entry,
@@ -51,7 +52,7 @@ from vector_store import (
     DEFAULT_SEARCH_LIMIT,
 )
 
-APP_VERSION = "1.4"
+APP_VERSION = "1.5"
 
 app = Flask(__name__)
 
@@ -73,6 +74,7 @@ def inject_globals():
         "modes": MODES,
         "max_batch_urls": MAX_BATCH_URLS,
         "has_notion_configured": has_notion_config(session_dict=session),
+        "is_hosted": is_serverless_env(),
     }
 
 
@@ -112,8 +114,13 @@ def enforce_byok_onboarding():
         "api_search_stats",
         "api_search_rebuild_index",
         "api_search_embed",
+        "api_environment",
     }
     if request.endpoint in exempt_endpoints:
+        return None
+
+    # In hosted serverless mode (Vercel), allow visitors to access home directly
+    if is_serverless_env() and request.endpoint in ("home",):
         return None
 
     # Check if a valid API key is present in environment or session
@@ -826,6 +833,20 @@ def api_search_embed():
         return jsonify({"error": f"Embedding generation failed: {str(e)}"}), 500
 
 
+@app.route("/api/environment", methods=["GET"])
+def api_environment():
+    """Returns deployment mode details (hosted serverless vs local self-hosted)."""
+    hosted = is_serverless_env()
+    return jsonify({
+        "version": APP_VERSION,
+        "is_hosted": hosted,
+        "storage": "indexeddb" if hosted else "sqlite",
+        "storage_mode": "indexeddb" if hosted else "sqlite",
+        "byok_mode": "session_memory" if hosted else "env_file",
+        "ssrf_guard": "active"
+    })
+
+
 # -------------------------------------------------------------
 # BYOK Configuration Endpoints
 # -------------------------------------------------------------
@@ -843,9 +864,9 @@ def validate_key():
 @app.route("/api/save-key", methods=["POST"])
 def save_key():
     """
-    Validates the submitted OpenAI API key, and upon success,
-    saves it into the local .env configuration file (or session if serverless).
-    Requires explicit confirmation before replacing an existing key.
+    Validates the submitted OpenAI API key.
+    In local self-hosted mode: saves it into the local .env configuration file.
+    In hosted serverless mode: verifies the key and returns success for in-memory session usage.
     """
     if request.is_json:
         data = request.get_json() or {}
@@ -865,6 +886,17 @@ def save_key():
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
         return render_template("setup.html", error=val_message, is_configured=has_valid_config(session), env_exists=env_exists), 400
+
+    # In hosted serverless mode (Vercel), do not touch filesystem or session storage
+    if is_serverless_env():
+        if is_ajax:
+            return jsonify({
+                "success": True,
+                "message": "API key verified for active browser session.",
+                "is_hosted": True,
+                "redirect": url_for("home")
+            })
+        return redirect(url_for("home"))
 
     # Step 2: Save key safely into .env / session
     success, save_message = save_api_key_to_env(
@@ -973,19 +1005,19 @@ def summarize():
         return render_template("index.html", summary=summary, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session))
 
     except ScraperError as e:
-        error_msg = str(e)
+        error_msg = redact_credentials(str(e))
         if is_ajax:
             return jsonify({"error": error_msg}), 400
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
 
     except SummarizerError as e:
-        error_msg = str(e)
+        error_msg = redact_credentials(str(e))
         if is_ajax:
             return jsonify({"error": error_msg}), 500
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 500
 
     except Exception as e:
-        error_msg = f"An unexpected error occurred: {str(e)}"
+        error_msg = redact_credentials(f"An unexpected error occurred: {str(e)}")
         if is_ajax:
             return jsonify({"error": error_msg}), 500
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 500

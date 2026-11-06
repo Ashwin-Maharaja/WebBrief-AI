@@ -13,7 +13,9 @@
             const savedTheme = localStorage.getItem("webbrief_theme") || "dark";
             document.documentElement.setAttribute("data-theme", savedTheme);
         })();
+        window.__WEBBRIEF_IS_HOSTED = {{ 'true' if is_hosted else 'false' }};
     </script>
+    <script src="{{ url_for('static', filename='storage_adapter.js') }}"></script>
 </head>
 <body>
 
@@ -31,7 +33,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.4</span>
+                    <span class="badge">v1.5</span>
                 </div>
             </div>
             
@@ -47,11 +49,58 @@
                 </button>
             </div>
 
-            <p class="tagline" style="margin-top: 12px;">Accurate, multi-mode AI summaries, comparative research & local semantic search.</p>
+            <p class="tagline" style="margin-top: 12px;">Accurate, multi-mode AI summaries, comparative research & hosted deployment-aware storage.</p>
         </header>
 
         <!-- Main Form Card -->
         <section class="card input-card">
+            {% if is_hosted %}
+            <!-- Hosted Serverless BYOK Bar (v1.5) -->
+            <div class="hosted-byok-card" id="hosted-byok-card" style="margin-bottom: 16px; padding: 14px 16px; background: var(--section-bg); border: 1px solid var(--border-color); border-radius: 10px;">
+                <div class="hosted-byok-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                        <span class="badge" style="background: rgba(14, 165, 233, 0.2); color: #38bdf8; font-weight: 700;">
+                            ☁️ Hosted BYOK
+                        </span>
+                        <span id="hosted-status-label" style="font-size: 13px; color: var(--text-muted);">
+                            Active Session • In-Memory Credentials Only
+                        </span>
+                    </div>
+                    <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 11.5px;">
+                        📦 Browser IndexedDB Storage
+                    </span>
+                </div>
+
+                <div class="hosted-key-row" style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <div class="input-wrapper" style="flex: 1; min-width: 240px; position: relative;">
+                        <span class="input-icon">🔑</span>
+                        <input
+                            type="password"
+                            id="hosted-api-key-input"
+                            class="form-control"
+                            placeholder="Enter your OpenAI API key (sk-...)"
+                            autocomplete="off"
+                            spellcheck="false"
+                            style="padding-right: 44px; font-family: monospace;"
+                        >
+                        <button type="button" id="hosted-toggle-vis-btn" onclick="toggleHostedKeyVis()" title="Show/Hide Key" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 14px;">
+                            👁️
+                        </button>
+                    </div>
+                    <button type="button" class="btn btn-secondary" id="hosted-verify-btn" onclick="verifyHostedKey()" style="padding: 9px 16px; font-size: 13px;">
+                        Verify & Use Key
+                    </button>
+                    <button type="button" class="btn btn-secondary" id="hosted-clear-btn" onclick="clearHostedKey()" style="padding: 9px 12px; font-size: 13px; display: none; color: #f87171;">
+                        Clear Key
+                    </button>
+                </div>
+                <div id="hosted-key-alert" style="display: none; font-size: 12px; margin-top: 6px; font-weight: 600;"></div>
+                <p style="font-size: 11.5px; color: var(--text-muted); margin-top: 8px; line-height: 1.45;">
+                    🛡️ <b>Hosted Privacy Guarantee:</b> Your API key is stored strictly in browser memory for this tab. It is transmitted directly to OpenAI over HTTPS and never saved to cookies, localStorage, or server disks. Your summaries are saved directly to your browser's IndexedDB.
+                </p>
+            </div>
+            {% endif %}
+
             <!-- Mode Switcher Tabs: Single URL vs Batch Summarize vs Compare Articles vs Semantic Search -->
             <div class="tab-bar">
                 <button type="button" class="tab-btn active" id="tab-single-btn" onclick="switchSubmissionTab('single')">
@@ -267,6 +316,7 @@
                 </div>
 
                 <!-- Collapsible BYOK Section -->
+                {% if not is_hosted %}
                 <details class="byok-toggle">
                     <summary class="byok-summary">
                         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -290,6 +340,7 @@
                         </p>
                     </div>
                 </details>
+                {% endif %}
 
                 <!-- Submit Button -->
                 <button type="submit" id="submit-btn" class="btn btn-primary">
@@ -312,22 +363,22 @@
             </div>
 
             <!-- Recent Summaries Shelf -->
-            {% if recent_history and recent_history|length > 0 %}
-            <div class="recent-shelf" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color);">
+            <div class="recent-shelf" id="recent-shelf" style="margin-top: 24px; padding-top: 16px; border-top: 1px solid var(--border-color); display: {% if recent_history and recent_history|length > 0 %}block{% else %}none{% endif %};">
                 <div class="recent-shelf-header">
                     <span class="recent-shelf-title">Recent Summaries</span>
                     <a href="{{ url_for('view_history') }}" style="font-size: 12px; color: var(--primary); text-decoration: none;">View All →</a>
                 </div>
-                <div class="recent-list">
-                    {% for rec in recent_history[:3] %}
-                    <div class="recent-item" onclick="reopenSummaryDirect('{{ rec.id }}')">
-                        <div class="recent-item-title">{{ rec.title }}</div>
-                        <div class="recent-item-meta">{{ rec.mode_name }} • {{ rec.created_at_formatted }}</div>
-                    </div>
-                    {% endfor %}
+                <div class="recent-list" id="recent-list-container">
+                    {% if recent_history and recent_history|length > 0 %}
+                        {% for rec in recent_history[:3] %}
+                        <div class="recent-item" onclick="reopenSummaryDirect('{{ rec.id }}')">
+                            <div class="recent-item-title">{{ rec.title }}</div>
+                            <div class="recent-item-meta">{{ rec.mode_name }} • {{ rec.created_at_formatted }}</div>
+                        </div>
+                        {% endfor %}
+                    {% endif %}
                 </div>
             </div>
-            {% endif %}
         </section>
 
         <!-- Loading State Card (Single Mode) -->
@@ -798,7 +849,7 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>WebBrief AI v1.4 • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI v1.5 • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>
@@ -826,13 +877,142 @@
             }
         }
 
+        // Hosted In-Memory Key Actions (v1.5)
+        window.toggleHostedKeyVis = function() {
+            const input = document.getElementById("hosted-api-key-input");
+            const btn = document.getElementById("hosted-toggle-vis-btn");
+            if (!input) return;
+            if (input.type === "password") {
+                input.type = "text";
+                if (btn) btn.textContent = "🔒";
+            } else {
+                input.type = "password";
+                if (btn) btn.textContent = "👁️";
+            }
+        };
+
+        window.verifyHostedKey = async function() {
+            const input = document.getElementById("hosted-api-key-input");
+            const alertBox = document.getElementById("hosted-key-alert");
+            const clearBtn = document.getElementById("hosted-clear-btn");
+            const statusLabel = document.getElementById("hosted-status-label");
+            const val = input ? input.value.trim() : "";
+
+            if (!val) {
+                if (alertBox) {
+                    alertBox.style.display = "block";
+                    alertBox.style.color = "var(--error-text)";
+                    alertBox.textContent = "Please enter an OpenAI API key.";
+                }
+                return;
+            }
+
+            if (alertBox) {
+                alertBox.style.display = "block";
+                alertBox.style.color = "var(--primary)";
+                alertBox.textContent = "Verifying credentials with OpenAI...";
+            }
+
+            try {
+                const res = await fetch("/api/validate-key", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ api_key: val })
+                });
+                const data = await res.json();
+                if (res.ok && data.valid) {
+                    StorageAdapter.setHostedKey(val);
+                    if (alertBox) {
+                        alertBox.style.color = "#10b981";
+                        alertBox.textContent = "✓ Key verified & active in session memory!";
+                    }
+                    if (clearBtn) clearBtn.style.display = "inline-flex";
+                    if (statusLabel) {
+                        statusLabel.textContent = "● Key Active in Session Memory";
+                        statusLabel.style.color = "#10b981";
+                        statusLabel.style.fontWeight = "600";
+                    }
+                } else {
+                    StorageAdapter.clearHostedKey();
+                    if (alertBox) {
+                        alertBox.style.color = "var(--error-text)";
+                        alertBox.textContent = data.message || "Invalid API key.";
+                    }
+                }
+            } catch (err) {
+                if (alertBox) {
+                    alertBox.style.color = "var(--error-text)";
+                    alertBox.textContent = "Connection error validating key.";
+                }
+            }
+        };
+
+        window.clearHostedKey = function() {
+            StorageAdapter.clearHostedKey();
+            const input = document.getElementById("hosted-api-key-input");
+            const alertBox = document.getElementById("hosted-key-alert");
+            const clearBtn = document.getElementById("hosted-clear-btn");
+            const statusLabel = document.getElementById("hosted-status-label");
+            if (input) input.value = "";
+            if (clearBtn) clearBtn.style.display = "none";
+            if (alertBox) {
+                alertBox.style.display = "block";
+                alertBox.style.color = "var(--text-muted)";
+                alertBox.textContent = "Credentials removed from memory.";
+            }
+            if (statusLabel) {
+                statusLabel.textContent = "No Key Active • Enter your key to summarize";
+                statusLabel.style.color = "var(--text-muted)";
+                statusLabel.style.fontWeight = "normal";
+            }
+        };
+
+        // Dynamic Recent Summaries Shelf (Local SQLite + Hosted IndexedDB)
+        async function refreshRecentShelf() {
+            if (!window.StorageAdapter) return;
+            const shelf = document.getElementById("recent-shelf");
+            const container = document.getElementById("recent-list-container");
+            if (!shelf || !container) return;
+
+            try {
+                const items = await window.StorageAdapter.getHistory(3);
+                if (items && items.length > 0) {
+                    container.innerHTML = "";
+                    items.forEach(rec => {
+                        const div = document.createElement("div");
+                        div.className = "recent-item";
+                        div.onclick = () => reopenSummaryDirect(rec.id);
+                        div.innerHTML = `
+                            <div class="recent-item-title">${escapeHtml(rec.title || 'Webpage Summary')}</div>
+                            <div class="recent-item-meta">${escapeHtml(rec.mode_name || 'Summary')} • ${escapeHtml(rec.created_at_formatted || '')}</div>
+                        `;
+                        container.appendChild(div);
+                    });
+                    shelf.style.display = "block";
+                } else {
+                    shelf.style.display = "none";
+                }
+            } catch (e) {
+                console.debug("Could not refresh recent shelf:", e);
+            }
+        }
+
         // Direct reopen helper from recent shelf
         async function reopenSummaryDirect(id) {
             try {
-                const res = await fetch(`/api/history/${id}`);
-                const data = await res.json();
-                if (data && data.entry) {
-                    renderSummaryObject(data.entry.summary, data.entry.url);
+                let item = null;
+                if (window.StorageAdapter) {
+                    item = await window.StorageAdapter.getEntry(id);
+                }
+                if (!item) {
+                    const res = await fetch(`/api/history/${id}`);
+                    if (res.ok) {
+                        const data = await res.json();
+                        if (data && data.entry) item = data.entry;
+                    }
+                }
+                if (item) {
+                    renderSummaryObject(item.summary || item, item.url);
                 }
             } catch (err) {
                 console.error("Failed to reopen summary: ", err);
@@ -875,6 +1055,9 @@
                     targetRadio.closest(".mode-card")?.classList.add("selected");
                 }
             }
+
+            // Populate recent shelf from storage adapter
+            refreshRecentShelf();
 
             // Mode radio selection UI binding
             const modeCards = document.querySelectorAll(".mode-card");
@@ -2007,13 +2190,20 @@
                 e.preventDefault();
                 hideError();
 
-                const apiKey = apiKeyInput.value.trim();
+                const apiKey = (window.StorageAdapter ? window.StorageAdapter.getActiveApiKey() : null) || (apiKeyInput ? apiKeyInput.value.trim() : "") || null;
                 const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
                 const customDir = localStorage.getItem("webbrief_custom_directive") || "";
                 const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
 
+                // Hosted mode check: require visitor's in-memory key
+                if (window.StorageAdapter && window.StorageAdapter.isHosted() && !apiKey) {
+                    showError("Please enter your OpenAI API key in the Hosted BYOK box above to proceed.");
+                    document.getElementById("hosted-api-key-input")?.focus();
+                    return;
+                }
+
                 // ==========================================
-                // SEMANTIC SEARCH SUBMISSION (v1.4)
+                // SEMANTIC SEARCH SUBMISSION (v1.4 & v1.5)
                 // ==========================================
                 if (currentTab === 'search') {
                     const queryInput = document.getElementById("semantic-query-input");
@@ -2034,7 +2224,7 @@
                     submitBtn.classList.add("loading");
                     btnText.textContent = "Searching Knowledge Base...";
                     loadingCard.style.display = "flex";
-                    if (loadingStepText) loadingStepText.textContent = "Embedding query and searching saved summaries...";
+                    if (loadingStepText) loadingStepText.textContent = "Searching saved summaries...";
                     resultCard.style.display = "none";
                     resultCard.classList.remove("active");
                     const compareCard = document.getElementById("compare-results-card");
@@ -2044,6 +2234,22 @@
                     }
                     const searchResultsCard = document.getElementById("semantic-results-card");
                     if (searchResultsCard) searchResultsCard.style.display = "none";
+
+                    // In hosted mode, use client StorageAdapter search over IndexedDB
+                    if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                        try {
+                            const hostedResults = await window.StorageAdapter.search(query, thresholdVal, filterType, apiKey);
+                            renderSemanticSearchResults(hostedResults);
+                        } catch (err) {
+                            showError("Search failed: " + (err.message || "Unknown error"));
+                        } finally {
+                            loadingCard.style.display = "none";
+                            submitBtn.disabled = false;
+                            submitBtn.classList.remove("loading");
+                            btnText.textContent = "🔍 Search Knowledge Base";
+                        }
+                        return;
+                    }
 
                     try {
                         const response = await fetch("/api/search/semantic", {
@@ -2140,6 +2346,21 @@
                             showError(data.error || "Comparative analysis failed.");
                         } else {
                             renderComparisonUI(data.comparison, data.history_id);
+                            if (window.StorageAdapter) {
+                                const artB = data.comparison.article_b || {};
+                                window.StorageAdapter.saveSummary({
+                                    id: data.history_id || ('comp_' + Date.now()),
+                                    title: data.comparison.title || 'Comparative Research',
+                                    url: urlA,
+                                    mode: 'comparison',
+                                    mode_name: 'Comparative Research',
+                                    entry_type: 'comparison',
+                                    url_b: urlB,
+                                    title_b: artB.title || 'Article B',
+                                    summary: data.comparison,
+                                    created_at: new Date().toISOString()
+                                }).then(() => refreshRecentShelf()).catch(e => console.debug("Save failed:", e));
+                            }
                         }
                     } catch (err) {
                         showError("Network error: Could not complete comparative request.");
@@ -2217,6 +2438,25 @@
                         currentBatchResults = data.results;
                         updateBatchProgressUI(data.total, data.completed, data.failed, 0, "Batch complete!");
 
+                        // Save completed items to client StorageAdapter (persists in IndexedDB if hosted)
+                        if (window.StorageAdapter && Array.isArray(currentBatchResults)) {
+                            for (const item of currentBatchResults) {
+                                if (item && item.status === 'completed' && item.summary) {
+                                    window.StorageAdapter.saveSummary({
+                                        id: item.history_id || item.summary.history_id || ('batch_' + Date.now() + '_' + Math.random().toString(36).substr(2, 5)),
+                                        title: item.title || item.summary.website_title || item.summary.title || item.url,
+                                        url: item.url,
+                                        mode: item.mode || selectedMode,
+                                        mode_name: item.mode_name || 'Summary',
+                                        entry_type: 'single',
+                                        summary: item.summary,
+                                        created_at: new Date().toISOString()
+                                    }).catch(e => console.debug("Batch item save error:", e));
+                                }
+                            }
+                            refreshRecentShelf();
+                        }
+
                         // Render results
                         if (resultsCards) {
                             resultsCards.innerHTML = "";
@@ -2293,6 +2533,18 @@
                         showError(errMsg);
                     } else {
                         renderSummaryObject(data.summary, data.url);
+                        if (window.StorageAdapter && data.summary) {
+                            window.StorageAdapter.saveSummary({
+                                id: data.summary.history_id || ('single_' + Date.now()),
+                                title: data.summary.website_title || data.summary.title || data.url,
+                                url: data.url,
+                                mode: data.mode || selectedMode,
+                                mode_name: data.summary.mode_name || (selectedMode.charAt(0).toUpperCase() + selectedMode.slice(1)),
+                                entry_type: 'single',
+                                summary: data.summary,
+                                created_at: new Date().toISOString()
+                            }).then(() => refreshRecentShelf()).catch(e => console.debug("Single save failed:", e));
+                        }
                     }
                 } catch (err) {
                     showError("Network error: Could not reach the server. Please check your connection and try again.");

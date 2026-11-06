@@ -26,9 +26,12 @@ def is_serverless_env() -> bool:
     """
     return bool(
         os.getenv("VERCEL")
+        or os.getenv("VERCEL_ENV")
         or os.getenv("AWS_LAMBDA_FUNCTION_NAME")
         or os.getenv("NETLIFY")
         or os.getenv("SERVERLESS")
+        or os.getenv("HOSTED_MODE")
+        or os.getenv("WEBBRIEF_HOSTED")
     )
 
 
@@ -50,10 +53,21 @@ def is_valid_key_format(api_key: Optional[str]) -> bool:
     return True
 
 
+def redact_credentials(text: str) -> str:
+    """
+    Redacts any OpenAI API keys matching standard patterns (sk-...)
+    from error strings, log messages, or exception traces.
+    """
+    if not text or not isinstance(text, str):
+        return ""
+    return re.sub(r"sk-[a-zA-Z0-9_\-]{16,}", "sk-...", text)
+
+
 def get_configured_api_key(session_dict: Optional[dict] = None) -> Optional[str]:
     """
     Retrieves the currently active OpenAI API key from the environment or Flask session.
-    Returns None if no key is configured or if the key is a placeholder.
+    In hosted/serverless mode, returns None if checking environment variables to prevent
+    using any developer API key for visitors (PART A Requirement 7 & 8).
     """
     # 1. Check Flask session if provided (useful for serverless/hosted BYOK)
     if session_dict and isinstance(session_dict, dict):
@@ -63,7 +77,11 @@ def get_configured_api_key(session_dict: Optional[dict] = None) -> Optional[str]
             if clean_session_key.lower() not in PLACEHOLDER_KEYS:
                 return clean_session_key
 
-    # 2. Check process environment variables
+    # In serverless/hosted mode, NEVER fall back to developer's server environment variable
+    if is_serverless_env():
+        return None
+
+    # 2. Check process environment variables (local self-hosted mode only)
     env_key = os.getenv(ENV_KEY_NAME)
     if env_key and isinstance(env_key, str):
         clean_env_key = env_key.strip()
@@ -157,12 +175,11 @@ def save_api_key_to_env(
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_path = os.path.join(workspace_dir, ".env")
 
-    # If running in serverless environment (e.g. Vercel), store in session and memory
+    # If running in serverless environment (e.g. Vercel), do not write to filesystem
     if is_serverless_env():
         if session_dict is not None and isinstance(session_dict, dict):
             session_dict[ENV_KEY_NAME] = clean_key
-        os.environ[ENV_KEY_NAME] = clean_key
-        return True, "API key active for current session (serverless environment detected)."
+        return True, "API key verified for active browser session."
 
     # Check if .env file already exists
     file_exists = os.path.isfile(env_path)

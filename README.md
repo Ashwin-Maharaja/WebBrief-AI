@@ -1,32 +1,33 @@
 # WebBrief AI
 
-> **Production Release — v1.4**  
-> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
+> **Production Release — v1.5**  
+> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
 
 ---
 
 ## Table of Contents
 1. [Project Overview](#1-project-overview)
 2. [Features](#2-features)
-3. [Vector Database Architecture & Evaluation](#3-vector-database-architecture--evaluation)
-4. [Visual Previews](#4-visual-previews)
-5. [Technology Stack](#5-technology-stack)
-6. [System Architecture](#6-system-architecture)
-7. [Repository Structure](#7-repository-structure)
-8. [Installation Instructions](#8-installation-instructions)
-9. [Virtual Environment Setup](#9-virtual-environment-setup)
-10. [Dependency Installation](#10-dependency-installation)
-11. [First-Run Setup Wizard](#11-first-run-setup-wizard)
-12. [OpenAI API Key Configuration](#12-openai-api-key-configuration)
-13. [BYOK Architecture & Security Model](#13-byok-architecture--security-model)
-14. [Running Locally](#14-running-locally)
-15. [Vercel & Cloud Deployment](#15-vercel--cloud-deployment)
-16. [Environment Variables Reference](#16-environment-variables-reference)
-17. [Troubleshooting](#17-troubleshooting)
-18. [Known Limitations](#18-known-limitations)
-19. [Future Roadmap](#19-future-roadmap)
-20. [Contributing Guidelines](#20-contributing-guidelines)
-21. [License](#21-license)
+3. [Deployment Models & Architecture (v1.5)](#3-deployment-models--architecture-v15)
+4. [Vector Database Architecture & Evaluation](#4-vector-database-architecture--evaluation)
+5. [Visual Previews](#5-visual-previews)
+6. [Technology Stack](#6-technology-stack)
+7. [System Architecture](#7-system-architecture)
+8. [Repository Structure](#8-repository-structure)
+9. [Installation Instructions](#9-installation-instructions)
+10. [Virtual Environment Setup](#10-virtual-environment-setup)
+11. [Dependency Installation](#11-dependency-installation)
+12. [First-Run Setup Wizard](#12-first-run-setup-wizard)
+13. [OpenAI API Key Configuration](#13-openai-api-key-configuration)
+14. [BYOK Architecture & Security Model](#14-byok-architecture--security-model)
+15. [Running Locally](#15-running-locally)
+16. [Vercel & Cloud Deployment](#16-vercel--cloud-deployment)
+17. [Environment Variables Reference](#17-environment-variables-reference)
+18. [Troubleshooting](#18-troubleshooting)
+19. [Known Limitations](#19-known-limitations)
+20. [Future Roadmap](#20-future-roadmap)
+21. [Contributing Guidelines](#21-contributing-guidelines)
+22. [License](#22-license)
 
 ---
 
@@ -34,13 +35,21 @@
 
 WebBrief AI simplifies reading long articles, technical papers, corporate releases, and dynamic websites by distilling raw web content into accurate, five-section structured summaries. 
 
-Built with enterprise-grade SSRF defense and a **Bring Your Own Key (BYOK)** security architecture, WebBrief AI guarantees that personal API credentials remain private, stored locally or within cryptographically signed session cookies—never shared, never logged, and never exposed to client-side scripts.
+Built with enterprise-grade SSRF defense, deployment-aware storage, and a **Bring Your Own Key (BYOK)** security architecture, WebBrief AI guarantees that personal API credentials remain private, stored locally in `.env` for self-hosted instances or strictly in active browser memory for public Vercel visitors—never shared between users, never logged, and never exposing developer API credits.
 
 ---
 
 ## 2. Features
 
-- **Local Knowledge Retrieval & Semantic Search (New in v1.4)**:
+- **Hosted BYOK & Deployment-Aware Storage (New in v1.5)**:
+  - **Public Vercel Hosting Ready**: Visitors can freely use the public deployment by supplying their own OpenAI API key.
+  - **In-Memory Credential Security**: Visitor API keys reside exclusively in frontend JavaScript RAM during the active tab session. Keys are **never** stored in `localStorage`, `sessionStorage`, `IndexedDB`, or browser-readable cookies, and are never written to the server's ephemeral filesystem or process environment.
+  - **Zero Developer Credit Drainage**: Hosted mode strictly disables fallback to server-side developer credentials, ensuring visitors never consume developer API credits.
+  - **Zero Cross-Visitor Data Leakage**: In hosted mode, all summary records, metadata, and history are stored locally in the visitor's browser via **IndexedDB** (`WebBriefDB`). Visitors never see each other's summaries.
+  - **Anonymous Visitor Experience**: Completely account-free. No Google OAuth, mandatory login, or registration required to summarize webpages.
+  - **Automatic Credential Redaction**: All OpenAI keys matching standard signatures (`sk-...`) are automatically sanitized and redacted from logs, error messages, and API traces.
+  - **Environment Discovery Endpoint**: `/api/environment` serves real-time runtime detection (detecting Vercel, AWS Lambda, Netlify, or self-hosted environments).
+- **Local Knowledge Retrieval & Semantic Search (v1.4)**:
   - **Natural-Language Vector Search**: Query your personal summary library with questions (e.g. *"What are the ethical risks of AI training data discussed in my articles?"*) without relying on keyword matches.
   - **Embedded SQLite Vector Storage**: Vectors are packed as binary float blobs (`struct.pack`) directly in `webbrief_history.db`. Zero separate database servers, zero native C++ compiler requirements, and 100% ACID persistence across all application restarts.
   - **OpenAI `text-embedding-3-small` Integration**: 1536-dimensional semantic representations generated via your existing BYOK credentials at negligible cost ($0.00002 / 1,000 tokens).
@@ -57,7 +66,7 @@ Built with enterprise-grade SSRF defense and a **Bring Your Own Key (BYOK)** sec
   - **Unique Information**: Flags critical facts and context that appear exclusively in one article and are omitted by the other.
   - **Conclusions Comparison & Synthesis**: Objective comparative assessment evaluating divergence or alignment without inventing unverified facts.
   - **Comparative PDF Export**: Download dedicated, multi-page ReportLab comparative briefs with custom headers, tables, and conflict callouts.
-  - **Dual-URL History Tracking**: Saves comparative entries to SQLite history, tagged with `⚖️ Comparison` badges.
+  - **Dual-URL History Tracking**: Saves comparative entries to history, tagged with `⚖️ Comparison` badges.
 - **Notion Integration & Export (v1.3)**:
   - **Official Notion REST API Integration**: Connects via Notion Internal Integration Secrets (`secret_...` or `ntn_...`).
   - **BYOK Credential Isolation**: Masked token storage, zero logging, and instant disconnect capability in Settings.
@@ -82,11 +91,28 @@ Built with enterprise-grade SSRF defense and a **Bring Your Own Key (BYOK)** sec
 - **Hierarchical Map-Reduce for Long Articles**: Natural chunking with token-safe overlap and multi-pass synthesis.
 - **Professional PDF Document Export (v1.1)**: ReportLab multi-page briefs with running headers and `NumberedCanvas` page counts.
 - **Custom Prompt Directives (v1.1)**: Guiding instructions persisted in SQLite or browser `localStorage`.
-- **Summary History & SQLite Storage**: Full search, reopen, export, and delete capabilities.
+- **Summary History & Deployment Storage**: Unified abstraction supporting SQLite locally and IndexedDB on hosted serverless environments.
 
 ---
 
-## 3. Vector Database Architecture & Evaluation
+## 3. Deployment Models & Architecture (v1.5)
+
+WebBrief AI dynamically adapts its storage and security behavior based on its execution environment:
+
+| Feature | Local Self-Hosted Mode | Public Hosted Vercel Mode |
+| :--- | :--- | :--- |
+| **Target Runtime** | Local machine, Docker, VPS | Vercel Serverless Functions |
+| **BYOK Storage** | Saved in local `.env` file | In-memory RAM during active tab session |
+| **Credential Persistence** | Durable across machine restarts | Cleared upon browser tab close or refresh |
+| **Developer API Credits** | User's own key in `.env` | Strictly protected (Zero developer key fallback) |
+| **Summary & History Storage** | SQLite (`webbrief_history.db`) | Client-side IndexedDB (`WebBriefDB`) |
+| **Vector Search Architecture** | Server-side SQLite float blobs | Client-side hybrid similarity & lexical ranking |
+| **User Isolation** | Single-user machine boundary | 100% private per visitor (zero cross-user sharing) |
+| **Authentication Requirement** | None required | None required (Zero mandatory OAuth or accounts) |
+
+---
+
+## 4. Vector Database Architecture & Evaluation
 
 In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector database solutions were formally evaluated:
 
@@ -104,7 +130,7 @@ In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector databa
 
 ---
 
-## 3. Visual Previews
+## 5. Visual Previews
 
 ### Primary Interface & Mode Selector
 ```
@@ -149,7 +175,7 @@ In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector databa
 
 ---
 
-## 4. Technology Stack
+## 6. Technology Stack
 
 - **Backend Runtime**: Python 3.10+
 - **Web Framework**: Flask 3.1+ (Jinja2 templates, signed `HttpOnly` sessions)
@@ -163,7 +189,7 @@ In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector databa
 
 ---
 
-## 5. System Architecture
+## 7. System Architecture
 
 ```
                     [ Incoming User Request ]
@@ -217,7 +243,7 @@ In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector databa
 
 ---
 
-## 6. Repository Structure
+## 8. Repository Structure
 
 ```
 WebBrief AI/
@@ -235,6 +261,7 @@ WebBrief AI/
 ├── summarizer.py           # Multi-mode prompt engine, Map-Reduce pipeline, JSON parser
 ├── vector_store.py         # Local SQLite vector database engine, cosine search & hash cache
 ├── static/
+│   ├── storage_adapter.js  # Unified client-side adapter for in-memory BYOK and IndexedDB
 │   └── style.css           # Responsive stylesheet with light/dark theme variables
 ├── templates/
 │   ├── index.html          # Primary application dashboard, mode selector, and result cards
@@ -251,7 +278,7 @@ WebBrief AI/
 
 ---
 
-## 7. Installation Instructions
+## 9. Installation Instructions
 
 ### Prerequisites
 - Python 3.10, 3.11, or 3.12 installed on your machine.
@@ -266,7 +293,7 @@ cd webbrief-ai
 
 ---
 
-## 8. Virtual Environment Setup
+## 10. Virtual Environment Setup
 
 ### macOS / Linux
 ```bash
@@ -288,7 +315,7 @@ python -m venv venv
 
 ---
 
-## 9. Dependency Installation
+## 11. Dependency Installation
 
 Install all required Python libraries:
 ```bash
@@ -304,7 +331,7 @@ playwright install chromium
 
 ---
 
-## 10. First-Run Setup Wizard
+## 12. First-Run Setup Wizard
 
 1. Start the Flask development server:
    ```bash
@@ -318,7 +345,7 @@ playwright install chromium
 
 ---
 
-## 11. OpenAI API Key Configuration
+## 13. OpenAI API Key Configuration
 
 You can configure your API key in any of three ways:
 
@@ -338,7 +365,7 @@ You can configure your API key in any of three ways:
 
 ---
 
-## 12. BYOK Architecture & Security Model
+## 14. BYOK Architecture & Security Model
 
 WebBrief AI strictly enforces a **Zero-Credential Exposure** architecture:
 
@@ -353,7 +380,7 @@ WebBrief AI strictly enforces a **Zero-Credential Exposure** architecture:
 
 ---
 
-## 13. Running Locally
+## 15. Running Locally
 
 ### Development Mode
 ```bash
@@ -374,7 +401,7 @@ waitress-serve --listen=127.0.0.1:5000 app:app
 
 ---
 
-## 14. Vercel & Cloud Deployment
+## 16. Vercel & Cloud Deployment
 
 WebBrief AI is configured for one-click deployment on **Vercel Serverless Functions**.
 
@@ -401,7 +428,7 @@ vercel
 
 ---
 
-## 15. Environment Variables Reference
+## 17. Environment Variables Reference
 
 | Variable | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
@@ -414,7 +441,7 @@ vercel
 
 ---
 
-## 16. Troubleshooting
+## 18. Troubleshooting
 
 ### Issue: "OpenAI API key not configured"
 - **Solution**: Visit `/setup` and submit a valid OpenAI API key, or check that your `.env` contains `OPENAI_API_KEY=sk-...`.
@@ -430,7 +457,7 @@ vercel
 
 ---
 
-## 17. Known Limitations
+## 19. Known Limitations
 
 - **Aggressive Cloudflare / CAPTCHA Walls**: Websites that require solving interactive CAPTCHAs cannot be scraped automatically.
 - **Paywalled Content**: WebBrief AI extracts only publicly visible content and does not bypass paywalls or logins.
@@ -438,17 +465,20 @@ vercel
 
 ---
 
-## 18. Future Roadmap
+## 20. Completed Roadmap & Feature Milestones
 
-- [ ] Export summaries to PDF and Notion.
-- [ ] Multi-URL batch summarization.
-- [ ] Comparative summary generation (compare two articles side-by-side).
-- [ ] User-defined custom prompt directives in Settings.
-- [ ] Local vector embedding search across saved summary history.
+All planned features and roadmap milestones across the WebBrief AI development lifecycle are completely fulfilled and covered:
+
+- [x] **v1.0 — Core Foundation**: Dual-engine scraping (Requests + Playwright headless fallback), 4 summarization modes (Quick, Detailed, Bullet-point, Technical), hierarchical Map-Reduce chunking, BYOK security architecture, SSRF defense, and dark/light UI.
+- [x] **v1.1 — Personalization & Export**: High-fidelity ReportLab PDF export with custom branding and numbered pagination; user-defined custom prompt directives in Settings persisted locally.
+- [x] **v1.2 — Multi-URL Batch Summarization**: Tabbed batch input with dynamic rows, independent validation, duplicate detection, resilient concurrent worker execution, real-time progress tracking, expandable result cards, and combined batch PDF export.
+- [x] **v1.3 — Comparative Research & Notion Integration**: Side-by-side dual-article comparison with consensus points, contradictions/disagreements, differing perspectives, structured fact claims, and comparative PDF export; official Notion REST API export for single and comparative research briefs.
+- [x] **v1.4 — Local Knowledge Retrieval & Semantic Search**: Natural-language vector embedding retrieval across saved summaries using OpenAI `text-embedding-3-small`, embedded binary SQLite float vector storage, deterministic SHA-256 caching (zero redundant billing), exact cosine similarity ranking, and excerpt matching.
+- [x] **v1.5 — Hosted BYOK & Deployment-Aware Storage**: Public Vercel serverless deployment support, strictly in-memory active tab visitor keys (never persisted on client disk or server environment), zero developer credit drainage, complete multi-user isolation via browser IndexedDB (`WebBriefDB`), anonymous visitor experience, and automated credential redaction.
 
 ---
 
-## 19. Contributing Guidelines
+## 21. Contributing Guidelines
 
 Contributions are welcome! Please follow these steps:
 
@@ -464,7 +494,7 @@ Contributions are welcome! Please follow these steps:
 
 ---
 
-## 20. License
+## 22. License
 
 Distributed under the **MIT License**. See `LICENSE` for more information.
 
