@@ -18,14 +18,27 @@ from history import (
     clear_history,
 )
 
+APP_VERSION = "1.0"
+
 app = Flask(__name__)
 
 # Secret key for secure, signed HttpOnly session cookies
-app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY") or "webbrief-ai-byok-v0.10-secure-session"
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY") or "webbrief-ai-byok-v1.0-production-session"
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() in ("true", "1"),
 )
+
+
+@app.context_processor
+def inject_globals():
+    """Inject standard global template variables across all rendered views."""
+    return {
+        "app_version": APP_VERSION,
+        "default_mode": DEFAULT_MODE,
+        "modes": MODES,
+    }
 
 
 @app.before_request
@@ -318,4 +331,7 @@ def summarize():
 
 
 if __name__ == "__main__":
-    app.run(debug=True)
+    debug_mode = os.getenv("FLASK_DEBUG", "0").lower() in ("1", "true")
+    port = int(os.getenv("PORT", 5000))
+    host = os.getenv("HOST", "127.0.0.1")
+    app.run(host=host, port=port, debug=debug_mode)
