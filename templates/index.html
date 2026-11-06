@@ -31,7 +31,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.1</span>
+                    <span class="badge">v1.2</span>
                 </div>
             </div>
             
@@ -52,29 +52,63 @@
 
         <!-- Main Form Card -->
         <section class="card input-card">
+            <!-- Mode Switcher Tabs: Single URL vs Batch Summarize -->
+            <div class="tab-bar">
+                <button type="button" class="tab-btn active" id="tab-single-btn" onclick="switchSubmissionTab('single')">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="8" x2="12" y2="12"/>
+                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                    </svg>
+                    <span>Single Webpage</span>
+                </button>
+                <button type="button" class="tab-btn" id="tab-batch-btn" onclick="switchSubmissionTab('batch')">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                        <path d="M8 7h6"/>
+                        <path d="M8 11h8"/>
+                    </svg>
+                    <span>Batch Summarize (2–{{ max_batch_urls or 10 }})</span>
+                </button>
+            </div>
+
             <form id="summarize-form" action="/summarize" method="POST" novalidate>
                 
-                <!-- URL Input -->
-                <div class="form-group">
-                    <label for="url-input" class="form-label">Webpage URL</label>
-                    <div class="input-wrapper">
-                        <span class="input-icon">
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <circle cx="12" cy="12" r="10"/>
-                                <line x1="2" y1="12" x2="22" y2="12"/>
-                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
-                            </svg>
-                        </span>
-                        <input
-                            type="url"
-                            id="url-input"
-                            name="url"
-                            class="form-control"
-                            placeholder="https://example.com/article"
-                            value="{{ url if url else '' }}"
-                            required
-                            autocomplete="off"
-                        >
+                <!-- Single URL Input Container -->
+                <div id="single-url-container">
+                    <div class="form-group">
+                        <label for="url-input" class="form-label">Webpage URL</label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <line x1="2" y1="12" x2="22" y2="12"/>
+                                    <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                                </svg>
+                            </span>
+                            <input
+                                type="url"
+                                id="url-input"
+                                name="url"
+                                class="form-control"
+                                placeholder="https://example.com/article"
+                                value="{{ url if url else '' }}"
+                                autocomplete="off"
+                            >
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Batch URL Input Container (Hidden by default) -->
+                <div id="batch-url-container" style="display: none;">
+                    <div class="form-group" style="margin-bottom: 8px;">
+                        <label class="form-label">Enter Webpage URLs to Summarize (Up to {{ max_batch_urls or 10 }})</label>
+                        <div id="batch-url-list" class="batch-url-list">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                        <button type="button" id="btn-add-batch-url" class="btn-add-url" onclick="addBatchUrlRow()">
+                            + Add Another Webpage URL
+                        </button>
                     </div>
                 </div>
 
@@ -194,7 +228,7 @@
             {% endif %}
         </section>
 
-        <!-- Loading State Card -->
+        <!-- Loading State Card (Single Mode) -->
         <section id="loading-card" class="card loading-card">
             <div class="loading-indicator"></div>
             <div>
@@ -203,7 +237,57 @@
             </div>
         </section>
 
-        <!-- Structured Result Card -->
+        <!-- Batch Progress Card (Batch Mode) -->
+        <section id="batch-progress-card" class="card batch-progress-card">
+            <div class="progress-header">
+                <div>
+                    <h3 class="progress-title" id="batch-progress-title">Processing Batch Summaries</h3>
+                    <p id="batch-current-url-text" style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">Preparing URLs...</p>
+                </div>
+                <span class="progress-counter" id="batch-progress-counter">0 / 0 Completed</span>
+            </div>
+
+            <div class="progress-track">
+                <div class="progress-fill" id="batch-progress-fill"></div>
+            </div>
+
+            <div class="stat-pills-row">
+                <span class="stat-pill stat-pill-total" id="pill-total">Total: 0</span>
+                <span class="stat-pill stat-pill-active" id="pill-processing">In Progress: 0</span>
+                <span class="stat-pill stat-pill-completed" id="pill-completed">✓ Completed: 0</span>
+                <span class="stat-pill stat-pill-failed" id="pill-failed">✕ Failed: 0</span>
+            </div>
+        </section>
+
+        <!-- Batch Results Container -->
+        <section id="batch-results-container" class="batch-results-container">
+            <div class="batch-results-header">
+                <div>
+                    <h3 class="batch-results-title">Batch Summary Results</h3>
+                    <p id="batch-results-subtitle" style="font-size: 13px; color: var(--text-muted); margin-top: 2px;">
+                        Collection of summarized webpages
+                    </p>
+                </div>
+                <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+                    <button type="button" id="batch-export-all-pdf-btn" class="btn btn-secondary" title="Export all completed summaries as a single PDF">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <span>Export All as PDF</span>
+                    </button>
+                    <button type="button" id="batch-clear-btn" class="btn btn-secondary" onclick="clearBatchResults()">
+                        Clear Batch
+                    </button>
+                </div>
+            </div>
+
+            <div id="batch-results-cards" style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+                <!-- Result Accordions Populated by JS -->
+            </div>
+        </section>
+
+        <!-- Structured Result Card (Single Mode) -->
         <section id="result-card" class="card result-card {% if summary %}active{% endif %}">
             
             <!-- Result Header -->
@@ -342,7 +426,7 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>WebBrief AI v1.1 • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI v1.2 • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>
@@ -430,6 +514,381 @@
                     if (radio) radio.checked = true;
                 });
             });
+
+            let currentTab = 'single';
+            const MAX_BATCH = {{ max_batch_urls or 10 }};
+            let currentBatchResults = [];
+
+            // Tab Switcher Helper
+            window.switchSubmissionTab = function(tab) {
+                currentTab = tab;
+                hideError();
+                document.getElementById("tab-single-btn")?.classList.toggle("active", tab === 'single');
+                document.getElementById("tab-batch-btn")?.classList.toggle("active", tab === 'batch');
+                
+                const singleContainer = document.getElementById("single-url-container");
+                const batchContainer = document.getElementById("batch-url-container");
+
+                if (tab === 'single') {
+                    if (singleContainer) singleContainer.style.display = "block";
+                    if (batchContainer) batchContainer.style.display = "none";
+                    if (btnText) btnText.textContent = "Summarize Webpage";
+                } else {
+                    if (singleContainer) singleContainer.style.display = "none";
+                    if (batchContainer) batchContainer.style.display = "block";
+                    // Initialize with 2 rows if empty
+                    const list = document.getElementById("batch-url-list");
+                    if (list && list.children.length === 0) {
+                        addBatchUrlRow();
+                        addBatchUrlRow();
+                    }
+                    updateBatchSubmitBtnText();
+                }
+            };
+
+            function updateBatchSubmitBtnText() {
+                if (currentTab !== 'batch') return;
+                const rows = document.querySelectorAll(".batch-url-input");
+                const validCount = Array.from(rows).filter(r => r.value.trim().length > 0).length;
+                if (btnText) {
+                    btnText.textContent = validCount > 0 ? `Summarize Batch (${validCount} URLs)` : "Summarize Batch";
+                }
+            }
+
+            // Dynamic Batch URL Rows
+            window.addBatchUrlRow = function(val = "") {
+                const list = document.getElementById("batch-url-list");
+                if (!list) return;
+                if (list.children.length >= MAX_BATCH) {
+                    alert(`Maximum ${MAX_BATCH} URLs allowed per batch.`);
+                    return;
+                }
+
+                const rowIdx = list.children.length + 1;
+                const row = document.createElement("div");
+                row.className = "batch-url-row";
+                row.innerHTML = `
+                    <div class="batch-row-header">
+                        <span class="batch-url-index">URL #${rowIdx}</span>
+                    </div>
+                    <div class="batch-input-group">
+                        <div class="input-wrapper">
+                            <span class="input-icon">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <circle cx="12" cy="12" r="10"/>
+                                    <line x1="2" y1="12" x2="22" y2="12"/>
+                                </svg>
+                            </span>
+                            <input
+                                type="url"
+                                class="form-control batch-url-input"
+                                placeholder="https://example.com/article-${rowIdx}"
+                                value="${val}"
+                                autocomplete="off"
+                            >
+                        </div>
+                        <button type="button" class="btn-remove-url" title="Remove URL" onclick="removeBatchUrlRow(this)">
+                            ✕
+                        </button>
+                    </div>
+                    <div class="url-field-error" style="display: none;"></div>
+                `;
+
+                list.appendChild(row);
+                const inputEl = row.querySelector(".batch-url-input");
+                inputEl.addEventListener("input", () => {
+                    validateBatchInputsClient();
+                    updateBatchSubmitBtnText();
+                });
+
+                validateBatchInputsClient();
+                updateBatchSubmitBtnText();
+            };
+
+            window.removeBatchUrlRow = function(btn) {
+                const row = btn.closest(".batch-url-row");
+                const list = document.getElementById("batch-url-list");
+                if (!row || !list) return;
+                if (list.children.length <= 1) {
+                    // Don't remove the last row, just clear it
+                    const inp = row.querySelector(".batch-url-input");
+                    if (inp) inp.value = "";
+                    validateBatchInputsClient();
+                    updateBatchSubmitBtnText();
+                    return;
+                }
+                row.remove();
+                // Re-index remaining rows
+                Array.from(list.children).forEach((r, idx) => {
+                    const idxLabel = r.querySelector(".batch-url-index");
+                    if (idxLabel) idxLabel.textContent = `URL #${idx + 1}`;
+                });
+                validateBatchInputsClient();
+                updateBatchSubmitBtnText();
+            };
+
+            function validateBatchInputsClient() {
+                const rows = document.querySelectorAll(".batch-url-row");
+                const seen = new Map();
+                let hasErrors = false;
+
+                rows.forEach((row, idx) => {
+                    const input = row.querySelector(".batch-url-input");
+                    const errEl = row.querySelector(".url-field-error");
+                    const raw = input ? input.value.trim() : "";
+                    if (errEl) errEl.style.display = "none";
+                    if (input) input.style.borderColor = "";
+
+                    if (!raw) return;
+
+                    const norm = raw.toLowerCase().replace(/\/+$/, "");
+                    if (seen.has(norm)) {
+                        hasErrors = true;
+                        const prevIdx = seen.get(norm);
+                        if (errEl) {
+                            errEl.textContent = `Duplicate of URL #${prevIdx + 1}`;
+                            errEl.style.display = "block";
+                        }
+                        if (input) input.style.borderColor = "var(--error-text)";
+                    } else {
+                        seen.set(norm, idx);
+                    }
+                });
+
+                return !hasErrors;
+            }
+
+            // Batch Progress & Results Helpers
+            function updateBatchProgressUI(total, completed, failed, inProgress, currentUrl) {
+                const progressCard = document.getElementById("batch-progress-card");
+                if (progressCard) progressCard.style.display = "flex";
+
+                const fill = document.getElementById("batch-progress-fill");
+                const counter = document.getElementById("batch-progress-counter");
+                const currentText = document.getElementById("batch-current-url-text");
+                const pTotal = document.getElementById("pill-total");
+                const pDone = document.getElementById("pill-completed");
+                const pFail = document.getElementById("pill-failed");
+                const pProc = document.getElementById("pill-processing");
+
+                const processed = completed + failed;
+                const pct = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+
+                if (fill) fill.style.width = `${pct}%`;
+                if (counter) counter.textContent = `${processed} / ${total} Completed (${pct}%)`;
+                if (currentText) {
+                    currentText.textContent = currentUrl ? `Processing: ${currentUrl}` : "Batch processing in progress...";
+                }
+                if (pTotal) pTotal.textContent = `Total: ${total}`;
+                if (pDone) pDone.textContent = `✓ Completed: ${completed}`;
+                if (pFail) pFail.textContent = `✕ Failed: ${failed}`;
+                if (pProc) pProc.textContent = `In Progress: ${inProgress}`;
+            }
+
+            window.clearBatchResults = function() {
+                const container = document.getElementById("batch-results-container");
+                const cards = document.getElementById("batch-results-cards");
+                const progressCard = document.getElementById("batch-progress-card");
+                if (container) container.style.display = "none";
+                if (progressCard) progressCard.style.display = "none";
+                if (cards) cards.innerHTML = "";
+                currentBatchResults = [];
+            };
+
+            function renderBatchItemAccordion(item, idx) {
+                const card = document.createElement("div");
+                card.className = `batch-item-card ${item.status === 'completed' ? 'completed' : 'failed'}`;
+                card.id = `batch-item-${idx}`;
+
+                const isSuccess = item.status === 'completed';
+                const titleText = item.title || (isSuccess ? "Webpage Summary" : "Scraping / Analysis Failed");
+                const statusBadge = isSuccess
+                    ? '<span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981;">✓ Completed</span>'
+                    : '<span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #ef4444;">✕ Failed</span>';
+
+                let bodyHtml = "";
+                if (isSuccess && item.summary) {
+                    const sum = item.summary;
+                    const overviewHtml = sum.overview ? `<p style="font-size: 14px; line-height: 1.6; margin-bottom: 12px; color: var(--text-secondary);">${sum.overview}</p>` : "";
+                    const keyPointsHtml = Array.isArray(sum.key_points) && sum.key_points.length > 0
+                        ? `<h4 style="font-size: 13px; font-weight: 700; margin-bottom: 6px; color: var(--text-primary);">Key Takeaways:</h4>
+                           <ul style="font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); padding-left: 20px; margin-bottom: 12px;">
+                           ${sum.key_points.map(pt => `<li>${pt}</li>`).join("")}
+                           </ul>`
+                        : "";
+                    const detailsHtml = Array.isArray(sum.important_details) && sum.important_details.length > 0
+                        ? `<h4 style="font-size: 13px; font-weight: 700; margin-bottom: 6px; color: var(--text-primary);">Important Details:</h4>
+                           <ul style="font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); padding-left: 20px; margin-bottom: 12px;">
+                           ${sum.important_details.map(d => `<li>${d}</li>`).join("")}
+                           </ul>`
+                        : "";
+                    const conclusionHtml = sum.conclusion
+                        ? `<div style="background: var(--bg-tertiary); padding: 10px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; color: var(--text-primary);">
+                           🎯 <b>Conclusion:</b> ${sum.conclusion}
+                           </div>`
+                        : "";
+
+                    bodyHtml = `
+                        ${overviewHtml}
+                        ${keyPointsHtml}
+                        ${detailsHtml}
+                        ${conclusionHtml}
+                        <div style="margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end;">
+                            ${item.history_id ? `<a href="/export-pdf/${item.history_id}" class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px; text-decoration: none;">Download PDF</a>` : ''}
+                            <button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px;" onclick="reopenBatchItemDirect(${idx})">
+                                Open in Full View
+                            </button>
+                        </div>
+                    `;
+                } else {
+                    bodyHtml = `
+                        <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 8px; padding: 12px; color: #ef4444; font-size: 13px;">
+                            <strong>Error:</strong> ${item.error || "Unable to summarize this webpage."}
+                        </div>
+                        <div style="margin-top: 12px; display: flex; justify-content: flex-end;">
+                            <button type="button" class="btn-retry-item" onclick="retryBatchItem('${encodeURIComponent(item.url)}', ${idx})">
+                                ↺ Retry This URL
+                            </button>
+                        </div>
+                    `;
+                }
+
+                card.innerHTML = `
+                    <div class="batch-item-header" onclick="toggleBatchItemBody(${idx})">
+                        <div class="batch-item-title-group">
+                            <div class="batch-item-title">${titleText}</div>
+                            <div class="batch-item-url">${item.url}</div>
+                        </div>
+                        <div class="batch-item-status-group">
+                            <span class="badge" style="background: var(--bg-tertiary); font-size: 11px;">${item.mode_name || 'Quick'}</span>
+                            ${statusBadge}
+                            <span style="font-size: 14px; color: var(--text-muted); margin-left: 4px;">▼</span>
+                        </div>
+                    </div>
+                    <div class="batch-item-body ${isSuccess ? 'expanded' : ''}" id="batch-item-body-${idx}">
+                        ${bodyHtml}
+                    </div>
+                `;
+
+                return card;
+            }
+
+            window.toggleBatchItemBody = function(idx) {
+                const body = document.getElementById(`batch-item-body-${idx}`);
+                if (body) body.classList.toggle("expanded");
+            };
+
+            window.reopenBatchItemDirect = function(idx) {
+                const item = currentBatchResults[idx];
+                if (item && item.summary) {
+                    renderSummaryObject(item.summary, item.url);
+                    switchSubmissionTab('single');
+                    const singleInput = document.getElementById("url-input");
+                    if (singleInput) singleInput.value = item.url;
+                    window.scrollTo({ top: 350, behavior: "smooth" });
+                }
+            };
+
+            window.retryBatchItem = async function(encUrl, idx) {
+                const targetUrl = decodeURIComponent(encUrl);
+                const card = document.getElementById(`batch-item-${idx}`);
+                if (card) {
+                    card.style.opacity = "0.5";
+                    const body = document.getElementById(`batch-item-body-${idx}`);
+                    if (body) body.innerHTML = '<p style="font-size: 13px; color: var(--primary);">Retrying scraping & summarization...</p>';
+                }
+
+                const apiKey = apiKeyInput.value.trim();
+                const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
+                const customDir = localStorage.getItem("webbrief_custom_directive") || "";
+                const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
+
+                try {
+                    const res = await fetch("/summarize", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Requested-With": "XMLHttpRequest"
+                        },
+                        body: JSON.stringify({
+                            url: targetUrl,
+                            api_key: apiKey,
+                            mode: selectedMode,
+                            custom_directive: customDir,
+                            custom_directive_enabled: customDirEnabled
+                        })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        currentBatchResults[idx] = {
+                            url: targetUrl,
+                            status: "completed",
+                            title: data.summary.title,
+                            mode: data.mode,
+                            mode_name: data.summary.mode_name,
+                            summary: data.summary,
+                            history_id: data.summary.history_id
+                        };
+                    } else {
+                        currentBatchResults[idx] = {
+                            url: targetUrl,
+                            status: "failed",
+                            error: data.error || "Retry failed."
+                        };
+                    }
+                } catch (e) {
+                    currentBatchResults[idx] = {
+                        url: targetUrl,
+                        status: "failed",
+                        error: "Network error during retry."
+                    };
+                }
+
+                // Re-render card
+                if (card && card.parentNode) {
+                    const newCard = renderBatchItemAccordion(currentBatchResults[idx], idx);
+                    card.parentNode.replaceChild(newCard, card);
+                }
+            };
+
+            // Export All as Combined PDF
+            const exportAllPdfBtn = document.getElementById("batch-export-all-pdf-btn");
+            if (exportAllPdfBtn) {
+                exportAllPdfBtn.addEventListener("click", async () => {
+                    const completedItems = currentBatchResults.filter(it => it && (it.status === 'completed' || it.summary));
+                    if (completedItems.length === 0) {
+                        alert("No completed summaries to export.");
+                        return;
+                    }
+
+                    exportAllPdfBtn.disabled = true;
+                    const prevText = exportAllPdfBtn.innerHTML;
+                    exportAllPdfBtn.innerHTML = "<span>Generating Combined PDF...</span>";
+
+                    try {
+                        const res = await fetch("/batch/export-pdf", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ items: completedItems })
+                        });
+                        if (!res.ok) throw new Error("Batch PDF generation failed");
+                        const blob = await res.blob();
+                        const downloadUrl = window.URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = downloadUrl;
+                        a.download = `WebBrief_Batch_Report_${new Date().toISOString().slice(0, 10)}.pdf`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        window.URL.revokeObjectURL(downloadUrl);
+                    } catch (err) {
+                        alert("Could not export batch PDF. Please try again.");
+                    } finally {
+                        exportAllPdfBtn.disabled = false;
+                        exportAllPdfBtn.innerHTML = prevText;
+                    }
+                });
+            }
 
             // Form submission & elements
             const form = document.getElementById("summarize-form");
@@ -658,11 +1117,104 @@
                 });
             }
 
-            // Form Submit Listener
+            // Form Submit Listener (Single or Batch Mode)
             form.addEventListener("submit", async (e) => {
                 e.preventDefault();
                 hideError();
 
+                const apiKey = apiKeyInput.value.trim();
+                const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
+                const customDir = localStorage.getItem("webbrief_custom_directive") || "";
+                const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
+
+                // ==========================================
+                // BATCH MODE SUBMISSION
+                // ==========================================
+                if (currentTab === 'batch') {
+                    const rowInputs = document.querySelectorAll(".batch-url-input");
+                    const urlList = Array.from(rowInputs).map(i => i.value.trim()).filter(u => u.length > 0);
+
+                    if (urlList.length === 0) {
+                        showError("Please enter at least one webpage URL to summarize.");
+                        return;
+                    }
+
+                    if (!validateBatchInputsClient()) {
+                        showError("Please resolve duplicate URLs before submitting the batch.");
+                        return;
+                    }
+
+                    // Batch loading state
+                    submitBtn.disabled = true;
+                    submitBtn.classList.add("loading");
+                    btnText.textContent = `Processing Batch (${urlList.length} URLs)...`;
+                    loadingCard.style.display = "none";
+                    resultCard.style.display = "none";
+
+                    const progressCard = document.getElementById("batch-progress-card");
+                    const resultsContainer = document.getElementById("batch-results-container");
+                    const resultsCards = document.getElementById("batch-results-cards");
+
+                    if (progressCard) progressCard.style.display = "flex";
+                    if (resultsContainer) resultsContainer.style.display = "flex";
+                    if (resultsCards) resultsCards.innerHTML = '<p style="color: var(--text-muted); font-size: 13px;">Analyzing and scraping webpages in parallel...</p>';
+
+                    updateBatchProgressUI(urlList.length, 0, 0, urlList.length, "Initializing batch tasks...");
+
+                    try {
+                        const response = await fetch("/batch/summarize", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "X-Requested-With": "XMLHttpRequest"
+                            },
+                            body: JSON.stringify({
+                                urls: urlList,
+                                api_key: apiKey,
+                                mode: selectedMode,
+                                custom_directive: customDir,
+                                custom_directive_enabled: customDirEnabled
+                            })
+                        });
+
+                        const data = await response.json();
+
+                        if (!response.ok || !data.results) {
+                            if (response.status === 401 && data.redirect) {
+                                window.location.href = data.redirect;
+                                return;
+                            }
+                            showError(data.error || "Batch processing failed.");
+                            return;
+                        }
+
+                        currentBatchResults = data.results;
+                        updateBatchProgressUI(data.total, data.completed, data.failed, 0, "Batch complete!");
+
+                        // Render results
+                        if (resultsCards) {
+                            resultsCards.innerHTML = "";
+                            currentBatchResults.forEach((item, idx) => {
+                                const card = renderBatchItemAccordion(item, idx);
+                                resultsCards.appendChild(card);
+                            });
+                        }
+
+                        resultsContainer?.scrollIntoView({ behavior: "smooth", block: "start" });
+
+                    } catch (err) {
+                        showError("Network error: Could not complete batch request.");
+                    } finally {
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove("loading");
+                        updateBatchSubmitBtnText();
+                    }
+                    return;
+                }
+
+                // ==========================================
+                // SINGLE URL SUBMISSION
+                // ==========================================
                 const rawUrl = urlInput.value.trim();
 
                 if (!rawUrl) {
@@ -679,9 +1231,6 @@
                 resultCard.style.display = "none";
                 resultCard.classList.remove("active");
 
-                const apiKey = apiKeyInput.value.trim();
-                const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
-
                 // Progressive step simulator
                 let stepTimer = setTimeout(() => {
                     if (loadingStepText) loadingStepText.textContent = "Scraping & parsing webpage DOM...";
@@ -690,10 +1239,6 @@
                 let stepTimer2 = setTimeout(() => {
                     if (loadingStepText) loadingStepText.textContent = "Analyzing content with OpenAI models...";
                 }, 4000);
-
-                // Include custom prompt directives if stored locally
-                const customDir = localStorage.getItem("webbrief_custom_directive") || "";
-                const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
 
                 try {
                     const response = await fetch("/summarize", {

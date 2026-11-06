@@ -1,7 +1,7 @@
 # WebBrief AI
 
-> **Production Release — v1.1**  
-> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with PDF document export and personalized prompt directives.
+> **Production Release — v1.2**  
+> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
 
 ---
 
@@ -39,6 +39,14 @@ Built with enterprise-grade SSRF defense and a **Bring Your Own Key (BYOK)** sec
 
 ## 2. Features
 
+- **Multi-URL Batch Summarization (New in v1.2)**:
+  - **Dynamic Input Rows**: Tab-based switcher between Single and Batch URL modes. Dynamically add, remove, and manage up to 10 URLs per batch with real-time counters.
+  - **Pre-Flight Validation & Duplicate Detection**: Validates each URL independently, displays field-specific error hints, and flags duplicate URLs before submission.
+  - **Isolated Concurrency Engine**: Runs concurrent processing using `ThreadPoolExecutor` (bounded to 2–3 workers). Scraping or OpenAI API failures on one URL never terminate or impact the remaining batch.
+  - **Real-Time Progress Tracking**: Visual progress bar, percentage completion, counter (`X / Y Completed`), status pills (Total, In Progress, Completed, Failed), and active URL status text.
+  - **Interactive Accordion Results**: Organized expandable/collapsible cards for each website with title, source link, mode pill, and execution status (`✓ Completed` or `✕ Failed`).
+  - **Export All as PDF & Single Downloads**: One-click combined multi-article PDF export compiling all batch briefs into a single numbered report, or individual PDF downloads per card.
+  - **Failure Retries & History Integration**: Retries failed URLs independently without re-running successful items. Successful summaries are automatically recorded individually in the SQLite history library.
 - **Bring Your Own Key (BYOK) Security**:
   - Zero developer key sharing. Every user configures their own OpenAI credentials.
   - Minimal zero-token model verification (`models.list()`) validates keys before persisting.
@@ -204,6 +212,7 @@ WebBrief AI/
 ├── api/
 │   └── index.py            # Vercel serverless function entrypoint bridge
 ├── app.py                  # Core Flask application, routing, and controller logic
+├── batch_processor.py      # Multi-URL batch processor, concurrency control, progress callback
 ├── byok.py                 # Key validation, safe .env persistence, and serverless logic
 ├── chunker.py              # Paragraph-aware chunking and token overlap management
 ├── history.py              # Local SQLite summary persistence layer (CRUD)

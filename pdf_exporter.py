@@ -23,6 +23,7 @@ from reportlab.platypus import (
     TableStyle,
     HRFlowable,
     KeepTogether,
+    PageBreak,
 )
 from reportlab.pdfgen import canvas
 
@@ -315,3 +316,196 @@ def build_pdf_filename(title: Optional[str] = None) -> str:
     if not slug:
         slug = "Summary"
     return f"WebBrief_{slug}_{date_str}.pdf"
+
+
+def generate_batch_summary_pdf(
+    items: list[Dict[str, Any]],
+    batch_title: str = "WebBrief AI — Batch Summaries Report",
+) -> io.BytesIO:
+    """
+    Generates a single, consolidated multi-article PDF containing all completed
+    summaries in a batch, separated by clean page breaks.
+    """
+    buffer = io.BytesIO()
+
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=40,
+        rightMargin=40,
+        topMargin=48,
+        bottomMargin=48,
+    )
+
+    page_width, page_height = letter
+    content_width = page_width - 80
+
+    styles = getSampleStyleSheet()
+
+    badge_style = ParagraphStyle(
+        "BatchBadge",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=8,
+        leading=10,
+        textColor=colors.HexColor("#4f46e5"),
+        spaceAfter=6,
+    )
+    title_style = ParagraphStyle(
+        "BatchTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=16,
+        leading=20,
+        textColor=colors.HexColor("#0f172a"),
+        spaceAfter=10,
+    )
+    meta_label_style = ParagraphStyle(
+        "BatchMetaLabel",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=8,
+        leading=11,
+        textColor=colors.HexColor("#64748b"),
+    )
+    meta_val_style = ParagraphStyle(
+        "BatchMetaVal",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=12,
+        textColor=colors.HexColor("#1e293b"),
+    )
+    section_h2 = ParagraphStyle(
+        "BatchSectionH2",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=11,
+        leading=15,
+        textColor=colors.HexColor("#1e293b"),
+        spaceBefore=12,
+        spaceAfter=5,
+        keepWithNext=True,
+    )
+    body_style = ParagraphStyle(
+        "BatchSectionBody",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=13.5,
+        textColor=colors.HexColor("#334155"),
+        spaceAfter=8,
+    )
+    bullet_style = ParagraphStyle(
+        "BatchBulletItem",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=13.5,
+        textColor=colors.HexColor("#334155"),
+        leftIndent=14,
+        firstLineIndent=-10,
+        spaceAfter=4,
+    )
+
+    elements = []
+    completed_items = [it for it in items if it and (it.get("status") == "completed" or it.get("summary"))]
+
+    if not completed_items:
+        elements.append(Paragraph("WEBBRIEF AI • BATCH REPORT", badge_style))
+        elements.append(Paragraph(sanitize_text_for_pdf(batch_title), title_style))
+        elements.append(Paragraph("No completed summaries were available in this batch.", body_style))
+        doc.build(elements, canvasmaker=NumberedCanvas)
+        buffer.seek(0)
+        return buffer
+
+    for i, it in enumerate(completed_items):
+        summary = it.get("summary") or {}
+        raw_title = summary.get("title") or it.get("title") or f"Webpage Summary #{i+1}"
+        url = it.get("url", "")
+        mode_display = summary.get("mode_name") or it.get("mode_name") or "Standard Brief"
+        date_display = it.get("created_at_formatted") or datetime.datetime.now().strftime("%b %d, %Y • %I:%M %p")
+
+        # Item Header
+        elements.append(Paragraph(f"BATCH SUMMARY {i+1} OF {len(completed_items)}", badge_style))
+        elements.append(Paragraph(sanitize_text_for_pdf(raw_title), title_style))
+
+        # Metadata Table
+        if url and (url.startswith("http://") or url.startswith("https://")):
+            safe_href = html.escape(url, quote=True)
+            vis = url if len(url) <= 80 else url[:77] + "..."
+            safe_url_html = f'<a href="{safe_href}" color="#2563eb">{html.escape(vis)}</a>'
+        else:
+            safe_url_html = sanitize_text_for_pdf(url or "URL not specified")
+
+        meta_data = [
+            [
+                Paragraph("<b>MODE:</b>", meta_label_style),
+                Paragraph(sanitize_text_for_pdf(mode_display), meta_val_style),
+                Paragraph("<b>DATE:</b>", meta_label_style),
+                Paragraph(sanitize_text_for_pdf(date_display), meta_val_style),
+            ],
+            [
+                Paragraph("<b>SOURCE:</b>", meta_label_style),
+                Paragraph(safe_url_html, meta_val_style),
+                Paragraph("<b>ITEM:</b>", meta_label_style),
+                Paragraph(f"#{i+1} in Batch Collection", meta_val_style),
+            ]
+        ]
+        col_widths = [50, (content_width - 105) * 0.55, 55, (content_width - 105) * 0.45]
+        meta_table = Table(meta_data, colWidths=col_widths)
+        meta_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8fafc")),
+            ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#e2e8f0")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#f1f5f9")),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elements.append(meta_table)
+        elements.append(Spacer(1, 10))
+
+        # Overview
+        overview = summary.get("overview", "")
+        if overview and str(overview).strip():
+            elements.append(Paragraph("📌 Executive Overview", section_h2))
+            elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#e2e8f0"), spaceAfter=6))
+            elements.append(Paragraph(sanitize_text_for_pdf(overview), body_style))
+
+        # Key Points
+        key_points = summary.get("key_points", [])
+        if isinstance(key_points, list) and key_points:
+            elements.append(Paragraph("⚡ Core Key Takeaways", section_h2))
+            elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#e2e8f0"), spaceAfter=6))
+            for pt in key_points:
+                clean_pt = sanitize_text_for_pdf(pt)
+                if clean_pt:
+                    elements.append(Paragraph(f"• &nbsp; {clean_pt}", bullet_style))
+
+        # Important Details
+        details = summary.get("important_details", [])
+        if isinstance(details, list) and details:
+            elements.append(Paragraph("🔍 Supporting Context & Details", section_h2))
+            elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#e2e8f0"), spaceAfter=6))
+            for dt in details:
+                clean_dt = sanitize_text_for_pdf(dt)
+                if clean_dt:
+                    elements.append(Paragraph(f"• &nbsp; {clean_dt}", bullet_style))
+
+        # Conclusion
+        conclusion = summary.get("conclusion", "")
+        if conclusion and str(conclusion).strip():
+            elements.append(Paragraph("🎯 Final Conclusion & Impact", section_h2))
+            elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#e2e8f0"), spaceAfter=6))
+            elements.append(Paragraph(sanitize_text_for_pdf(conclusion), body_style))
+
+        # Page break between batch items except the last
+        if i < len(completed_items) - 1:
+            elements.append(PageBreak())
+
+    doc.build(elements, canvasmaker=NumberedCanvas)
+    buffer.seek(0)
+    return buffer
+

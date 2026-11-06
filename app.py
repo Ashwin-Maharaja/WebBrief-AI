@@ -1,6 +1,7 @@
+import datetime
 import json
 import os
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file, Response, stream_with_context
 from scraper import scrape_article, ScraperError
 from summarizer import summarize_text, SummarizerError, MODES, DEFAULT_MODE
 from byok import (
@@ -22,9 +23,10 @@ from history import (
     reset_custom_directives,
     MAX_DIRECTIVE_LENGTH,
 )
-from pdf_exporter import generate_summary_pdf, build_pdf_filename
+from pdf_exporter import generate_summary_pdf, build_pdf_filename, generate_batch_summary_pdf
+from batch_processor import execute_batch, validate_batch_urls, MAX_BATCH_URLS
 
-APP_VERSION = "1.1"
+APP_VERSION = "1.2"
 
 app = Flask(__name__)
 
@@ -44,6 +46,7 @@ def inject_globals():
         "app_version": APP_VERSION,
         "default_mode": DEFAULT_MODE,
         "modes": MODES,
+        "max_batch_urls": MAX_BATCH_URLS,
     }
 
 
@@ -71,6 +74,8 @@ def enforce_byok_onboarding():
         "api_get_preferences",
         "api_save_preferences",
         "api_reset_preferences",
+        "batch_validate",
+        "batch_export_pdf",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -79,8 +84,8 @@ def enforce_byok_onboarding():
     if has_valid_config(session_dict=session):
         return None
 
-    # Handle /summarize: check if user provided a per-request BYOK in payload
-    if request.endpoint == "summarize":
+    # Handle /summarize and /batch/summarize: check if user provided a per-request BYOK in payload
+    if request.endpoint in ("summarize", "batch_summarize"):
         key_in_req = None
         if request.is_json:
             key_in_req = (request.get_json() or {}).get("api_key")
@@ -326,6 +331,144 @@ def api_reset_preferences():
         "message": "Custom prompt directives have been reset to default.",
         "preferences": get_custom_directives()
     })
+
+
+# -------------------------------------------------------------
+# Batch Summarization Endpoints
+# -------------------------------------------------------------
+@app.route("/batch/validate", methods=["POST"])
+def batch_validate():
+    """
+    Validates an array of URLs for batch processing.
+    Identifies duplicate entries and format errors independently.
+    """
+    data = request.get_json() or {}
+    raw_urls = data.get("urls", [])
+    if not isinstance(raw_urls, list):
+        return jsonify({"error": "Expected an array of URLs."}), 400
+
+    items, stats = validate_batch_urls(raw_urls)
+    return jsonify({"items": items, "stats": stats})
+
+
+@app.route("/batch/summarize", methods=["POST"])
+def batch_summarize():
+    """
+    Executes multi-URL batch summarization with optional streaming SSE progress.
+    Reuses existing scraping, chunking, and summarization pipelines.
+    """
+    data = request.get_json() or {}
+    raw_urls = data.get("urls", [])
+
+    if not raw_urls or not isinstance(raw_urls, list):
+        return jsonify({"error": "Please provide a list of URLs to summarize."}), 400
+
+    cleaned_urls = [str(u).strip() for u in raw_urls if str(u).strip()]
+    if not cleaned_urls:
+        return jsonify({"error": "Please provide at least one valid URL."}), 400
+
+    if len(cleaned_urls) > MAX_BATCH_URLS:
+        cleaned_urls = cleaned_urls[:MAX_BATCH_URLS]
+
+    mode = data.get("mode", DEFAULT_MODE)
+    api_key = data.get("api_key")
+    custom_directive = data.get("custom_directive")
+    custom_directive_enabled = data.get("custom_directive_enabled")
+
+    is_stream = request.args.get("stream") in ("1", "true") or request.headers.get("Accept") == "text/event-stream"
+
+    if is_stream:
+        import queue
+        import threading
+
+        event_queue = queue.Queue()
+
+        def stream_progress_cb(evt):
+            event_queue.put(evt)
+
+        def generate_sse():
+            batch_result_container = []
+
+            def worker_thread():
+                try:
+                    res = execute_batch(
+                        raw_urls=cleaned_urls,
+                        mode=mode,
+                        api_key=api_key,
+                        custom_directive=custom_directive,
+                        custom_directive_enabled=custom_directive_enabled,
+                        progress_callback=stream_progress_cb,
+                    )
+                    batch_result_container.append(res)
+                except Exception as e:
+                    event_queue.put({"event": "error", "error": str(e)})
+                finally:
+                    event_queue.put(None)
+
+            t = threading.Thread(target=worker_thread)
+            t.start()
+
+            while True:
+                try:
+                    evt = event_queue.get(timeout=1.0)
+                    if evt is None:
+                        break
+                    yield f"data: {json.dumps(evt)}\n\n"
+                except queue.Empty:
+                    if not t.is_alive():
+                        break
+                    yield f"data: {json.dumps({'event': 'heartbeat'})}\n\n"
+
+            t.join(timeout=5.0)
+            final_res = batch_result_container[0] if batch_result_container else {}
+            yield f"data: {json.dumps({'event': 'done', 'result': final_res})}\n\n"
+
+        return Response(stream_with_context(generate_sse()), mimetype="text/event-stream")
+
+    # Standard JSON batch execution
+    batch_result = execute_batch(
+        raw_urls=cleaned_urls,
+        mode=mode,
+        api_key=api_key,
+        custom_directive=custom_directive,
+        custom_directive_enabled=custom_directive_enabled,
+    )
+    batch_result["success"] = True
+    return jsonify(batch_result)
+
+
+@app.route("/batch/export-pdf", methods=["POST"])
+def batch_export_pdf():
+    """
+    Consolidates multiple summary briefs from a batch into a single downloadable PDF.
+    """
+    data = request.get_json() or {}
+    items = data.get("items", [])
+
+    # If history IDs were passed instead, resolve from database
+    history_ids = data.get("history_ids")
+    if history_ids and isinstance(history_ids, list):
+        items = []
+        for hid in history_ids:
+            hentry = get_history_entry(hid)
+            if hentry:
+                items.append(hentry)
+
+    if not items or not isinstance(items, list):
+        return jsonify({"error": "No items provided for batch PDF export."}), 400
+
+    try:
+        pdf_buf = generate_batch_summary_pdf(items)
+        date_str = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+        download_name = f"WebBrief_Batch_Report_{date_str}.pdf"
+        return send_file(
+            pdf_buf,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=download_name,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate batch PDF: {str(e)}"}), 500
 
 
 # -------------------------------------------------------------
