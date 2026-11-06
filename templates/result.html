@@ -30,7 +30,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.0</span>
+                    <span class="badge">v1.1</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -80,6 +80,11 @@
                         </svg>
                         <span id="copy-btn-text">Copy Full Summary</span>
                     </button>
+                    {% if summary.history_id %}
+                    <a href="/export-pdf/{{ summary.history_id }}" class="btn btn-secondary" title="Export as PDF document">
+                        Export PDF
+                    </a>
+                    {% endif %}
                     <a href="{{ url_for('home') }}" class="btn btn-secondary">+ New Summary</a>
                 </div>
             </div>
@@ -162,7 +167,7 @@
         </section>
 
         <footer class="app-footer">
-            <p>WebBrief AI v1.0 • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI v1.1 • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>

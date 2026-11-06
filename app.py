@@ -1,5 +1,6 @@
+import json
 import os
-from flask import Flask, render_template, request, jsonify, redirect, url_for, session
+from flask import Flask, render_template, request, jsonify, redirect, url_for, session, send_file
 from scraper import scrape_article, ScraperError
 from summarizer import summarize_text, SummarizerError, MODES, DEFAULT_MODE
 from byok import (
@@ -16,9 +17,14 @@ from history import (
     get_history_entry,
     delete_history_entry,
     clear_history,
+    get_custom_directives,
+    save_custom_directives,
+    reset_custom_directives,
+    MAX_DIRECTIVE_LENGTH,
 )
+from pdf_exporter import generate_summary_pdf, build_pdf_filename
 
-APP_VERSION = "1.0"
+APP_VERSION = "1.1"
 
 app = Flask(__name__)
 
@@ -60,6 +66,11 @@ def enforce_byok_onboarding():
         "api_get_history_entry",
         "api_delete_history",
         "api_clear_history",
+        "export_pdf",
+        "export_pdf_by_id",
+        "api_get_preferences",
+        "api_save_preferences",
+        "api_reset_preferences",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -127,17 +138,21 @@ def setup():
 
 @app.route("/settings")
 def settings():
-    """API key settings and management page."""
+    """API key settings, custom prompt directives, and management page."""
     is_conf = has_valid_config(session_dict=session)
     is_serv = is_serverless_env()
     history_entries = get_history(limit=50)
+    directives = get_custom_directives()
     return render_template(
         "settings.html",
         is_configured=is_conf,
         is_serverless=is_serv,
         history_count=len(history_entries),
         modes=MODES,
-        default_mode=DEFAULT_MODE
+        default_mode=DEFAULT_MODE,
+        custom_directive=directives.get("custom_directive", ""),
+        custom_directive_enabled=directives.get("custom_directive_enabled", False),
+        max_directive_length=MAX_DIRECTIVE_LENGTH,
     )
 
 
@@ -181,6 +196,136 @@ def api_clear_history():
     """Clears all entries from summary history."""
     clear_history()
     return jsonify({"success": True})
+
+
+# -------------------------------------------------------------
+# PDF Document Export Endpoints
+# -------------------------------------------------------------
+@app.route("/export-pdf", methods=["POST"])
+def export_pdf():
+    """
+    Generates and downloads a clean, multi-page PDF summary.
+    Accepts JSON payload or Form data with structured summary data or a history_id.
+    """
+    if request.is_json:
+        data = request.get_json() or {}
+    else:
+        data = request.form.to_dict()
+
+    history_id = data.get("history_id")
+    summary = None
+    url = data.get("url", "")
+    title = data.get("title", "")
+    mode = data.get("mode", "")
+    created_at = data.get("created_at", "")
+
+    if history_id:
+        entry = get_history_entry(history_id)
+        if entry:
+            summary = entry.get("summary")
+            url = entry.get("url", url)
+            title = entry.get("title", title)
+            mode = entry.get("mode_name", mode)
+            created_at = entry.get("created_at_formatted", created_at)
+
+    if not summary:
+        raw_summary = data.get("summary")
+        if isinstance(raw_summary, str):
+            try:
+                summary = json.loads(raw_summary)
+            except Exception:
+                summary = {"overview": raw_summary}
+        elif isinstance(raw_summary, dict):
+            summary = raw_summary
+
+    if not summary or not isinstance(summary, dict):
+        return jsonify({"error": "No valid summary data provided for PDF generation."}), 400
+
+    try:
+        pdf_buffer = generate_summary_pdf(
+            summary=summary,
+            url=url,
+            title=title or summary.get("title"),
+            mode=mode or summary.get("mode_name"),
+            created_at=created_at,
+        )
+        download_name = build_pdf_filename(title or summary.get("title"))
+
+        return send_file(
+            pdf_buffer,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=download_name,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate PDF: {str(e)}"}), 500
+
+
+@app.route("/export-pdf/<entry_id>", methods=["GET"])
+def export_pdf_by_id(entry_id):
+    """Downloads a formatted PDF document directly for a saved history entry."""
+    entry = get_history_entry(entry_id)
+    if not entry:
+        return jsonify({"error": "History entry not found."}), 404
+
+    try:
+        summary_data = entry.get("summary", {})
+        pdf_buffer = generate_summary_pdf(
+            summary=summary_data,
+            url=entry.get("url", ""),
+            title=entry.get("title", ""),
+            mode=entry.get("mode_name", ""),
+            created_at=entry.get("created_at_formatted", ""),
+        )
+        download_name = build_pdf_filename(entry.get("title"))
+
+        return send_file(
+            pdf_buffer,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=download_name,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate PDF: {str(e)}"}), 500
+
+
+# -------------------------------------------------------------
+# Custom Prompt Directives API Endpoints
+# -------------------------------------------------------------
+@app.route("/api/preferences", methods=["GET"])
+def api_get_preferences():
+    """Returns stored user preferences (custom prompt directives)."""
+    return jsonify(get_custom_directives())
+
+
+@app.route("/api/preferences", methods=["POST"])
+def api_save_preferences():
+    """
+    Validates and persists user custom prompt directives.
+    Enforces the MAX_DIRECTIVE_LENGTH limit.
+    """
+    data = request.get_json() if request.is_json else request.form
+    directive = (data.get("custom_directive") or "").strip()
+    enabled = data.get("custom_directive_enabled") in (True, "true", "1", 1, "on")
+
+    success, message = save_custom_directives(directive=directive, enabled=enabled)
+    status_code = 200 if success else 400
+    return jsonify({
+        "success": success,
+        "message": message,
+        "preferences": get_custom_directives()
+    }), status_code
+
+
+@app.route("/api/preferences/reset", methods=["POST"])
+def api_reset_preferences():
+    """Resets user custom prompt directives to blank and disabled."""
+    reset_custom_directives()
+    return jsonify({
+        "success": True,
+        "message": "Custom prompt directives have been reset to default.",
+        "preferences": get_custom_directives()
+    })
 
 
 # -------------------------------------------------------------
@@ -261,11 +406,15 @@ def summarize():
         url = data.get("url", "").strip()
         api_key = data.get("api_key", "").strip() or None
         mode = data.get("mode", DEFAULT_MODE).strip().lower()
+        custom_directive = data.get("custom_directive")
+        custom_directive_enabled = data.get("custom_directive_enabled")
         is_ajax = True
     else:
         url = request.form.get("url", "").strip()
         api_key = request.form.get("api_key", "").strip() or None
         mode = request.form.get("mode", DEFAULT_MODE).strip().lower()
+        custom_directive = request.form.get("custom_directive")
+        custom_directive_enabled = request.form.get("custom_directive_enabled")
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
     # Normalize mode
@@ -283,8 +432,17 @@ def summarize():
         # Step 1: Scrape article text from webpage
         article_text = scrape_article(url)
 
-        # Step 2: Generate AI summary in the chosen mode
-        summary = summarize_text(article_text, api_key=api_key, mode=mode)
+        # Step 2: Generate AI summary in the chosen mode with optional custom directives
+        summarize_kwargs = {
+            "api_key": api_key,
+            "mode": mode,
+        }
+        if custom_directive is not None:
+            summarize_kwargs["custom_directive"] = custom_directive
+        if custom_directive_enabled is not None:
+            summarize_kwargs["custom_directive_enabled"] = custom_directive_enabled
+
+        summary = summarize_text(article_text, **summarize_kwargs)
 
         # Step 3: Record into persistent summary history
         try:

@@ -31,7 +31,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.0</span>
+                    <span class="badge">v1.1</span>
                 </div>
             </div>
             
@@ -246,6 +246,16 @@
                         <span id="copy-btn-text">Copy Full Summary</span>
                     </button>
 
+                    <button type="button" id="export-pdf-btn" class="btn btn-secondary" title="Download formatted PDF document">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                        </svg>
+                        <span id="export-pdf-text">Export PDF</span>
+                    </button>
+
                     <button type="button" id="new-summary-btn" class="btn btn-secondary" title="Summarize another webpage">
                         + New Summary
                     </button>
@@ -332,7 +342,7 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>WebBrief AI v1.0 • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI v1.1 • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>
@@ -434,6 +444,8 @@
             const errorMessage = document.getElementById("error-message");
             const copyBtn = document.getElementById("copy-summary-btn");
             const copyBtnText = document.getElementById("copy-btn-text");
+            const exportPdfBtn = document.getElementById("export-pdf-btn");
+            const exportPdfText = document.getElementById("export-pdf-text");
             const newSummaryBtn = document.getElementById("new-summary-btn");
 
             // Structured section DOM nodes
@@ -600,6 +612,52 @@
                 }
             });
 
+            // Export Summary as PDF
+            if (exportPdfBtn) {
+                exportPdfBtn.addEventListener("click", async () => {
+                    if (!currentSummaryData) return;
+                    exportPdfBtn.disabled = true;
+                    const prevText = exportPdfText.textContent;
+                    exportPdfText.textContent = "Generating...";
+
+                    try {
+                        const historyId = currentSummaryData.history_id;
+                        if (historyId) {
+                            window.location.href = "/export-pdf/" + encodeURIComponent(historyId);
+                        } else {
+                            const res = await fetch("/export-pdf", {
+                                method: "POST",
+                                headers: { "Content-Type": "application/json" },
+                                body: JSON.stringify({
+                                    summary: currentSummaryData,
+                                    url: sourceUrlLink.href,
+                                    title: articleTitle.textContent,
+                                    mode: resultModeBadge.textContent
+                                })
+                            });
+                            if (!res.ok) throw new Error("PDF generation failed");
+                            const blob = await res.blob();
+                            const downloadUrl = window.URL.createObjectURL(blob);
+                            const a = document.createElement("a");
+                            a.href = downloadUrl;
+                            const safeName = (articleTitle.textContent || "Summary").trim().replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+                            a.download = `WebBrief_${safeName}.pdf`;
+                            document.body.appendChild(a);
+                            a.click();
+                            a.remove();
+                            window.URL.revokeObjectURL(downloadUrl);
+                        }
+                    } catch (err) {
+                        alert("Could not export PDF. Please try again.");
+                    } finally {
+                        setTimeout(() => {
+                            exportPdfBtn.disabled = false;
+                            exportPdfText.textContent = prevText;
+                        }, 1200);
+                    }
+                });
+            }
+
             // Form Submit Listener
             form.addEventListener("submit", async (e) => {
                 e.preventDefault();
@@ -633,6 +691,10 @@
                     if (loadingStepText) loadingStepText.textContent = "Analyzing content with OpenAI models...";
                 }, 4000);
 
+                // Include custom prompt directives if stored locally
+                const customDir = localStorage.getItem("webbrief_custom_directive") || "";
+                const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
+
                 try {
                     const response = await fetch("/summarize", {
                         method: "POST",
@@ -643,7 +705,9 @@
                         body: JSON.stringify({
                             url: rawUrl,
                             api_key: apiKey,
-                            mode: selectedMode
+                            mode: selectedMode,
+                            custom_directive: customDir,
+                            custom_directive_enabled: customDirEnabled
                         })
                     });
 

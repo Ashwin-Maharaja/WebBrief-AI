@@ -127,7 +127,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.0</span>
+                    <span class="badge">v1.1</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -273,7 +273,55 @@
                 </div>
             </div>
 
-            <!-- 4. Summary History Management -->
+            <!-- 4. Custom Prompt Directives -->
+            <div class="settings-section" id="custom-directives-section">
+                <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/>
+                        </svg>
+                        <h3>Custom Prompt Directives</h3>
+                    </div>
+                    <label class="toggle-switch-wrapper" style="display: inline-flex; align-items: center; gap: 8px; cursor: pointer;">
+                        <input type="checkbox" id="directive-enabled-toggle" style="width: 17px; height: 17px; accent-color: var(--primary); cursor: pointer;" {% if custom_directive_enabled %}checked{% endif %}>
+                        <span style="font-size: 0.85rem; font-weight: 600; color: var(--text-primary);">Enable Directives</span>
+                    </label>
+                </div>
+
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px; line-height: 1.5;">
+                    Define custom instructions to tailor your summaries (e.g. emphasize pricing models, system parameters, or security posture). Custom instructions are combined harmoniously with the selected mode without overriding essential schema or accuracy constraints.
+                </p>
+
+                <div class="form-group" style="margin-bottom: 8px;">
+                    <textarea
+                        id="custom-directive-input"
+                        class="form-control"
+                        rows="4"
+                        maxlength="{{ max_directive_length }}"
+                        placeholder="e.g. Emphasize pricing models, API security parameters, and key architectural tradeoffs. Avoid corporate marketing buzzwords."
+                        style="width: 100%; resize: vertical; font-family: inherit; font-size: 0.9rem;"
+                    >{{ custom_directive }}</textarea>
+                </div>
+
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 8px;">
+                    <span id="directive-char-count" style="font-size: 0.78rem; color: var(--text-muted);">
+                        0 / {{ max_directive_length }} characters
+                    </span>
+                    <span id="directive-feedback" style="font-size: 0.82rem; font-weight: 600;"></span>
+                </div>
+
+                <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                    <button type="button" id="save-directive-btn" class="btn btn-primary" style="padding: 0.55rem 1.25rem; font-size: 0.88rem;">
+                        Save Instructions
+                    </button>
+                    <button type="button" id="reset-directive-btn" class="btn btn-secondary" style="padding: 0.55rem 1.25rem; font-size: 0.88rem;">
+                        Reset to Default
+                    </button>
+                </div>
+            </div>
+
+            <!-- 5. Summary History Management -->
             <div class="settings-section">
                 <div class="section-header">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -306,7 +354,7 @@
                 </div>
             </div>
 
-            <!-- 5. Application Info -->
+            <!-- 6. Application Info -->
             <div class="settings-section">
                 <div class="section-header">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -320,11 +368,15 @@
                 <div class="status-box">
                     <div class="status-row">
                         <span class="status-label">Release Version</span>
-                        <span class="status-val"><span class="badge">v1.0</span></span>
+                        <span class="status-val"><span class="badge">v1.1</span></span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Architecture</span>
                         <span class="status-val">Python / Flask + Map-Reduce Pipeline</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Document Export</span>
+                        <span class="status-val" style="color: #10b981;">ReportLab PDF Engine Active</span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Scraper Fallback</span>
@@ -418,6 +470,110 @@
             } catch (err) {
                 alert("Failed to clear history.");
             }
+        }
+
+        // Custom Prompt Directives handling
+        const directiveInput = document.getElementById("custom-directive-input");
+        const directiveToggle = document.getElementById("directive-enabled-toggle");
+        const directiveCharCount = document.getElementById("directive-char-count");
+        const directiveFeedback = document.getElementById("directive-feedback");
+        const saveDirectiveBtn = document.getElementById("save-directive-btn");
+        const resetDirectiveBtn = document.getElementById("reset-directive-btn");
+
+        const MAX_CHARS = {{ max_directive_length or 1000 }};
+
+        function updateDirectiveCharCount() {
+            if (!directiveInput || !directiveCharCount) return;
+            const len = directiveInput.value.length;
+            directiveCharCount.textContent = `${len} / ${MAX_CHARS} characters`;
+            if (len >= MAX_CHARS) {
+                directiveCharCount.style.color = "var(--error-text)";
+            } else {
+                directiveCharCount.style.color = "var(--text-muted)";
+            }
+        }
+
+        if (directiveInput) {
+            directiveInput.addEventListener("input", updateDirectiveCharCount);
+            updateDirectiveCharCount();
+        }
+
+        if (saveDirectiveBtn) {
+            saveDirectiveBtn.addEventListener("click", async () => {
+                const text = directiveInput ? directiveInput.value.trim() : "";
+                const isEnabled = directiveToggle ? directiveToggle.checked : false;
+
+                saveDirectiveBtn.disabled = true;
+                directiveFeedback.textContent = "Saving...";
+                directiveFeedback.style.color = "var(--primary)";
+
+                try {
+                    const res = await fetch("/api/preferences", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            custom_directive: text,
+                            custom_directive_enabled: isEnabled
+                        })
+                    });
+                    const data = await res.json();
+
+                    // Synchronize with browser localStorage (hosted persistence compatibility)
+                    localStorage.setItem("webbrief_custom_directive", text);
+                    localStorage.setItem("webbrief_custom_directive_enabled", isEnabled ? "1" : "0");
+
+                    if (data.success) {
+                        directiveFeedback.textContent = "✓ Instructions saved!";
+                        directiveFeedback.style.color = "#10b981";
+                    } else {
+                        directiveFeedback.textContent = data.message || "Failed to save.";
+                        directiveFeedback.style.color = "var(--error-text)";
+                    }
+                } catch (err) {
+                    // Fallback to purely local browser storage if offline / serverless
+                    localStorage.setItem("webbrief_custom_directive", text);
+                    localStorage.setItem("webbrief_custom_directive_enabled", isEnabled ? "1" : "0");
+                    directiveFeedback.textContent = "✓ Saved to browser storage!";
+                    directiveFeedback.style.color = "#10b981";
+                } finally {
+                    saveDirectiveBtn.disabled = false;
+                    setTimeout(() => {
+                        if (directiveFeedback) directiveFeedback.textContent = "";
+                    }, 3500);
+                }
+            });
+        }
+
+        if (resetDirectiveBtn) {
+            resetDirectiveBtn.addEventListener("click", async () => {
+                if (!confirm("Reset custom instructions to default?")) return;
+
+                resetDirectiveBtn.disabled = true;
+                directiveFeedback.textContent = "Resetting...";
+                directiveFeedback.style.color = "var(--primary)";
+
+                try {
+                    await fetch("/api/preferences/reset", { method: "POST" });
+                } catch (err) {
+                    // Ignore network error
+                }
+
+                // Clear localStorage
+                localStorage.removeItem("webbrief_custom_directive");
+                localStorage.setItem("webbrief_custom_directive_enabled", "0");
+
+                if (directiveInput) directiveInput.value = "";
+                if (directiveToggle) directiveToggle.checked = false;
+                updateDirectiveCharCount();
+
+                directiveFeedback.textContent = "✓ Reset to default.";
+                directiveFeedback.style.color = "#10b981";
+                resetDirectiveBtn.disabled = false;
+
+                setTimeout(() => {
+                    if (directiveFeedback) directiveFeedback.textContent = "";
+                }, 3000);
+            });
         }
     </script>
 </body>

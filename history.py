@@ -52,6 +52,12 @@ def init_db(db_path: Optional[str] = None) -> None:
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_history_created_at ON summary_history(created_at DESC)")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS preferences (
+                    key TEXT PRIMARY KEY,
+                    value TEXT NOT NULL
+                )
+            """)
         conn.close()
     except Exception as e:
         logger.warning("Failed to initialize SQLite history database: %s", str(e))
@@ -229,3 +235,89 @@ def clear_history(db_path: Optional[str] = None) -> bool:
     except Exception as e:
         logger.warning("Failed to clear summary history: %s", str(e))
         return False
+
+
+# -------------------------------------------------------------
+# Preferences & Custom Prompt Directives Storage
+# -------------------------------------------------------------
+MAX_DIRECTIVE_LENGTH = 1000
+
+# In-memory preferences fallback for serverless/read-only environments
+_FALLBACK_PREFS: Dict[str, str] = {
+    "custom_directive": "",
+    "custom_directive_enabled": "0"
+}
+
+
+def get_preference(key: str, default: Optional[str] = None, db_path: Optional[str] = None) -> Optional[str]:
+    """Retrieves a single preference value by key."""
+    init_db(db_path)
+    try:
+        conn = get_db_connection(db_path)
+        cursor = conn.execute("SELECT value FROM preferences WHERE key = ?", (key,))
+        row = cursor.fetchone()
+        conn.close()
+        if row:
+            return row["value"]
+    except Exception as e:
+        logger.warning("Failed to read preference %s: %s", key, str(e))
+    return _FALLBACK_PREFS.get(key, default)
+
+
+def set_preference(key: str, value: str, db_path: Optional[str] = None) -> bool:
+    """Sets a single preference value."""
+    init_db(db_path)
+    _FALLBACK_PREFS[key] = str(value)
+    try:
+        conn = get_db_connection(db_path)
+        with conn:
+            conn.execute("""
+                INSERT INTO preferences (key, value) VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """, (key, str(value)))
+        conn.close()
+        return True
+    except Exception as e:
+        logger.warning("Failed to write preference %s: %s", key, str(e))
+        return False
+
+
+def get_custom_directives(db_path: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Retrieves the custom prompt directive and its enabled state.
+    Returns:
+        dict: {'custom_directive': str, 'custom_directive_enabled': bool}
+    """
+    directive = get_preference("custom_directive", default="", db_path=db_path) or ""
+    enabled_val = get_preference("custom_directive_enabled", default="0", db_path=db_path)
+    return {
+        "custom_directive": directive.strip(),
+        "custom_directive_enabled": enabled_val in ("1", "true", "True", True)
+    }
+
+
+def save_custom_directives(directive: str, enabled: bool = True, db_path: Optional[str] = None) -> tuple[bool, str]:
+    """
+    Validates, sanitizes, and persists custom prompt directives.
+    Enforces a strict MAX_DIRECTIVE_LENGTH limit.
+    """
+    if directive is None:
+        directive = ""
+
+    cleaned = str(directive).strip()
+    if len(cleaned) > MAX_DIRECTIVE_LENGTH:
+        return False, f"Custom instructions exceed maximum limit of {MAX_DIRECTIVE_LENGTH} characters."
+
+    set_preference("custom_directive", cleaned, db_path=db_path)
+    set_preference("custom_directive_enabled", "1" if enabled else "0", db_path=db_path)
+    return True, "Custom instructions saved successfully."
+
+
+def reset_custom_directives(db_path: Optional[str] = None) -> bool:
+    """
+    Resets custom prompt directives to blank and disabled.
+    """
+    set_preference("custom_directive", "", db_path=db_path)
+    set_preference("custom_directive_enabled", "0", db_path=db_path)
+    return True
+

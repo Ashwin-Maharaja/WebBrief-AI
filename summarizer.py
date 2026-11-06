@@ -57,18 +57,31 @@ MODES = {
 DEFAULT_MODE = "quick"
 
 
-def build_summarization_prompt(article_text, mode=DEFAULT_MODE):
+def build_summarization_prompt(article_text, mode=DEFAULT_MODE, custom_directive=None, custom_directive_enabled=True):
     """
     Constructs the prompt and system instructions for single-pass structured summarization,
-    adapting tone and depth based on the selected mode.
+    adapting tone and depth based on the selected mode, with optional user custom directives.
     """
     mode_info = MODES.get(mode, MODES[DEFAULT_MODE])
     directive = mode_info["directive"]
 
+    custom_block = ""
+    if custom_directive and custom_directive_enabled:
+        clean_directive = str(custom_directive).strip()[:1000]
+        if clean_directive:
+            custom_block = (
+                f"\n\nUSER CUSTOM INSTRUCTIONS:\n"
+                f"The user has specified these additional guidelines for this summary:\n"
+                f"\"{clean_directive}\"\n"
+                f"- Harmonize these user preferences with the '{mode_info['name']}' style.\n"
+                f"- Never invent or extrapolate facts to satisfy custom instructions.\n"
+                f"- Strictly maintain adherence to the required JSON output schema."
+            )
+
     instructions = (
         "You are an expert webpage summarizer. Your task is to produce an accurate, "
         "well-organized, and faithful structured summary of the provided webpage content.\n\n"
-        f"{directive}\n\n"
+        f"{directive}{custom_block}\n\n"
         "STRICT FACTUALITY AND ACCURACY RULES:\n"
         "1. Strictly preserve the original meaning and factual accuracy of the source.\n"
         "2. Do NOT introduce or assume information, metrics, or claims that are not present in the source.\n"
@@ -120,18 +133,30 @@ def build_chunk_map_prompt(chunk_content, chunk_index, total_chunks, mode=DEFAUL
     return instructions, user_input
 
 
-def build_reduce_prompt(combined_summaries, total_chunks, mode=DEFAULT_MODE):
+def build_reduce_prompt(combined_summaries, total_chunks, mode=DEFAULT_MODE, custom_directive=None, custom_directive_enabled=True):
     """
     Constructs the prompt for the Reduce phase: synthesizing intermediate chunk
-    summaries into the final unified structured JSON summary according to mode.
+    summaries into the final unified structured JSON summary according to mode,
+    with optional user custom directives.
     """
     mode_info = MODES.get(mode, MODES[DEFAULT_MODE])
     directive = mode_info["directive"]
 
+    custom_block = ""
+    if custom_directive and custom_directive_enabled:
+        clean_directive = str(custom_directive).strip()[:1000]
+        if clean_directive:
+            custom_block = (
+                f"\n\nUSER CUSTOM INSTRUCTIONS:\n"
+                f"The user has specified these additional guidelines:\n"
+                f"\"{clean_directive}\"\n"
+                f"- Harmonize these user preferences with the overarching summary synthesis without fabricating information."
+            )
+
     instructions = (
         f"You are synthesizing intermediate summaries from {total_chunks} sequential sections "
         f"of a long webpage into a single, cohesive, unified structured summary in '{mode_info['name']}' mode.\n\n"
-        f"{directive}\n\n"
+        f"{directive}{custom_block}\n\n"
         "STRICT FACTUALITY AND ACCURACY RULES:\n"
         "1. Strictly preserve the original meaning and factual accuracy of the combined sections.\n"
         "2. Do NOT introduce or assume information that is not present in the section summaries.\n"
@@ -288,10 +313,19 @@ def _call_openai_responses(client, instructions, user_input):
             raise SummarizerError(f"Summarization failed: {err_msg}")
 
 
-def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, chunk_overlap=DEFAULT_CHUNK_OVERLAP, mode=DEFAULT_MODE):
+def summarize_text(
+    article_text,
+    api_key=None,
+    chunk_size=DEFAULT_CHUNK_SIZE,
+    chunk_overlap=DEFAULT_CHUNK_OVERLAP,
+    mode=DEFAULT_MODE,
+    custom_directive=None,
+    custom_directive_enabled=None,
+):
     """
     Summarizes webpage text using OpenAI across configurable summarization modes.
     Supports single-pass for short content, or chunking & map-reduce for long webpages.
+    Supports user-defined custom prompt directives combined harmoniously with the selected mode.
     
     Modes:
     - quick: Concise overview with highest-impact takeaways.
@@ -309,6 +343,26 @@ def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, ch
     active_mode = (mode or "").strip().lower()
     if active_mode not in MODES:
         active_mode = DEFAULT_MODE
+
+    # Resolve custom prompt directives (from argument or local storage preferences)
+    active_directive = ""
+    active_enabled = False
+
+    if custom_directive is not None:
+        active_directive = str(custom_directive).strip()[:1000]
+        if custom_directive_enabled is not None:
+            active_enabled = bool(custom_directive_enabled)
+        else:
+            active_enabled = bool(active_directive)
+    else:
+        try:
+            from history import get_custom_directives
+            dir_info = get_custom_directives()
+            active_directive = dir_info.get("custom_directive", "")
+            active_enabled = dir_info.get("custom_directive_enabled", False)
+        except Exception:
+            active_directive = ""
+            active_enabled = False
 
     try:
         from byok import get_configured_api_key
@@ -338,11 +392,19 @@ def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, ch
 
     # Short webpage / Single-chunk path: Direct structured summarization
     if total_chunks == 1:
-        instructions, user_input = build_summarization_prompt(chunks[0], mode=active_mode)
+        instructions, user_input = build_summarization_prompt(
+            chunks[0],
+            mode=active_mode,
+            custom_directive=active_directive,
+            custom_directive_enabled=active_enabled,
+        )
         raw_output = _call_openai_responses(client, instructions, user_input)
         result = parse_and_validate_summary(raw_output)
         result["mode"] = active_mode
         result["mode_name"] = MODES[active_mode]["name"]
+        if active_directive and active_enabled:
+            result["custom_directive_applied"] = True
+            result["custom_directive"] = active_directive
         result["stats"] = {
             "total_chunks": 1,
             "is_map_reduce": False
@@ -388,12 +450,21 @@ def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, ch
         combined_text = "\n\n".join(sub_summaries)
 
     # Reduce Phase: Generate final structured summary from combined intermediate summaries
-    reduce_inst, reduce_input = build_reduce_prompt(combined_text, total_chunks, mode=active_mode)
+    reduce_inst, reduce_input = build_reduce_prompt(
+        combined_text,
+        total_chunks,
+        mode=active_mode,
+        custom_directive=active_directive,
+        custom_directive_enabled=active_enabled,
+    )
     final_raw_output = _call_openai_responses(client, reduce_inst, reduce_input)
     result = parse_and_validate_summary(final_raw_output)
 
     result["mode"] = active_mode
     result["mode_name"] = MODES[active_mode]["name"]
+    if active_directive and active_enabled:
+        result["custom_directive_applied"] = True
+        result["custom_directive"] = active_directive
     result["stats"] = {
         "total_chunks": total_chunks,
         "processed_chunks": len(intermediate_summaries),

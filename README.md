@@ -1,7 +1,7 @@
 # WebBrief AI
 
-> **Production Release — v1.0**  
-> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds.
+> **Production Release — v1.1**  
+> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with PDF document export and personalized prompt directives.
 
 ---
 
@@ -60,6 +60,18 @@ Built with enterprise-grade SSRF defense and a **Bring Your Own Key (BYOK)** sec
 - **Hierarchical Map-Reduce for Long Articles**:
   - Natural paragraph-aware chunking with token-safe sliding overlap.
   - Intermediate map reduction merges multi-chunk content into a single cohesive structured response without losing nuance.
+- **Professional PDF Document Export (New in v1.1)**:
+  - Generates downloadable, beautifully styled multi-page PDF summary briefs via ReportLab.
+  - Formatted document header with website title, source URL (clickable hyperlinks), mode badge, and timestamp.
+  - Clean typographic hierarchy for Overview, Key Points, Important Details, and Conclusion.
+  - Two-pass `NumberedCanvas` engine for automatic "Page X of Y" footers and running headers.
+  - Robust XML escaping and Unicode text handling (accents, symbols, smart quotes).
+- **Custom Prompt Directives & Personalization (New in v1.1)**:
+  - Dedicated custom instructions field in `/settings` allowing users to guide summary emphasis (e.g., pricing, API security, technical tradeoffs).
+  - Harmonious integration: Combines user guidance with Quick, Detailed, Bullet-Point, and Technical modes without overriding core factuality or JSON schema rules.
+  - Length validation and input sanitization (up to 1,000 characters).
+  - Quick enable/disable toggle switch and instant reset to defaults.
+  - Dual persistence model: SQLite preferences table for self-hosted instances; `localStorage` sync for hosted/serverless platforms.
 - **Summary History & SQLite Storage**:
   - Local database (`webbrief_history.db`) stores title, URL, mode, formatted timestamp, and full structured JSON data.
   - Zero-reload summary reopening directly into the dashboard without re-scraping.
@@ -195,6 +207,7 @@ WebBrief AI/
 ├── byok.py                 # Key validation, safe .env persistence, and serverless logic
 ├── chunker.py              # Paragraph-aware chunking and token overlap management
 ├── history.py              # Local SQLite summary persistence layer (CRUD)
+├── pdf_exporter.py         # ReportLab multi-page PDF generation engine with NumberedCanvas
 ├── scraper.py              # Dual static/dynamic scraper, SSRF firewall, Playwright engine
 ├── summarizer.py           # Multi-mode prompt engine, Map-Reduce pipeline, JSON parser
 ├── static/
