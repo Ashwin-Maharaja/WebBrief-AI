@@ -1,7 +1,7 @@
 # WebBrief AI
 
-> **Production Release — v1.2**  
-> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
+> **Production Release — v1.3**  
+> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
 
 ---
 
@@ -39,7 +39,22 @@ Built with enterprise-grade SSRF defense and a **Bring Your Own Key (BYOK)** sec
 
 ## 2. Features
 
-- **Multi-URL Batch Summarization (New in v1.2)**:
+- **Comparative Research & Dual-Source Synthesis (New in v1.3)**:
+  - **Side-by-Side Dual URL Submission**: Input two independent website URLs to run deep comparative fact-checking and analysis.
+  - **Shared Ground & Consensus Points**: Automatically isolates common arguments, shared premises, and mutual points of consensus.
+  - **Contradictions & Disagreements**: Identifies and highlights direct factual conflicts, opposing claims, or incompatible conclusions with alert callouts.
+  - **Differing Perspectives & Editorial Framing**: Outlines variations in tone, framing, target audience, and analytical methodology.
+  - **Comparative Claims Table**: Structured topic-by-topic comparison mapping Source A's claims directly against Source B's claims.
+  - **Unique Information**: Flags critical facts and context that appear exclusively in one article and are omitted by the other.
+  - **Conclusions Comparison & Synthesis**: Objective comparative assessment evaluating divergence or alignment without inventing unverified facts.
+  - **Comparative PDF Export**: Download dedicated, multi-page ReportLab comparative briefs with custom headers, tables, and conflict callouts.
+  - **Dual-URL History Tracking**: Saves comparative entries to SQLite history, tagged with `⚖️ Comparison` badges.
+- **Notion Integration & Export (New in v1.3)**:
+  - **Official Notion REST API Integration**: Connects via Notion Internal Integration Secrets (`secret_...` or `ntn_...`).
+  - **BYOK Credential Isolation**: Masked token storage, zero logging, and instant disconnect capability in Settings.
+  - **Structured Block Formatting**: Exports both individual and comparative summaries into native Notion blocks (callouts, dividers, headings, bullet lists, bold text, and hyperlinks).
+  - **Destination Page Picker**: Automatically queries accessible shared parent pages via Notion's Search API, with support for direct Page ID entry.
+- **Multi-URL Batch Summarization**:
   - **Dynamic Input Rows**: Tab-based switcher between Single and Batch URL modes. Dynamically add, remove, and manage up to 10 URLs per batch with real-time counters.
   - **Pre-Flight Validation & Duplicate Detection**: Validates each URL independently, displays field-specific error hints, and flags duplicate URLs before submission.
   - **Isolated Concurrency Engine**: Runs concurrent processing using `ThreadPoolExecutor` (bounded to 2–3 workers). Scraping or OpenAI API failures on one URL never terminate or impact the remaining batch.
@@ -215,7 +230,9 @@ WebBrief AI/
 ├── batch_processor.py      # Multi-URL batch processor, concurrency control, progress callback
 ├── byok.py                 # Key validation, safe .env persistence, and serverless logic
 ├── chunker.py              # Paragraph-aware chunking and token overlap management
-├── history.py              # Local SQLite summary persistence layer (CRUD)
+├── comparative_analyzer.py # Dual-source comparative research, claims matrix & fact synthesis
+├── history.py              # Local SQLite summary & comparison persistence layer (CRUD)
+├── notion_service.py       # Official Notion REST API client, block parser & page exporter
 ├── pdf_exporter.py         # ReportLab multi-page PDF generation engine with NumberedCanvas
 ├── scraper.py              # Dual static/dynamic scraper, SSRF firewall, Playwright engine
 ├── summarizer.py           # Multi-mode prompt engine, Map-Reduce pipeline, JSON parser

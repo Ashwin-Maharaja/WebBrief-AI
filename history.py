@@ -48,7 +48,10 @@ def init_db(db_path: Optional[str] = None) -> None:
                     mode_name TEXT NOT NULL,
                     summary_json TEXT NOT NULL,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    created_at_formatted TEXT NOT NULL
+                    created_at_formatted TEXT NOT NULL,
+                    entry_type TEXT DEFAULT 'single',
+                    url_b TEXT DEFAULT NULL,
+                    title_b TEXT DEFAULT NULL
                 )
             """)
             conn.execute("CREATE INDEX IF NOT EXISTS idx_history_created_at ON summary_history(created_at DESC)")
@@ -58,6 +61,17 @@ def init_db(db_path: Optional[str] = None) -> None:
                     value TEXT NOT NULL
                 )
             """)
+
+            # Auto-migrate v1.3 columns if existing database created on older version
+            for col_def in [
+                ("entry_type", "TEXT DEFAULT 'single'"),
+                ("url_b", "TEXT DEFAULT NULL"),
+                ("title_b", "TEXT DEFAULT NULL"),
+            ]:
+                try:
+                    conn.execute(f"ALTER TABLE summary_history ADD COLUMN {col_def[0]} {col_def[1]}")
+                except sqlite3.OperationalError:
+                    pass
         conn.close()
     except Exception as e:
         logger.warning("Failed to initialize SQLite history database: %s", str(e))
@@ -69,10 +83,13 @@ def add_history_entry(
     mode: str,
     mode_name: str,
     summary: Dict[str, Any],
+    entry_type: str = "single",
+    url_b: Optional[str] = None,
+    title_b: Optional[str] = None,
     db_path: Optional[str] = None
 ) -> Optional[Dict[str, Any]]:
     """
-    Adds a new summary entry to the history database.
+    Adds a new summary or comparison entry to the history database.
 
     Returns:
         The newly created history entry dictionary, or None on failure.
@@ -86,6 +103,8 @@ def add_history_entry(
     summary_json = json.dumps(summary)
     safe_title = (title or "Untitled Webpage").strip()
     safe_url = (url or "").strip()
+    safe_url_b = (url_b or "").strip() if url_b else None
+    safe_title_b = (title_b or "").strip() if title_b else None
 
     try:
         conn = get_db_connection(db_path)
@@ -93,8 +112,9 @@ def add_history_entry(
             conn.execute(
                 """
                 INSERT INTO summary_history (
-                    id, title, url, mode, mode_name, summary_json, created_at, created_at_formatted
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    id, title, url, mode, mode_name, summary_json, created_at, created_at_formatted,
+                    entry_type, url_b, title_b
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     entry_id,
@@ -105,6 +125,9 @@ def add_history_entry(
                     summary_json,
                     now.isoformat(),
                     created_at_formatted,
+                    entry_type,
+                    safe_url_b,
+                    safe_title_b,
                 )
             )
         conn.close()
@@ -117,6 +140,9 @@ def add_history_entry(
             "mode_name": mode_name,
             "summary": summary,
             "created_at_formatted": created_at_formatted,
+            "entry_type": entry_type,
+            "url_b": safe_url_b,
+            "title_b": safe_title_b,
         }
     except Exception as e:
         logger.warning("Failed to add history entry: %s", str(e))
@@ -134,7 +160,8 @@ def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, title, url, mode, mode_name, summary_json, created_at, created_at_formatted
+            SELECT id, title, url, mode, mode_name, summary_json, created_at, created_at_formatted,
+                   entry_type, url_b, title_b
             FROM summary_history
             ORDER BY created_at DESC
             LIMIT ?
@@ -148,6 +175,16 @@ def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str
             except Exception:
                 parsed_summary = {}
 
+            entry_type = "single"
+            url_b = None
+            title_b = None
+            try:
+                entry_type = row["entry_type"] or "single"
+                url_b = row["url_b"]
+                title_b = row["title_b"]
+            except (IndexError, KeyError):
+                pass
+
             entries.append({
                 "id": row["id"],
                 "title": row["title"],
@@ -156,6 +193,9 @@ def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str
                 "mode_name": row["mode_name"],
                 "summary": parsed_summary,
                 "created_at_formatted": row["created_at_formatted"],
+                "entry_type": entry_type,
+                "url_b": url_b,
+                "title_b": title_b,
             })
         conn.close()
     except Exception as e:
@@ -174,7 +214,8 @@ def get_history_entry(entry_id: str, db_path: Optional[str] = None) -> Optional[
         cursor = conn.cursor()
         cursor.execute(
             """
-            SELECT id, title, url, mode, mode_name, summary_json, created_at, created_at_formatted
+            SELECT id, title, url, mode, mode_name, summary_json, created_at, created_at_formatted,
+                   entry_type, url_b, title_b
             FROM summary_history
             WHERE id = ?
             """,
@@ -189,6 +230,16 @@ def get_history_entry(entry_id: str, db_path: Optional[str] = None) -> Optional[
             except Exception:
                 parsed_summary = {}
 
+            entry_type = "single"
+            url_b = None
+            title_b = None
+            try:
+                entry_type = row["entry_type"] or "single"
+                url_b = row["url_b"]
+                title_b = row["title_b"]
+            except (IndexError, KeyError):
+                pass
+
             return {
                 "id": row["id"],
                 "title": row["title"],
@@ -197,6 +248,9 @@ def get_history_entry(entry_id: str, db_path: Optional[str] = None) -> Optional[
                 "mode_name": row["mode_name"],
                 "summary": parsed_summary,
                 "created_at_formatted": row["created_at_formatted"],
+                "entry_type": entry_type,
+                "url_b": url_b,
+                "title_b": title_b,
             }
     except Exception as e:
         logger.warning("Failed to fetch history entry %s: %s", entry_id, str(e))

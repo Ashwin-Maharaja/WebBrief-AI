@@ -509,3 +509,289 @@ def generate_batch_summary_pdf(
     buffer.seek(0)
     return buffer
 
+
+def get_custom_pdf_styles():
+    """Builds reusable typographic styles for comparative and batch ReportLab flowables."""
+    base = getSampleStyleSheet()
+    styles = {}
+    styles["Title"] = ParagraphStyle(
+        "CompTitle",
+        parent=base["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=16,
+        leading=20,
+        textColor=colors.HexColor("#0f172a"),
+        spaceAfter=10,
+    )
+    styles["SectionH2"] = ParagraphStyle(
+        "CompH2",
+        parent=base["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor("#1e293b"),
+        spaceBefore=12,
+        spaceAfter=6,
+        keepWithNext=True,
+    )
+    styles["SectionH3"] = ParagraphStyle(
+        "CompH3",
+        parent=base["Heading3"],
+        fontName="Helvetica-Bold",
+        fontSize=10,
+        leading=13,
+        textColor=colors.HexColor("#334155"),
+        spaceBefore=6,
+        spaceAfter=3,
+        keepWithNext=True,
+    )
+    styles["Body"] = ParagraphStyle(
+        "CompBody",
+        parent=base["Normal"],
+        fontName="Helvetica",
+        fontSize=9.5,
+        leading=14,
+        textColor=colors.HexColor("#334155"),
+        spaceAfter=6,
+    )
+    styles["Bullet"] = ParagraphStyle(
+        "CompBullet",
+        parent=base["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=13.5,
+        textColor=colors.HexColor("#334155"),
+        leftIndent=12,
+        firstLineIndent=-12,
+        spaceAfter=4,
+    )
+    styles["MetaVal"] = ParagraphStyle(
+        "CompMeta",
+        parent=base["Normal"],
+        fontName="Helvetica",
+        fontSize=8.5,
+        leading=11.5,
+        textColor=colors.HexColor("#64748b"),
+    )
+    return styles
+
+
+def generate_comparison_pdf(comp: Dict[str, Any]) -> io.BytesIO:
+    """
+    Generates a beautifully styled, multi-page ReportLab PDF
+    specifically structured for comparative research briefs.
+    """
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        leftMargin=40,
+        rightMargin=40,
+        topMargin=45,
+        bottomMargin=50,
+    )
+
+    styles = get_custom_pdf_styles()
+    elements = []
+
+    content_width = letter[0] - 80  # 612 - 80 = 532 pt
+
+    art_a = comp.get("article_a", {})
+    art_b = comp.get("article_b", {})
+    title_a = sanitize_text_for_pdf(art_a.get("title", "Article A"))
+    url_a = sanitize_text_for_pdf(art_a.get("url", ""))
+    overview_a = sanitize_text_for_pdf(art_a.get("overview", ""))
+
+    title_b = sanitize_text_for_pdf(art_b.get("title", "Article B"))
+    url_b = sanitize_text_for_pdf(art_b.get("url", ""))
+    overview_b = sanitize_text_for_pdf(art_b.get("overview", ""))
+
+    comp_title = sanitize_text_for_pdf(comp.get("title", f"Comparative Analysis: {title_a} vs {title_b}"))
+    date_str = datetime.datetime.now().strftime("%B %d, %Y • %I:%M %p")
+
+    # Document Header Banner
+    header_data = [
+        [
+            Paragraph("<b>WebBrief AI • Comparative Research Brief</b>", styles["MetaVal"]),
+            Paragraph(f"<b>Generated:</b> {date_str}", styles["MetaVal"]),
+        ]
+    ]
+    header_table = Table(header_data, colWidths=[content_width * 0.6, content_width * 0.4])
+    header_table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("ALIGN", (1, 0), (1, 0), "RIGHT"),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2),
+    ]))
+    elements.append(header_table)
+    elements.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#6366f1"), spaceAfter=12))
+
+    # Main Title
+    elements.append(Paragraph(comp_title, styles["Title"]))
+    elements.append(Spacer(1, 10))
+
+    # Side-by-side Source Overview Cards Table
+    url_a_html = f'<link href="{url_a}" color="#2563eb"><u>{url_a[:55]}...</u></link>' if len(url_a) > 55 else f'<link href="{url_a}" color="#2563eb"><u>{url_a}</u></link>'
+    url_b_html = f'<link href="{url_b}" color="#2563eb"><u>{url_b[:55]}...</u></link>' if len(url_b) > 55 else f'<link href="{url_b}" color="#2563eb"><u>{url_b}</u></link>'
+
+    card_a_content = [
+        Paragraph("<b>SOURCE A</b>", styles["SectionH3"]),
+        Paragraph(f"<b>Title:</b> {title_a}", styles["Body"]),
+        Paragraph(f"<b>URL:</b> {url_a_html}", styles["MetaVal"]),
+        Spacer(1, 4),
+        Paragraph(f"<b>Overview:</b> {overview_a}", styles["Body"]),
+    ]
+    card_b_content = [
+        Paragraph("<b>SOURCE B</b>", styles["SectionH3"]),
+        Paragraph(f"<b>Title:</b> {title_b}", styles["Body"]),
+        Paragraph(f"<b>URL:</b> {url_b_html}", styles["MetaVal"]),
+        Spacer(1, 4),
+        Paragraph(f"<b>Overview:</b> {overview_b}", styles["Body"]),
+    ]
+
+    sources_table = Table([[card_a_content, card_b_content]], colWidths=[content_width * 0.485, content_width * 0.485])
+    sources_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, 0), colors.HexColor("#f8fafc")),
+        ("BACKGROUND", (1, 0), (1, 0), colors.HexColor("#f8fafc")),
+        ("BOX", (0, 0), (0, 0), 1, colors.HexColor("#cbd5e1")),
+        ("BOX", (1, 0), (1, 0), 1, colors.HexColor("#cbd5e1")),
+        ("TOPPADDING", (0, 0), (-1, -1), 8),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 8),
+        ("LEFTPADDING", (0, 0), (-1, -1), 10),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+    ]))
+    elements.append(sources_table)
+    elements.append(Spacer(1, 14))
+
+    # 1. Common Ground & Shared Arguments
+    common_points = comp.get("common_points", [])
+    if common_points:
+        elements.append(Paragraph("🤝 Common Arguments & Shared Information", styles["SectionH2"]))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=6))
+        for cp in common_points:
+            clean_cp = sanitize_text_for_pdf(cp)
+            if clean_cp:
+                elements.append(Paragraph(f"• &nbsp; {clean_cp}", styles["Bullet"]))
+        elements.append(Spacer(1, 10))
+
+    # 2. Contradictions & Disagreements (Crucial)
+    contradictions = comp.get("contradictions", [])
+    if contradictions:
+        elements.append(Paragraph("⚠️ Contradictions & Disagreements", styles["SectionH2"]))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#f87171"), spaceAfter=6))
+        for cd in contradictions:
+            clean_cd = sanitize_text_for_pdf(cd)
+            if clean_cd:
+                # Highlight in light red callout box
+                callout_data = [[Paragraph(f"<b>CONFLICT:</b> {clean_cd}", styles["Body"])]]
+                callout_t = Table(callout_data, colWidths=[content_width])
+                callout_t.setStyle(TableStyle([
+                    ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fef2f2")),
+                    ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#fca5a5")),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                ]))
+                elements.append(callout_t)
+                elements.append(Spacer(1, 4))
+        elements.append(Spacer(1, 10))
+
+    # 3. Differing Perspectives
+    perspectives = comp.get("differing_perspectives", [])
+    if perspectives:
+        elements.append(Paragraph("🎭 Differing Perspectives & Framing", styles["SectionH2"]))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=6))
+        for p in perspectives:
+            clean_p = sanitize_text_for_pdf(p)
+            if clean_p:
+                elements.append(Paragraph(f"• &nbsp; {clean_p}", styles["Bullet"]))
+        elements.append(Spacer(1, 10))
+
+    # 4. Key Facts & Claims Table
+    claims = comp.get("key_facts_claims", [])
+    if claims:
+        elements.append(Paragraph("📊 Key Claims & Comparative Facts", styles["SectionH2"]))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=6))
+
+        table_rows = [
+            [
+                Paragraph("<b>Topic / Point</b>", styles["SectionH3"]),
+                Paragraph(f"<b>{title_a[:35]} Claim</b>", styles["SectionH3"]),
+                Paragraph(f"<b>{title_b[:35]} Claim</b>", styles["SectionH3"]),
+            ]
+        ]
+        for c in claims:
+            table_rows.append([
+                Paragraph(sanitize_text_for_pdf(c.get("topic", "Topic")), styles["Body"]),
+                Paragraph(sanitize_text_for_pdf(c.get("article_a_claim", "")), styles["Body"]),
+                Paragraph(sanitize_text_for_pdf(c.get("article_b_claim", "")), styles["Body"]),
+            ])
+
+        col_w = [content_width * 0.28, content_width * 0.36, content_width * 0.36]
+        claims_table = Table(table_rows, colWidths=col_w)
+        claims_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#f1f5f9")),
+            ("BOX", (0, 0), (-1, -1), 0.75, colors.HexColor("#cbd5e1")),
+            ("INNERGRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#e2e8f0")),
+            ("TOPPADDING", (0, 0), (-1, -1), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+            ("LEFTPADDING", (0, 0), (-1, -1), 6),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ]))
+        elements.append(claims_table)
+        elements.append(Spacer(1, 10))
+
+    # 5. Unique Information
+    unique_a = comp.get("unique_to_a", [])
+    unique_b = comp.get("unique_to_b", [])
+    if unique_a or unique_b:
+        elements.append(Paragraph("💎 Unique Information", styles["SectionH2"]))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=6))
+        if unique_a:
+            elements.append(Paragraph(f"<b>Present only in Source A ({title_a}):</b>", styles["Body"]))
+            for ua in unique_a:
+                elements.append(Paragraph(f"• &nbsp; {sanitize_text_for_pdf(ua)}", styles["Bullet"]))
+            elements.append(Spacer(1, 4))
+        if unique_b:
+            elements.append(Paragraph(f"<b>Present only in Source B ({title_b}):</b>", styles["Body"]))
+            for ub in unique_b:
+                elements.append(Paragraph(f"• &nbsp; {sanitize_text_for_pdf(ub)}", styles["Bullet"]))
+        elements.append(Spacer(1, 10))
+
+    # 6. Conclusions Comparison
+    conc = comp.get("conclusions_comparison", {})
+    if conc:
+        elements.append(Paragraph("🏁 Conclusions Comparison", styles["SectionH2"]))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#cbd5e1"), spaceAfter=6))
+        if conc.get("article_a_conclusion"):
+            elements.append(Paragraph(f"<b>Source A Conclusion:</b> {sanitize_text_for_pdf(conc.get('article_a_conclusion'))}", styles["Body"]))
+        if conc.get("article_b_conclusion"):
+            elements.append(Paragraph(f"<b>Source B Conclusion:</b> {sanitize_text_for_pdf(conc.get('article_b_conclusion'))}", styles["Body"]))
+        if conc.get("comparison_note"):
+            elements.append(Paragraph(f"<b>Comparison Analysis:</b> {sanitize_text_for_pdf(conc.get('comparison_note'))}", styles["Body"]))
+        elements.append(Spacer(1, 10))
+
+    # 7. Overall Synthesis & Assessment
+    synthesis = comp.get("synthesis", "")
+    if synthesis:
+        elements.append(Paragraph("🎯 Overall Synthesis & Assessment", styles["SectionH2"]))
+        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor("#10b981"), spaceAfter=6))
+        synth_data = [[Paragraph(sanitize_text_for_pdf(synthesis), styles["Body"])]]
+        synth_t = Table(synth_data, colWidths=[content_width])
+        synth_t.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#ecfdf5")),
+            ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#a7f3d0")),
+            ("TOPPADDING", (0, 0), (-1, -1), 7),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+            ("LEFTPADDING", (0, 0), (-1, -1), 9),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ]))
+        elements.append(synth_t)
+
+    doc.build(elements, canvasmaker=NumberedCanvas)
+    buffer.seek(0)
+    return buffer
+
+

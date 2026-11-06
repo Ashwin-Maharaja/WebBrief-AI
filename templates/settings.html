@@ -127,7 +127,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.2</span>
+                    <span class="badge">v1.3</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -321,7 +321,64 @@
                 </div>
             </div>
 
-            <!-- 5. Summary History Management -->
+            <!-- 5. Notion Integration -->
+            <div class="settings-section" id="notion-integration-section">
+                <div class="section-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-size: 1.25rem;">📓</span>
+                        <h3>Notion Integration (Export & Sync)</h3>
+                    </div>
+                    <span id="notion-status-badge" class="badge" style="background: rgba(168, 85, 247, 0.15); color: #c084fc;">
+                        Checking Status...
+                    </span>
+                </div>
+
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5;">
+                    Connect an internal Notion integration to export your single summary briefs and comparative research directly into your Notion workspace pages with structured blocks, bullet lists, callouts, and source links.
+                </p>
+
+                <div id="notion-connected-view" style="display: none; margin-bottom: 14px;">
+                    <div class="status-box" style="margin-bottom: 12px;">
+                        <div class="status-row">
+                            <span class="status-label">Connection Status</span>
+                            <span class="status-val" style="color: #10b981; font-weight: 600;" id="notion-bot-label">✓ Connected to Notion</span>
+                        </div>
+                        <div class="status-row">
+                            <span class="status-label">Security & Token</span>
+                            <span class="status-val">Token Masked • Zero Logged • Secure BYOK</span>
+                        </div>
+                    </div>
+                    <button type="button" id="notion-disconnect-btn" onclick="disconnectNotion()" class="btn btn-secondary" style="font-size: 0.85rem; color: #f87171;">
+                        Disconnect Notion Integration
+                    </button>
+                </div>
+
+                <div id="notion-connect-view" style="display: none;">
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label for="notion-token-input" class="form-label" style="font-size: 0.88rem;">Notion Internal Integration Secret</label>
+                        <input
+                            type="password"
+                            id="notion-token-input"
+                            class="form-control"
+                            placeholder="secret_... or ntn_..."
+                            autocomplete="off"
+                            style="font-family: monospace;"
+                        >
+                        <small style="display: block; font-size: 0.78rem; color: var(--text-muted); margin-top: 4px;">
+                            Create an internal integration at <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener noreferrer" style="color: var(--primary);">notion.so/my-integrations</a>, copy your token, and share your target Notion pages with your integration (click <code>...</code> &rarr; <code>Connections</code> &rarr; select integration).
+                        </small>
+                    </div>
+
+                    <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                        <button type="button" id="notion-connect-btn" onclick="connectNotion()" class="btn btn-primary" style="padding: 0.55rem 1.25rem; font-size: 0.88rem;">
+                            Connect Notion
+                        </button>
+                        <span id="notion-connect-feedback" style="font-size: 0.82rem; font-weight: 600;"></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. Summary History Management -->
             <div class="settings-section">
                 <div class="section-header">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -368,7 +425,7 @@
                 <div class="status-box">
                     <div class="status-row">
                         <span class="status-label">Release Version</span>
-                        <span class="status-val"><span class="badge">v1.2</span></span>
+                        <span class="status-val"><span class="badge">v1.3</span></span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Architecture</span>
@@ -575,6 +632,88 @@
                 }, 3000);
             });
         }
+
+        // Notion Integration management
+        async function checkNotionStatus() {
+            const badge = document.getElementById("notion-status-badge");
+            const connectedView = document.getElementById("notion-connected-view");
+            const connectView = document.getElementById("notion-connect-view");
+
+            try {
+                const res = await fetch("/api/notion/status");
+                const data = await res.json();
+                if (data.is_configured) {
+                    badge.textContent = "✓ Connected";
+                    badge.style.background = "rgba(16, 185, 129, 0.15)";
+                    badge.style.color = "#34d399";
+                    connectedView.style.display = "block";
+                    connectView.style.display = "none";
+                } else {
+                    badge.textContent = "Not Connected";
+                    badge.style.background = "rgba(255, 255, 255, 0.08)";
+                    badge.style.color = "var(--text-muted)";
+                    connectedView.style.display = "none";
+                    connectView.style.display = "block";
+                }
+            } catch (err) {
+                badge.textContent = "Offline";
+                connectView.style.display = "block";
+            }
+        }
+
+        async function connectNotion() {
+            const input = document.getElementById("notion-token-input");
+            const feedback = document.getElementById("notion-connect-feedback");
+            const btn = document.getElementById("notion-connect-btn");
+            const token = input.value.trim();
+
+            if (!token) {
+                feedback.textContent = "Please enter your Notion secret token.";
+                feedback.style.color = "var(--error-text)";
+                return;
+            }
+
+            btn.disabled = true;
+            feedback.textContent = "Connecting to Notion...";
+            feedback.style.color = "var(--primary)";
+
+            try {
+                const res = await fetch("/api/notion/connect", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ token: token })
+                });
+                const data = await res.json();
+                if (data.valid) {
+                    feedback.textContent = "✓ Connected successfully!";
+                    feedback.style.color = "#10b981";
+                    input.value = "";
+                    setTimeout(checkNotionStatus, 800);
+                } else {
+                    feedback.textContent = data.message || "Failed to connect to Notion.";
+                    feedback.style.color = "var(--error-text)";
+                }
+            } catch (err) {
+                feedback.textContent = "Network error connecting to Notion.";
+                feedback.style.color = "var(--error-text)";
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function disconnectNotion() {
+            if (!confirm("Are you sure you want to disconnect your Notion integration?")) return;
+            try {
+                await fetch("/api/notion/disconnect", { method: "POST" });
+                checkNotionStatus();
+            } catch (err) {
+                alert("Failed to disconnect Notion.");
+            }
+        }
+
+        document.addEventListener("DOMContentLoaded", () => {
+            checkNotionStatus();
+        });
     </script>
 </body>
 </html>

@@ -31,7 +31,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.2</span>
+                    <span class="badge">v1.3</span>
                 </div>
             </div>
             
@@ -47,18 +47,18 @@
                 </button>
             </div>
 
-            <p class="tagline" style="margin-top: 12px;">Accurate, multi-mode AI summaries tailored for quick, detailed, bulleted, or technical briefs.</p>
+            <p class="tagline" style="margin-top: 12px;">Accurate, multi-mode AI summaries, comparative research & Notion export.</p>
         </header>
 
         <!-- Main Form Card -->
         <section class="card input-card">
-            <!-- Mode Switcher Tabs: Single URL vs Batch Summarize -->
+            <!-- Mode Switcher Tabs: Single URL vs Batch Summarize vs Compare Articles -->
             <div class="tab-bar">
                 <button type="button" class="tab-btn active" id="tab-single-btn" onclick="switchSubmissionTab('single')">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <circle cx="12" cy="12" r="10"/>
-                        <line x1="12" y1="8" x2="12" y2="12"/>
-                        <line x1="12" y1="16" x2="12.01" y2="16"/>
+                        <line x1="2" y1="12" x2="22" y2="12"/>
+                        <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
                     </svg>
                     <span>Single Webpage</span>
                 </button>
@@ -69,6 +69,15 @@
                         <path d="M8 11h8"/>
                     </svg>
                     <span>Batch Summarize (2–{{ max_batch_urls or 10 }})</span>
+                </button>
+                <button type="button" class="tab-btn" id="tab-compare-btn" onclick="switchSubmissionTab('compare')">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M16 16v1a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h11a2 2 0 0 1 2 2v1"/>
+                        <path d="M18 8h4a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-4"/>
+                        <circle cx="8" cy="12" r="2"/>
+                        <circle cx="16" cy="12" r="2"/>
+                    </svg>
+                    <span>Compare Two Articles</span>
                 </button>
             </div>
 
@@ -109,6 +118,50 @@
                         <button type="button" id="btn-add-batch-url" class="btn-add-url" onclick="addBatchUrlRow()">
                             + Add Another Webpage URL
                         </button>
+                    </div>
+                </div>
+
+                <!-- Compare Two Articles Container (Hidden by default) -->
+                <div id="compare-container" style="display: none;">
+                    <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 12px;">
+                        Submit two articles to generate an objective side-by-side comparative analysis, highlighting shared ground, key factual claims, contradictions, and divergent conclusions.
+                    </p>
+                    <div class="compare-inputs-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="compare-url-a" class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Source Article A</span>
+                                <span class="compare-source-tag tag-source-a">Source A</span>
+                            </label>
+                            <div class="input-wrapper">
+                                <span class="input-icon">📄</span>
+                                <input
+                                    type="url"
+                                    id="compare-url-a"
+                                    class="form-control"
+                                    placeholder="https://example.com/article-a"
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <div id="error-compare-a" class="field-error-msg" style="display: none; color: #ef4444; font-size: 12px; margin-top: 4px;"></div>
+                        </div>
+
+                        <div class="form-group" style="margin-bottom: 0;">
+                            <label for="compare-url-b" class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
+                                <span>Source Article B</span>
+                                <span class="compare-source-tag tag-source-b">Source B</span>
+                            </label>
+                            <div class="input-wrapper">
+                                <span class="input-icon">📄</span>
+                                <input
+                                    type="url"
+                                    id="compare-url-b"
+                                    class="form-control"
+                                    placeholder="https://example.com/contrasting-view-b"
+                                    autocomplete="off"
+                                >
+                            </div>
+                            <div id="error-compare-b" class="field-error-msg" style="display: none; color: #ef4444; font-size: 12px; margin-top: 4px;"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -340,6 +393,11 @@
                         <span id="export-pdf-text">Export PDF</span>
                     </button>
 
+                    <button type="button" id="export-notion-single-btn" class="btn btn-notion" title="Export this summary to your Notion workspace">
+                        <span>📓</span>
+                        <span>Export to Notion</span>
+                    </button>
+
                     <button type="button" id="new-summary-btn" class="btn btn-secondary" title="Summarize another webpage">
                         + New Summary
                     </button>
@@ -424,9 +482,244 @@
             </div>
         </section>
 
+        <!-- Comparative Research Results Card (New in v1.3) -->
+        <section id="compare-results-card" class="card result-card" style="display: none;">
+            <!-- Header -->
+            <div class="result-header">
+                <div>
+                    <div class="result-title-group" style="margin-bottom: 8px;">
+                        <span class="sparkle-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
+                                <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/>
+                            </svg>
+                        </span>
+                        <h2 id="compare-title" class="article-title">Comparative Analysis</h2>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; font-weight: 700;">
+                            ⚖️ Comparative Research
+                        </span>
+                        <span class="badge" style="background: var(--bg-secondary); color: var(--text-muted);">
+                            Dual Source Synthesis
+                        </span>
+                    </div>
+                </div>
+
+                <!-- Comparative Actions -->
+                <div class="result-actions" style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <button type="button" id="compare-copy-btn" class="btn btn-copy" title="Copy full Markdown comparison">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                        </svg>
+                        <span>Copy Comparison</span>
+                    </button>
+
+                    <button type="button" id="compare-export-pdf-btn" class="btn btn-secondary" title="Export comparative report as PDF">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                        </svg>
+                        <span>Export as PDF</span>
+                    </button>
+
+                    <button type="button" id="compare-export-notion-btn" class="btn btn-notion" title="Export comparison to Notion workspace">
+                        <span>📓</span>
+                        <span>Export to Notion</span>
+                    </button>
+
+                    <button type="button" id="compare-new-btn" class="btn btn-secondary" onclick="switchSubmissionTab('compare')">
+                        + New Comparison
+                    </button>
+                </div>
+            </div>
+
+            <!-- Side-by-side Source Overviews Grid (Stacked on mobile) -->
+            <div class="compare-sources-grid" style="margin-top: 18px;">
+                <div class="compare-source-card" id="card-source-a">
+                    <div class="compare-source-header">
+                        <span class="compare-source-tag tag-source-a">Source A</span>
+                        <a id="source-a-url" href="#" target="_blank" rel="noopener noreferrer" class="compare-source-url">source-a.com</a>
+                    </div>
+                    <h4 id="source-a-title" class="compare-source-title">Article A Title</h4>
+                    <p id="source-a-overview" class="compare-source-overview">Overview of Article A</p>
+                </div>
+
+                <div class="compare-source-card" id="card-source-b">
+                    <div class="compare-source-header">
+                        <span class="compare-source-tag tag-source-b">Source B</span>
+                        <a id="source-b-url" href="#" target="_blank" rel="noopener noreferrer" class="compare-source-url">source-b.com</a>
+                    </div>
+                    <h4 id="source-b-title" class="compare-source-title">Article B Title</h4>
+                    <p id="source-b-overview" class="compare-source-overview">Overview of Article B</p>
+                </div>
+            </div>
+
+            <!-- Structured Comparison Sections -->
+            <div class="structured-content" style="margin-top: 10px;">
+                <!-- 1. Common Ground & Shared Arguments -->
+                <div class="summary-section" id="sec-common-points">
+                    <div class="section-header">
+                        <div class="section-header-title">
+                            <span class="section-icon">🤝</span>
+                            <h3 class="section-title">Common Arguments & Shared Information</h3>
+                        </div>
+                    </div>
+                    <ul id="compare-common-list" class="points-list"></ul>
+                </div>
+
+                <!-- 2. Contradictions & Disagreements -->
+                <div class="summary-section" id="sec-contradictions">
+                    <div class="section-header">
+                        <div class="section-header-title">
+                            <span class="section-icon">⚠️</span>
+                            <h3 class="section-title">Contradictions & Disagreements</h3>
+                        </div>
+                    </div>
+                    <div id="compare-contradictions-container"></div>
+                </div>
+
+                <!-- 3. Differing Perspectives -->
+                <div class="summary-section" id="sec-perspectives">
+                    <div class="section-header">
+                        <div class="section-header-title">
+                            <span class="section-icon">🎭</span>
+                            <h3 class="section-title">Differing Perspectives & Framing</h3>
+                        </div>
+                    </div>
+                    <ul id="compare-perspectives-list" class="points-list"></ul>
+                </div>
+
+                <!-- 4. Key Claims Comparison Table -->
+                <div class="summary-section" id="sec-claims-table">
+                    <div class="section-header">
+                        <div class="section-header-title">
+                            <span class="section-icon">📊</span>
+                            <h3 class="section-title">Key Claims & Fact Comparison</h3>
+                        </div>
+                    </div>
+                    <div class="claims-table-wrapper">
+                        <table class="claims-table">
+                            <thead>
+                                <tr>
+                                    <th style="width: 25%;">Topic / Metric</th>
+                                    <th style="width: 37.5%;" id="th-claim-a">Source A Claim</th>
+                                    <th style="width: 37.5%;" id="th-claim-b">Source B Claim</th>
+                                </tr>
+                            </thead>
+                            <tbody id="compare-claims-tbody"></tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- 5. Unique Information -->
+                <div class="summary-section" id="sec-unique-info">
+                    <div class="section-header">
+                        <div class="section-header-title">
+                            <span class="section-icon">💎</span>
+                            <h3 class="section-title">Unique Information</h3>
+                        </div>
+                    </div>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;" class="compare-sources-grid">
+                        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 16px;">
+                            <strong style="color: var(--primary); font-size: 13px; display: block; margin-bottom: 6px;" id="label-unique-a">Unique to Source A:</strong>
+                            <ul id="compare-unique-a-list" class="points-list" style="margin-bottom: 0;"></ul>
+                        </div>
+                        <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 16px;">
+                            <strong style="color: #34d399; font-size: 13px; display: block; margin-bottom: 6px;" id="label-unique-b">Unique to Source B:</strong>
+                            <ul id="compare-unique-b-list" class="points-list" style="margin-bottom: 0;"></ul>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 6. Conclusions Comparison -->
+                <div class="summary-section" id="sec-conclusions-comp">
+                    <div class="section-header">
+                        <div class="section-header-title">
+                            <span class="section-icon">🏁</span>
+                            <h3 class="section-title">Conclusions Comparison</h3>
+                        </div>
+                    </div>
+                    <div id="compare-conclusions-container" style="display: flex; flex-direction: column; gap: 8px;"></div>
+                </div>
+
+                <!-- 7. Overall Synthesis & Assessment -->
+                <div class="summary-section" id="sec-synthesis">
+                    <div class="section-header">
+                        <div class="section-header-title">
+                            <span class="section-icon">🎯</span>
+                            <h3 class="section-title">Overall Synthesis & Assessment</h3>
+                        </div>
+                    </div>
+                    <div class="compare-synthesis-card">
+                        <p id="compare-synthesis-text" class="synthesis-text"></p>
+                    </div>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Notion Export Modal Dialog -->
+        <div id="notion-modal" class="notion-modal-overlay">
+            <div class="notion-modal-card">
+                <div class="notion-modal-header">
+                    <div class="notion-modal-title">
+                        <span>📓</span>
+                        <span>Export to Notion Workspace</span>
+                    </div>
+                    <button type="button" class="notion-modal-close" onclick="closeNotionModal()">&times;</button>
+                </div>
+
+                <div id="notion-modal-body">
+                    <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5;">
+                        Select an accessible Notion destination page to create a beautifully formatted document with blocks, callouts, and source links.
+                    </p>
+
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label for="notion-page-select" class="form-label" style="font-size: 13px;">Destination Notion Page</label>
+                        <select id="notion-page-select" class="notion-page-select">
+                            <option value="">Loading accessible pages...</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group" style="margin-bottom: 16px;">
+                        <label for="notion-custom-page-id" class="form-label" style="font-size: 12px; color: var(--text-muted);">Or enter Page ID / URL directly</label>
+                        <input
+                            type="text"
+                            id="notion-custom-page-id"
+                            class="form-control"
+                            placeholder="e.g. 1a2b3c4d... or notion.so/workspace/Page-1a2b3c4d..."
+                            style="font-size: 13px;"
+                        >
+                    </div>
+
+                    <div id="notion-export-alert" class="alert alert-error" style="display: none; font-size: 13px; padding: 10px 14px; margin-bottom: 14px;"></div>
+
+                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px;">
+                        <button type="button" class="btn btn-secondary" onclick="closeNotionModal()">Cancel</button>
+                        <button type="button" id="notion-submit-export-btn" class="btn btn-primary" onclick="submitNotionExport()">
+                            Export Page Now
+                        </button>
+                    </div>
+                </div>
+
+                <div id="notion-modal-success" style="display: none; text-align: center; padding: 16px 0;">
+                    <div style="font-size: 36px; margin-bottom: 10px;">🎉</div>
+                    <h3 style="font-size: 17px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px;">Successfully Exported to Notion!</h3>
+                    <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 16px;" id="notion-success-desc">
+                        Your brief has been published as a structured page.
+                    </p>
+                    <a id="notion-open-page-link" href="#" target="_blank" rel="noopener noreferrer" class="btn btn-primary" style="display: inline-flex; text-decoration: none;">
+                        Open Page in Notion &rarr;
+                    </a>
+                </div>
+            </div>
+        </div>
+
         <!-- Footer -->
         <footer class="app-footer">
-            <p>WebBrief AI v1.2 • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI v1.3 • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>
@@ -525,17 +818,24 @@
                 hideError();
                 document.getElementById("tab-single-btn")?.classList.toggle("active", tab === 'single');
                 document.getElementById("tab-batch-btn")?.classList.toggle("active", tab === 'batch');
+                document.getElementById("tab-compare-btn")?.classList.toggle("active", tab === 'compare');
                 
                 const singleContainer = document.getElementById("single-url-container");
                 const batchContainer = document.getElementById("batch-url-container");
+                const compareContainer = document.getElementById("compare-container");
+                const modeSelector = document.querySelector(".mode-selector-grid")?.closest(".form-group");
 
                 if (tab === 'single') {
                     if (singleContainer) singleContainer.style.display = "block";
                     if (batchContainer) batchContainer.style.display = "none";
+                    if (compareContainer) compareContainer.style.display = "none";
+                    if (modeSelector) modeSelector.style.display = "block";
                     if (btnText) btnText.textContent = "Summarize Webpage";
-                } else {
+                } else if (tab === 'batch') {
                     if (singleContainer) singleContainer.style.display = "none";
                     if (batchContainer) batchContainer.style.display = "block";
+                    if (compareContainer) compareContainer.style.display = "none";
+                    if (modeSelector) modeSelector.style.display = "block";
                     // Initialize with 2 rows if empty
                     const list = document.getElementById("batch-url-list");
                     if (list && list.children.length === 0) {
@@ -543,6 +843,12 @@
                         addBatchUrlRow();
                     }
                     updateBatchSubmitBtnText();
+                } else if (tab === 'compare') {
+                    if (singleContainer) singleContainer.style.display = "none";
+                    if (batchContainer) batchContainer.style.display = "none";
+                    if (compareContainer) compareContainer.style.display = "block";
+                    if (modeSelector) modeSelector.style.display = "none";
+                    if (btnText) btnText.textContent = "⚖️ Run Comparative Research";
                 }
             };
 
@@ -1025,12 +1331,407 @@
                     const item = JSON.parse(reopenedJson);
                     sessionStorage.removeItem("reopen_summary");
                     if (item && item.summary) {
-                        renderSummaryObject(item.summary, item.url);
+                        if (item.entry_type === "comparison") {
+                            renderComparisonUI(item.summary, item.id);
+                        } else {
+                            renderSummaryObject(item.summary, item.url);
+                        }
                     }
                 } catch (e) {
                     sessionStorage.removeItem("reopen_summary");
                 }
             }
+
+            const reopenedCompJson = sessionStorage.getItem("reopen_comparison");
+            if (reopenedCompJson) {
+                try {
+                    const item = JSON.parse(reopenedCompJson);
+                    sessionStorage.removeItem("reopen_comparison");
+                    if (item && (item.summary || item.comparison)) {
+                        renderComparisonUI(item.summary || item.comparison, item.id);
+                    }
+                } catch (e) {
+                    sessionStorage.removeItem("reopen_comparison");
+                }
+            }
+
+            // ==========================================
+            // COMPARATIVE RESEARCH RENDERER & ACTIONS
+            // ==========================================
+            let currentComparisonData = null;
+            let currentComparisonHistoryId = null;
+
+            function renderComparisonUI(comp, historyId) {
+                currentComparisonData = comp;
+                currentComparisonHistoryId = historyId;
+                hideError();
+
+                const compareCard = document.getElementById("compare-results-card");
+                const compareTitle = document.getElementById("compare-title");
+                const sourceATitle = document.getElementById("source-a-title");
+                const sourceAUrl = document.getElementById("source-a-url");
+                const sourceAOverview = document.getElementById("source-a-overview");
+                const sourceBTitle = document.getElementById("source-b-title");
+                const sourceBUrl = document.getElementById("source-b-url");
+                const sourceBOverview = document.getElementById("source-b-overview");
+
+                const artA = comp.article_a || {};
+                const artB = comp.article_b || {};
+
+                compareTitle.textContent = comp.title || "Comparative Analysis";
+                sourceATitle.textContent = artA.title || "Source Article A";
+                sourceAUrl.href = artA.url || "#";
+                sourceAUrl.textContent = artA.url || "";
+                sourceAOverview.textContent = artA.overview || "No overview provided.";
+
+                sourceBTitle.textContent = artB.title || "Source Article B";
+                sourceBUrl.href = artB.url || "#";
+                sourceBUrl.textContent = artB.url || "";
+                sourceBOverview.textContent = artB.overview || "No overview provided.";
+
+                // 1. Common Points
+                const commonList = document.getElementById("compare-common-list");
+                commonList.innerHTML = "";
+                const commonSec = document.getElementById("sec-common-points");
+                if (Array.isArray(comp.common_points) && comp.common_points.length > 0) {
+                    comp.common_points.forEach(cp => {
+                        const li = document.createElement("li");
+                        li.textContent = cp;
+                        commonList.appendChild(li);
+                    });
+                    commonSec.style.display = "block";
+                } else {
+                    commonSec.style.display = "none";
+                }
+
+                // 2. Contradictions & Conflicts
+                const conflictContainer = document.getElementById("compare-contradictions-container");
+                conflictContainer.innerHTML = "";
+                const conflictSec = document.getElementById("sec-contradictions");
+                if (Array.isArray(comp.contradictions) && comp.contradictions.length > 0) {
+                    comp.contradictions.forEach(cd => {
+                        const box = document.createElement("div");
+                        box.className = "compare-conflict-box";
+                        box.innerHTML = `
+                            <span class="conflict-icon">⚠️</span>
+                            <div class="conflict-text"><strong>CONFLICT / DISAGREEMENT:</strong> ${cd}</div>
+                        `;
+                        conflictContainer.appendChild(box);
+                    });
+                    conflictSec.style.display = "block";
+                } else {
+                    conflictSec.style.display = "none";
+                }
+
+                // 3. Differing Perspectives
+                const persList = document.getElementById("compare-perspectives-list");
+                persList.innerHTML = "";
+                const persSec = document.getElementById("sec-perspectives");
+                if (Array.isArray(comp.differing_perspectives) && comp.differing_perspectives.length > 0) {
+                    comp.differing_perspectives.forEach(p => {
+                        const li = document.createElement("li");
+                        li.textContent = p;
+                        persList.appendChild(li);
+                    });
+                    persSec.style.display = "block";
+                } else {
+                    persSec.style.display = "none";
+                }
+
+                // 4. Claims Table
+                const claimsTbody = document.getElementById("compare-claims-tbody");
+                claimsTbody.innerHTML = "";
+                const claimsSec = document.getElementById("sec-claims-table");
+                const thA = document.getElementById("th-claim-a");
+                const thB = document.getElementById("th-claim-b");
+                if (thA) thA.textContent = (artA.title || "Source A").slice(0, 32) + " Claim";
+                if (thB) thB.textContent = (artB.title || "Source B").slice(0, 32) + " Claim";
+
+                if (Array.isArray(comp.key_facts_claims) && comp.key_facts_claims.length > 0) {
+                    comp.key_facts_claims.forEach(c => {
+                        const tr = document.createElement("tr");
+                        tr.innerHTML = `
+                            <td><strong>${c.topic || 'Point'}</strong></td>
+                            <td>${c.article_a_claim || '—'}</td>
+                            <td>${c.article_b_claim || '—'}</td>
+                        `;
+                        claimsTbody.appendChild(tr);
+                    });
+                    claimsSec.style.display = "block";
+                } else {
+                    claimsSec.style.display = "none";
+                }
+
+                // 5. Unique Findings
+                const uniqueAList = document.getElementById("compare-unique-a-list");
+                const uniqueBList = document.getElementById("compare-unique-b-list");
+                const uniqueSec = document.getElementById("sec-unique-info");
+                uniqueAList.innerHTML = "";
+                uniqueBList.innerHTML = "";
+                const lblA = document.getElementById("label-unique-a");
+                const lblB = document.getElementById("label-unique-b");
+                if (lblA) lblA.textContent = `Unique to Source A (${artA.title || 'Source A'}):`;
+                if (lblB) lblB.textContent = `Unique to Source B (${artB.title || 'Source B'}):`;
+
+                const hasUniqueA = Array.isArray(comp.unique_to_a) && comp.unique_to_a.length > 0;
+                const hasUniqueB = Array.isArray(comp.unique_to_b) && comp.unique_to_b.length > 0;
+
+                if (hasUniqueA || hasUniqueB) {
+                    if (hasUniqueA) comp.unique_to_a.forEach(u => { const li = document.createElement("li"); li.textContent = u; uniqueAList.appendChild(li); });
+                    if (hasUniqueB) comp.unique_to_b.forEach(u => { const li = document.createElement("li"); li.textContent = u; uniqueBList.appendChild(li); });
+                    uniqueSec.style.display = "block";
+                } else {
+                    uniqueSec.style.display = "none";
+                }
+
+                // 6. Conclusions Comparison
+                const concContainer = document.getElementById("compare-conclusions-container");
+                concContainer.innerHTML = "";
+                const concSec = document.getElementById("sec-conclusions-comp");
+                const conc = comp.conclusions_comparison;
+                if (conc && (conc.article_a_conclusion || conc.article_b_conclusion || conc.comparison_note)) {
+                    if (conc.article_a_conclusion) {
+                        const d = document.createElement("div");
+                        d.innerHTML = `<strong>Source A Conclusion:</strong> <span style="color: var(--text-secondary);">${conc.article_a_conclusion}</span>`;
+                        concContainer.appendChild(d);
+                    }
+                    if (conc.article_b_conclusion) {
+                        const d = document.createElement("div");
+                        d.innerHTML = `<strong>Source B Conclusion:</strong> <span style="color: var(--text-secondary);">${conc.article_b_conclusion}</span>`;
+                        concContainer.appendChild(d);
+                    }
+                    if (conc.comparison_note) {
+                        const d = document.createElement("div");
+                        d.style.background = "var(--bg-tertiary)";
+                        d.style.padding = "10px 14px";
+                        d.style.borderRadius = "8px";
+                        d.style.marginTop = "6px";
+                        d.innerHTML = `🔍 <strong>Comparative Divergence / Alignment:</strong> ${conc.comparison_note}`;
+                        concContainer.appendChild(d);
+                    }
+                    concSec.style.display = "block";
+                } else {
+                    concSec.style.display = "none";
+                }
+
+                // 7. Synthesis
+                const synthText = document.getElementById("compare-synthesis-text");
+                const synthSec = document.getElementById("sec-synthesis");
+                if (comp.synthesis && comp.synthesis.trim()) {
+                    synthText.textContent = comp.synthesis;
+                    synthSec.style.display = "block";
+                } else {
+                    synthSec.style.display = "none";
+                }
+
+                // Hide single & batch cards, show compare card
+                resultCard.style.display = "none";
+                resultCard.classList.remove("active");
+                compareCard.style.display = "block";
+                compareCard.classList.add("active");
+                compareCard.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+
+            // Export Comparative PDF
+            const comparePdfBtn = document.getElementById("compare-export-pdf-btn");
+            if (comparePdfBtn) {
+                comparePdfBtn.addEventListener("click", async () => {
+                    if (!currentComparisonData) return;
+                    comparePdfBtn.disabled = true;
+                    const prevHtml = comparePdfBtn.innerHTML;
+                    comparePdfBtn.innerHTML = "<span>Generating PDF...</span>";
+
+                    try {
+                        const res = await fetch("/compare/export-pdf", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({
+                                comparison: currentComparisonData,
+                                history_id: currentComparisonHistoryId
+                            })
+                        });
+                        if (!res.ok) throw new Error("Comparative PDF generation failed");
+                        const blob = await res.blob();
+                        const downloadUrl = window.URL.createObjectURL(blob);
+                        const a = document.createElement("a");
+                        a.href = downloadUrl;
+                        a.download = `WebBrief_Comparison_${new Date().toISOString().slice(0, 10)}.pdf`;
+                        document.body.appendChild(a);
+                        a.click();
+                        a.remove();
+                        window.URL.revokeObjectURL(downloadUrl);
+                    } catch (err) {
+                        alert("Could not export comparison PDF. Please try again.");
+                    } finally {
+                        comparePdfBtn.disabled = false;
+                        comparePdfBtn.innerHTML = prevHtml;
+                    }
+                });
+            }
+
+            // Copy Full Markdown Comparison
+            const compareCopyBtn = document.getElementById("compare-copy-btn");
+            if (compareCopyBtn) {
+                compareCopyBtn.addEventListener("click", async () => {
+                    if (!currentComparisonData) return;
+                    const c = currentComparisonData;
+                    const parts = [];
+                    parts.push(`# ${c.title || 'Comparative Analysis'}\n`);
+                    if (c.article_a) parts.push(`**Source A:** [${c.article_a.title || 'Article A'}](${c.article_a.url || ''})\n> ${c.article_a.overview || ''}\n`);
+                    if (c.article_b) parts.push(`**Source B:** [${c.article_b.title || 'Article B'}](${c.article_b.url || ''})\n> ${c.article_b.overview || ''}\n`);
+                    if (c.common_points && c.common_points.length) {
+                        parts.push("## Common Arguments & Shared Information\n" + c.common_points.map(p => "- " + p).join("\n") + "\n");
+                    }
+                    if (c.contradictions && c.contradictions.length) {
+                        parts.push("## Contradictions & Disagreements\n" + c.contradictions.map(p => "> ⚠️ " + p).join("\n") + "\n");
+                    }
+                    if (c.differing_perspectives && c.differing_perspectives.length) {
+                        parts.push("## Differing Perspectives\n" + c.differing_perspectives.map(p => "- " + p).join("\n") + "\n");
+                    }
+                    if (c.key_facts_claims && c.key_facts_claims.length) {
+                        parts.push("## Key Claims Comparison\n" + c.key_facts_claims.map(k => `### ${k.topic}\n- Source A: ${k.article_a_claim}\n- Source B: ${k.article_b_claim}`).join("\n\n") + "\n");
+                    }
+                    if (c.unique_to_a && c.unique_to_a.length) {
+                        parts.push(`## Unique to Source A\n` + c.unique_to_a.map(p => "- " + p).join("\n") + "\n");
+                    }
+                    if (c.unique_to_b && c.unique_to_b.length) {
+                        parts.push(`## Unique to Source B\n` + c.unique_to_b.map(p => "- " + p).join("\n") + "\n");
+                    }
+                    if (c.synthesis) {
+                        parts.push(`## Overall Synthesis\n${c.synthesis}\n`);
+                    }
+
+                    const mdText = parts.join("\n").trim();
+                    try {
+                        await navigator.clipboard.writeText(mdText);
+                        const prev = compareCopyBtn.innerHTML;
+                        compareCopyBtn.innerHTML = "<span>Copied!</span>";
+                        setTimeout(() => { compareCopyBtn.innerHTML = prev; }, 1800);
+                    } catch (e) {
+                        alert("Failed to copy comparison to clipboard.");
+                    }
+                });
+            }
+
+            // ==========================================
+            // NOTION EXPORT MODAL LOGIC
+            // ==========================================
+            let activeNotionTarget = { type: 'single', data: null, historyId: null };
+
+            window.openNotionModal = async function(type, data, historyId) {
+                activeNotionTarget = { type: type, data: data, historyId: historyId };
+                const modal = document.getElementById("notion-modal");
+                const body = document.getElementById("notion-modal-body");
+                const success = document.getElementById("notion-modal-success");
+                const select = document.getElementById("notion-page-select");
+                const alertBox = document.getElementById("notion-export-alert");
+
+                if (modal) modal.classList.add("active");
+                if (body) body.style.display = "block";
+                if (success) success.style.display = "none";
+                if (alertBox) alertBox.style.display = "none";
+                select.innerHTML = '<option value="">Loading accessible Notion pages...</option>';
+
+                try {
+                    const res = await fetch("/api/notion/pages");
+                    const json = await res.json();
+                    if (!res.ok) {
+                        select.innerHTML = '<option value="">Notion not connected — configure in Settings</option>';
+                        alertBox.style.display = "block";
+                        alertBox.innerHTML = 'Notion integration is not connected. Please <a href="/settings" style="color: var(--primary); text-decoration: underline;">connect Notion in Settings</a> first.';
+                        return;
+                    }
+
+                    if (json.pages && json.pages.length > 0) {
+                        select.innerHTML = json.pages.map(p => `<option value="${p.id}">${p.icon || '📄'} ${p.title || 'Untitled Page'}</option>`).join("");
+                    } else {
+                        select.innerHTML = '<option value="">No shared pages found. Use manual Page ID below or share pages in Notion.</option>';
+                    }
+                } catch (e) {
+                    select.innerHTML = '<option value="">Could not load pages. Enter Page ID below.</option>';
+                }
+            };
+
+            window.closeNotionModal = function() {
+                const modal = document.getElementById("notion-modal");
+                if (modal) modal.classList.remove("active");
+            };
+
+            window.submitNotionExport = async function() {
+                const select = document.getElementById("notion-page-select");
+                const customInput = document.getElementById("notion-custom-page-id");
+                const alertBox = document.getElementById("notion-export-alert");
+                const btn = document.getElementById("notion-submit-export-btn");
+
+                let pageId = customInput.value.trim() || select.value.trim();
+                // If user pasted a full URL like https://www.notion.so/workspace/Page-Title-1a2b3c4d
+                if (pageId.includes("notion.so/")) {
+                    const parts = pageId.split("-").pop().split("?")[0].replace(/\//g, "");
+                    if (parts.length >= 32) pageId = parts;
+                }
+
+                if (!pageId) {
+                    alertBox.style.display = "block";
+                    alertBox.textContent = "Please select a destination page or enter a Notion Page ID.";
+                    return;
+                }
+
+                alertBox.style.display = "none";
+                btn.disabled = true;
+                const prevText = btn.textContent;
+                btn.textContent = "Exporting to Notion...";
+
+                const payload = {
+                    parent_page_id: pageId,
+                    type: activeNotionTarget.type,
+                    history_id: activeNotionTarget.historyId
+                };
+
+                if (activeNotionTarget.type === 'comparison') {
+                    payload.comparison = activeNotionTarget.data;
+                } else {
+                    payload.summary = activeNotionTarget.data;
+                    payload.title = currentSummaryData ? currentSummaryData.title : "Webpage Summary";
+                    payload.url = sourceUrlLink ? sourceUrlLink.href : "";
+                    payload.mode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
+                }
+
+                try {
+                    const res = await fetch("/api/notion/export", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload)
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) {
+                        alertBox.style.display = "block";
+                        alertBox.textContent = data.error || "Failed to export to Notion.";
+                    } else {
+                        document.getElementById("notion-modal-body").style.display = "none";
+                        const successBox = document.getElementById("notion-modal-success");
+                        successBox.style.display = "block";
+                        const link = document.getElementById("notion-open-page-link");
+                        if (link) link.href = data.page_url;
+                        const desc = document.getElementById("notion-success-desc");
+                        if (desc) desc.textContent = `Successfully exported "${data.title}" to your Notion workspace!`;
+                    }
+                } catch (e) {
+                    alertBox.style.display = "block";
+                    alertBox.textContent = "Network error communicating with Notion API.";
+                } finally {
+                    btn.disabled = false;
+                    btn.textContent = prevText;
+                }
+            };
+
+            // Hook export buttons to Notion modal
+            document.getElementById("export-notion-single-btn")?.addEventListener("click", () => {
+                openNotionModal('single', currentSummaryData);
+            });
+
+            document.getElementById("compare-export-notion-btn")?.addEventListener("click", () => {
+                openNotionModal('comparison', currentComparisonData, currentComparisonHistoryId);
+            });
 
             // Copy Full Summary (Markdown)
             copyBtn.addEventListener("click", async () => {
@@ -1126,6 +1827,75 @@
                 const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
                 const customDir = localStorage.getItem("webbrief_custom_directive") || "";
                 const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
+
+                // ==========================================
+                // COMPARATIVE RESEARCH SUBMISSION (v1.3)
+                // ==========================================
+                if (currentTab === 'compare') {
+                    const urlA = document.getElementById("compare-url-a")?.value.trim();
+                    const urlB = document.getElementById("compare-url-b")?.value.trim();
+
+                    if (!urlA || !urlB) {
+                        showError("Please enter both Article A and Article B URLs for comparison.");
+                        return;
+                    }
+
+                    if (urlA.toLowerCase().trim() === urlB.toLowerCase().trim()) {
+                        showError("Please enter two different URLs to perform a comparative analysis.");
+                        return;
+                    }
+
+                    submitBtn.disabled = true;
+                    submitBtn.classList.add("loading");
+                    btnText.textContent = "Comparing Articles...";
+                    loadingCard.style.display = "flex";
+                    if (loadingStepText) loadingStepText.textContent = "Scraping and analyzing both sources...";
+                    resultCard.style.display = "none";
+                    resultCard.classList.remove("active");
+                    const compareCard = document.getElementById("compare-results-card");
+                    if (compareCard) {
+                        compareCard.style.display = "none";
+                        compareCard.classList.remove("active");
+                    }
+
+                    try {
+                        const response = await fetch("/compare", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "X-Requested-With": "XMLHttpRequest"
+                            },
+                            body: JSON.stringify({
+                                url_a: urlA,
+                                url_b: urlB,
+                                api_key: apiKey,
+                                custom_directive: customDir,
+                                custom_directive_enabled: customDirEnabled
+                            })
+                        });
+
+                        const data = await response.json();
+
+                        if (!response.ok || !data.success) {
+                            if (response.status === 401 && data.redirect) {
+                                window.location.href = data.redirect;
+                                return;
+                            }
+                            showError(data.error || "Comparative analysis failed.");
+                        } else {
+                            renderComparisonUI(data.comparison, data.history_id);
+                        }
+                    } catch (err) {
+                        showError("Network error: Could not complete comparative request.");
+                    } finally {
+                        loadingCard.style.display = "none";
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove("loading");
+                        btnText.textContent = "⚖️ Run Comparative Research";
+                        if (loadingStepText) loadingStepText.textContent = "Fetching content & analyzing key information...";
+                    }
+                    return;
+                }
 
                 // ==========================================
                 // BATCH MODE SUBMISSION

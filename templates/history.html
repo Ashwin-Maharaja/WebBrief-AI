@@ -130,7 +130,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.2</span>
+                    <span class="badge">v1.3</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -167,13 +167,25 @@
                         <div class="history-info">
                             <h3 class="history-title">{{ item.title }}</h3>
                             <div class="history-meta">
-                                <span class="badge" style="background: var(--primary-light); color: var(--primary); font-size: 0.72rem; padding: 2px 8px;">
-                                    {{ item.mode_name }}
-                                </span>
+                                {% if item.entry_type == 'comparison' %}
+                                    <span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; font-size: 0.72rem; padding: 2px 8px;">
+                                        ⚖️ Comparison
+                                    </span>
+                                {% else %}
+                                    <span class="badge" style="background: var(--primary-light); color: var(--primary); font-size: 0.72rem; padding: 2px 8px;">
+                                        {{ item.mode_name }}
+                                    </span>
+                                {% endif %}
                                 <span>{{ item.created_at_formatted }}</span>
-                                <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();">
+                                <a href="{{ item.url }}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="{{ item.url }}">
                                     {{ item.url }}
                                 </a>
+                                {% if item.url_b %}
+                                    <span style="color: var(--text-muted);">&bull;</span>
+                                    <a href="{{ item.url_b }}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="{{ item.url_b }}">
+                                        {{ item.url_b }}
+                                    </a>
+                                {% endif %}
                             </div>
                         </div>
                         <div class="history-actions" onclick="event.stopPropagation();" style="display: flex; gap: 6px; align-items: center;">

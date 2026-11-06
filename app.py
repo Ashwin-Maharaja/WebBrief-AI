@@ -23,10 +23,23 @@ from history import (
     reset_custom_directives,
     MAX_DIRECTIVE_LENGTH,
 )
-from pdf_exporter import generate_summary_pdf, build_pdf_filename, generate_batch_summary_pdf
+from pdf_exporter import generate_summary_pdf, build_pdf_filename, generate_batch_summary_pdf, generate_comparison_pdf
 from batch_processor import execute_batch, validate_batch_urls, MAX_BATCH_URLS
+from comparative_analyzer import compare_articles, ComparisonError
+from notion_service import (
+    get_notion_key,
+    has_notion_config,
+    validate_notion_token,
+    save_notion_key_to_env,
+    clear_saved_notion_key,
+    get_accessible_pages,
+    create_notion_page,
+    format_single_summary_blocks,
+    format_comparison_blocks,
+    NotionError,
+)
 
-APP_VERSION = "1.2"
+APP_VERSION = "1.3"
 
 app = Flask(__name__)
 
@@ -47,6 +60,7 @@ def inject_globals():
         "default_mode": DEFAULT_MODE,
         "modes": MODES,
         "max_batch_urls": MAX_BATCH_URLS,
+        "has_notion_configured": has_notion_config(session_dict=session),
     }
 
 
@@ -76,6 +90,12 @@ def enforce_byok_onboarding():
         "api_reset_preferences",
         "batch_validate",
         "batch_export_pdf",
+        "compare_export_pdf",
+        "api_notion_status",
+        "api_notion_connect",
+        "api_notion_disconnect",
+        "api_notion_pages",
+        "api_notion_export",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -84,8 +104,8 @@ def enforce_byok_onboarding():
     if has_valid_config(session_dict=session):
         return None
 
-    # Handle /summarize and /batch/summarize: check if user provided a per-request BYOK in payload
-    if request.endpoint in ("summarize", "batch_summarize"):
+    # Handle /summarize, /batch/summarize, /compare: check if user provided a per-request BYOK in payload
+    if request.endpoint in ("summarize", "batch_summarize", "compare_articles_route"):
         key_in_req = None
         if request.is_json:
             key_in_req = (request.get_json() or {}).get("api_key")
@@ -469,6 +489,209 @@ def batch_export_pdf():
         )
     except Exception as e:
         return jsonify({"error": f"Failed to generate batch PDF: {str(e)}"}), 500
+
+
+# -------------------------------------------------------------
+# Comparative Research Endpoints (v1.3)
+# -------------------------------------------------------------
+@app.route("/compare", methods=["POST"])
+def compare_articles_route():
+    """
+    Executes deep comparative research across two independent URLs.
+    Extracts common points, contradictions, differing perspectives,
+    side-by-side claims, and overarching synthesis.
+    """
+    data = request.get_json() or {} if request.is_json else request.form
+    url_a = data.get("url_a", "").strip()
+    url_b = data.get("url_b", "").strip()
+
+    if not url_a or not url_b:
+        return jsonify({"error": "Please provide both Article A and Article B URLs for comparison."}), 400
+
+    api_key = data.get("api_key") or get_configured_api_key(session_dict=session)
+    if not api_key:
+        return jsonify({
+            "error": "OpenAI API key not configured. Please complete setup wizard.",
+            "redirect": url_for("setup")
+        }), 401
+
+    directives = get_custom_directives()
+    custom_directive = directives.get("custom_directive")
+    custom_directive_enabled = directives.get("custom_directive_enabled")
+    if "custom_directive" in data:
+        custom_directive = data.get("custom_directive")
+    if "custom_directive_enabled" in data:
+        custom_directive_enabled = bool(data.get("custom_directive_enabled"))
+
+    try:
+        comparison_res = compare_articles(
+            url_a=url_a,
+            url_b=url_b,
+            api_key=api_key,
+            custom_directive=custom_directive,
+            custom_directive_enabled=custom_directive_enabled,
+        )
+
+        # Save comparative summary in SQLite history
+        art_b_title = comparison_res.get("article_b", {}).get("title", "Article B")
+        history_entry = add_history_entry(
+            title=comparison_res.get("title", "Comparative Analysis"),
+            url=url_a,
+            mode="comparison",
+            mode_name="Comparative Research",
+            summary=comparison_res,
+            entry_type="comparison",
+            url_b=url_b,
+            title_b=art_b_title,
+        )
+        history_id = history_entry["id"] if history_entry else None
+
+        return jsonify({
+            "success": True,
+            "comparison": comparison_res,
+            "history_id": history_id,
+        })
+    except (ScraperError, ComparisonError, SummarizerError) as e:
+        return jsonify({"error": str(e)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Comparative analysis error: {str(e)}"}), 500
+
+
+@app.route("/compare/export-pdf", methods=["POST"])
+def compare_export_pdf():
+    """Generates and downloads a formatted comparative research PDF brief."""
+    data = request.get_json() or {}
+    comp = data.get("comparison")
+
+    # If history_id passed, fetch from DB
+    history_id = data.get("history_id")
+    if not comp and history_id:
+        entry = get_history_entry(history_id)
+        if entry:
+            comp = entry.get("summary")
+
+    if not comp or not isinstance(comp, dict):
+        return jsonify({"error": "No comparative data provided for PDF export."}), 400
+
+    try:
+        pdf_buf = generate_comparison_pdf(comp)
+        date_str = datetime.datetime.now().strftime("%Y%m%d_%H%M")
+        download_name = f"WebBrief_Comparison_{date_str}.pdf"
+        return send_file(
+            pdf_buf,
+            mimetype="application/pdf",
+            as_attachment=True,
+            download_name=download_name,
+        )
+    except Exception as e:
+        return jsonify({"error": f"Failed to generate comparison PDF: {str(e)}"}), 500
+
+
+# -------------------------------------------------------------
+# Notion Integration Endpoints (v1.3)
+# -------------------------------------------------------------
+@app.route("/api/notion/status", methods=["GET"])
+def api_notion_status():
+    """Checks whether Notion integration token is configured and valid."""
+    has_token = has_notion_config(session_dict=session)
+    return jsonify({
+        "is_configured": has_token,
+        "has_token": has_token
+    })
+
+
+@app.route("/api/notion/connect", methods=["POST"])
+def api_notion_connect():
+    """Validates and saves the Notion integration token."""
+    data = request.get_json() or {}
+    token = data.get("token", "").strip()
+
+    is_valid, msg = validate_notion_token(token)
+    if not is_valid:
+        return jsonify({"valid": False, "message": msg}), 400
+
+    if is_serverless_env():
+        session["notion_api_key"] = token
+    else:
+        save_notion_key_to_env(token)
+        session["notion_api_key"] = token
+
+    return jsonify({"valid": True, "message": msg})
+
+
+@app.route("/api/notion/disconnect", methods=["POST"])
+def api_notion_disconnect():
+    """Disconnects the Notion integration and removes stored credentials."""
+    clear_saved_notion_key(session_dict=session)
+    return jsonify({"success": True, "message": "Notion integration disconnected successfully."})
+
+
+@app.route("/api/notion/pages", methods=["GET"])
+def api_notion_pages():
+    """Retrieves list of accessible destination Notion pages."""
+    token = get_notion_key(session_dict=session)
+    if not token:
+        return jsonify({"error": "Notion not connected. Please connect Notion in Settings.", "pages": []}), 401
+
+    pages = get_accessible_pages(token)
+    return jsonify({"pages": pages})
+
+
+@app.route("/api/notion/export", methods=["POST"])
+def api_notion_export():
+    """Exports a single summary brief or comparative research brief to Notion."""
+    token = get_notion_key(session_dict=session)
+    if not token:
+        return jsonify({"error": "Notion is not connected. Please connect your Notion integration first."}), 401
+
+    data = request.get_json() or {}
+    parent_page_id = data.get("parent_page_id", "").strip()
+    export_type = data.get("type", "single")
+
+    if not parent_page_id:
+        return jsonify({"error": "Please select a destination Notion page."}), 400
+
+    try:
+        if export_type == "comparison":
+            comp = data.get("comparison")
+            if not comp and data.get("history_id"):
+                entry = get_history_entry(data.get("history_id"))
+                if entry:
+                    comp = entry.get("summary")
+            if not comp:
+                return jsonify({"error": "No comparison data provided for Notion export."}), 400
+
+            title = comp.get("title", "Comparative Research Brief")
+            blocks = format_comparison_blocks(comp)
+            res = create_notion_page(parent_page_id, page_title=title, blocks=blocks, token=token, emoji_icon="⚖️")
+            return jsonify({"success": True, "page_url": res["url"], "title": title})
+        else:
+            summary = data.get("summary")
+            title = data.get("title", "Webpage Summary")
+            url = data.get("url", "")
+            mode = data.get("mode", DEFAULT_MODE)
+            mode_name = MODES.get(mode, {}).get("name", "Summary")
+
+            if not summary and data.get("history_id"):
+                entry = get_history_entry(data.get("history_id"))
+                if entry:
+                    summary = entry.get("summary")
+                    title = entry.get("title", title)
+                    url = entry.get("url", url)
+                    mode = entry.get("mode", mode)
+                    mode_name = entry.get("mode_name", mode_name)
+
+            if not summary:
+                return jsonify({"error": "No summary data provided for Notion export."}), 400
+
+            blocks = format_single_summary_blocks(summary, title=title, url=url, mode_name=mode_name)
+            res = create_notion_page(parent_page_id, page_title=title, blocks=blocks, token=token, emoji_icon="🌐")
+            return jsonify({"success": True, "page_url": res["url"], "title": title})
+
+    except NotionError as ne:
+        return jsonify({"error": str(ne)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to export to Notion: {str(e)}"}), 500
 
 
 # -------------------------------------------------------------
