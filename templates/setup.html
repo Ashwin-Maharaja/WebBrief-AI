@@ -8,6 +8,12 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("webbrief_theme") || "dark";
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
     <style>
         .setup-card {
             max-width: 620px;
@@ -168,7 +174,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v0.9</span>
+                    <span class="badge">v0.10</span>
                 </div>
             </div>
             <p class="tagline">Bring Your Own Key (BYOK) Configuration & Security Onboarding</p>

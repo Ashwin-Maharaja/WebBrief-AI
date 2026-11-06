@@ -10,11 +10,18 @@ from byok import (
     is_serverless_env,
     get_configured_api_key,
 )
+from history import (
+    add_history_entry,
+    get_history,
+    get_history_entry,
+    delete_history_entry,
+    clear_history,
+)
 
 app = Flask(__name__)
 
 # Secret key for secure, signed HttpOnly session cookies
-app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY") or "webbrief-ai-byok-v0.9-secure-session"
+app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY") or "webbrief-ai-byok-v0.10-secure-session"
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
@@ -35,6 +42,11 @@ def enforce_byok_onboarding():
         "validate_key",
         "clear_key",
         "static",
+        "view_history",
+        "api_get_history",
+        "api_get_history_entry",
+        "api_delete_history",
+        "api_clear_history",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -70,11 +82,13 @@ def enforce_byok_onboarding():
 @app.route("/")
 def home():
     is_conf = has_valid_config(session_dict=session)
+    recent_history = get_history(limit=10)
     return render_template(
         "index.html",
         default_mode=DEFAULT_MODE,
         modes=MODES,
-        is_configured=is_conf
+        is_configured=is_conf,
+        recent_history=recent_history
     )
 
 
@@ -103,13 +117,62 @@ def settings():
     """API key settings and management page."""
     is_conf = has_valid_config(session_dict=session)
     is_serv = is_serverless_env()
+    history_entries = get_history(limit=50)
     return render_template(
         "settings.html",
         is_configured=is_conf,
-        is_serverless=is_serv
+        is_serverless=is_serv,
+        history_count=len(history_entries),
+        modes=MODES,
+        default_mode=DEFAULT_MODE
     )
 
 
+@app.route("/history")
+def view_history():
+    """Dedicated summary history view."""
+    entries = get_history(limit=50)
+    return render_template("history.html", entries=entries)
+
+
+# -------------------------------------------------------------
+# Summary History API Endpoints
+# -------------------------------------------------------------
+@app.route("/api/history", methods=["GET"])
+def api_get_history():
+    """Returns the list of stored summary history entries."""
+    entries = get_history(limit=50)
+    return jsonify({"history": entries})
+
+
+@app.route("/api/history/<entry_id>", methods=["GET"])
+def api_get_history_entry(entry_id):
+    """Retrieves a single summary entry to reopen."""
+    entry = get_history_entry(entry_id)
+    if not entry:
+        return jsonify({"error": "History entry not found."}), 404
+    return jsonify({"entry": entry})
+
+
+@app.route("/api/history/<entry_id>", methods=["DELETE"])
+def api_delete_history(entry_id):
+    """Deletes an individual history entry."""
+    success = delete_history_entry(entry_id)
+    if not success:
+        return jsonify({"error": "Failed to delete history entry."}), 404
+    return jsonify({"success": True})
+
+
+@app.route("/api/history/clear", methods=["POST"])
+def api_clear_history():
+    """Clears all entries from summary history."""
+    clear_history()
+    return jsonify({"success": True})
+
+
+# -------------------------------------------------------------
+# BYOK Configuration Endpoints
+# -------------------------------------------------------------
 @app.route("/api/validate-key", methods=["POST"])
 def validate_key():
     """AJAX endpoint to test and validate an API key without saving."""
@@ -174,6 +237,9 @@ def clear_key():
     return redirect(url_for("setup"))
 
 
+# -------------------------------------------------------------
+# Webpage Summarization Endpoint
+# -------------------------------------------------------------
 @app.route("/summarize", methods=["POST"])
 def summarize():
     # Support both AJAX JSON payloads and standard HTML form submissions
@@ -206,6 +272,21 @@ def summarize():
 
         # Step 2: Generate AI summary in the chosen mode
         summary = summarize_text(article_text, api_key=api_key, mode=mode)
+
+        # Step 3: Record into persistent summary history
+        try:
+            entry = add_history_entry(
+                title=summary.get("title") or "Webpage Summary",
+                url=url,
+                mode=mode,
+                mode_name=summary.get("mode_name", mode.capitalize()),
+                summary=summary
+            )
+            if entry:
+                summary["history_id"] = entry["id"]
+        except Exception:
+            # History recording should not break summarization return
+            pass
 
         if is_ajax:
             return jsonify({

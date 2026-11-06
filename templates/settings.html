@@ -3,29 +3,50 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebBrief AI — API Key Settings</title>
+    <title>WebBrief AI — Application Settings & Preferences</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("webbrief_theme") || "dark";
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+    </script>
     <style>
         .settings-card {
-            max-width: 620px;
-            margin: 2rem auto;
+            max-width: 680px;
+            margin: 1.5rem auto;
+        }
+        .settings-section {
+            margin-bottom: 2rem;
+        }
+        .section-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .section-header h3 {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--text-primary);
         }
         .status-box {
-            background: rgba(15, 23, 42, 0.6);
-            border: 1px solid rgba(148, 163, 184, 0.15);
-            border-radius: 12px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 1.25rem;
         }
         .status-row {
             display: flex;
             justify-content: space-between;
             align-items: center;
             padding: 0.75rem 0;
-            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+            border-bottom: 1px solid var(--border-color);
         }
         .status-row:last-child {
             border-bottom: none;
@@ -33,42 +54,52 @@
         }
         .status-label {
             font-size: 0.9rem;
-            color: #94a3b8;
+            color: var(--text-muted);
             font-weight: 500;
         }
         .status-val {
             font-size: 0.92rem;
-            color: #f1f5f9;
+            color: var(--text-primary);
             font-weight: 600;
             display: flex;
             align-items: center;
             gap: 0.5rem;
         }
-        .badge-active {
-            background: rgba(16, 185, 129, 0.15);
-            color: #34d399;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-            padding: 0.2rem 0.6rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
+        .pref-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1rem;
+            margin-top: 0.75rem;
         }
-        .badge-unconfigured {
-            background: rgba(239, 68, 68, 0.15);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.3);
-            padding: 0.2rem 0.6rem;
-            border-radius: 9999px;
-            font-size: 0.75rem;
+        .pref-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 1rem;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+        }
+        .pref-card:hover {
+            border-color: var(--primary);
+        }
+        .pref-card.selected {
+            border-color: var(--primary);
+            background: var(--primary-light);
         }
         .danger-zone {
             margin-top: 2rem;
-            padding-top: 1.5rem;
-            border-top: 1px solid rgba(239, 68, 68, 0.2);
+            padding: 1.25rem;
+            border-radius: var(--radius-md);
+            background: var(--error-bg);
+            border: 1px solid var(--error-border);
         }
         .btn-danger {
-            background: rgba(239, 68, 68, 0.15);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.3);
+            background: rgba(239, 68, 68, 0.2);
+            color: var(--error-text);
+            border: 1px solid var(--error-border);
             padding: 0.65rem 1rem;
             border-radius: 8px;
             font-weight: 600;
@@ -77,8 +108,7 @@
             transition: all 0.2s;
         }
         .btn-danger:hover {
-            background: rgba(239, 68, 68, 0.25);
-            color: #fff;
+            background: rgba(239, 68, 68, 0.35);
         }
     </style>
 </head>
@@ -97,80 +127,298 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v0.9</span>
+                    <span class="badge">v0.10</span>
                 </div>
             </div>
-            <p class="tagline">BYOK Key Management & Configuration Settings</p>
+            <div class="header-nav">
+                <a href="{{ url_for('home') }}" class="nav-btn">← Main App</a>
+                <a href="{{ url_for('view_history') }}" class="nav-btn">📚 History</a>
+                <button id="theme-toggle-btn" class="theme-toggle-btn" aria-label="Toggle Theme" title="Toggle Light/Dark Theme">
+                    <span id="theme-icon">🌙</span>
+                </button>
+            </div>
         </header>
 
         <section class="card settings-card">
-            <h2 style="font-size: 1.4rem; font-weight: 700; color: #f1f5f9; margin-bottom: 1.25rem;">
-                OpenAI Configuration Status
-            </h2>
-
-            <div class="status-box">
-                <div class="status-row">
-                    <span class="status-label">Configuration Status</span>
-                    <span class="status-val">
-                        {% if is_configured %}
-                            <span class="badge-active">● Active & Verified</span>
-                        {% else %}
-                            <span class="badge-unconfigured">● Not Configured</span>
-                        {% endif %}
-                    </span>
+            
+            <!-- 1. AI Provider & BYOK Status -->
+            <div class="settings-section">
+                <div class="section-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 2v4m0 12v4M4.93 4.93l2.83 2.83m8.48 8.48l2.83 2.83M2 12h4m12 0h4M4.93 19.07l2.83-2.83m8.48-8.48l2.83-2.83"/>
+                    </svg>
+                    <h3>AI Provider & BYOK Configuration</h3>
                 </div>
 
-                <div class="status-row">
-                    <span class="status-label">Active Credentials</span>
-                    <span class="status-val">
-                        {% if is_configured %}
-                            <span style="letter-spacing: 0.15em; color: #94a3b8;">••••••••••••••••</span>
-                        {% else %}
-                            <span style="color: #64748b;">None</span>
-                        {% endif %}
-                    </span>
+                <div class="status-box">
+                    <div class="status-row">
+                        <span class="status-label">AI Provider</span>
+                        <span class="status-val">OpenAI (Direct API)</span>
+                    </div>
+
+                    <div class="status-row">
+                        <span class="status-label">Configuration Status</span>
+                        <span class="status-val">
+                            {% if is_configured %}
+                                <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">
+                                    ● Active & Verified
+                                </span>
+                            {% else %}
+                                <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3);">
+                                    ● Setup Required
+                                </span>
+                            {% endif %}
+                        </span>
+                    </div>
+
+                    <div class="status-row">
+                        <span class="status-label">Active Credentials</span>
+                        <span class="status-val">
+                            {% if is_configured %}
+                                <span style="letter-spacing: 0.15em; color: var(--text-muted);">••••••••••••••••</span>
+                            {% else %}
+                                <span style="color: var(--text-muted);">None</span>
+                            {% endif %}
+                        </span>
+                    </div>
+
+                    <div class="status-row">
+                        <span class="status-label">Storage Mechanism</span>
+                        <span class="status-val">
+                            {% if is_serverless %}
+                                Session Storage (Serverless)
+                            {% else %}
+                                Local Environment File (<code>.env</code>)
+                            {% endif %}
+                        </span>
+                    </div>
+
+                    <div class="status-row">
+                        <span class="status-label">Third-Party Auth Required</span>
+                        <span class="status-val" style="color: #10b981;">None (BYOK Architecture)</span>
+                    </div>
                 </div>
 
-                <div class="status-row">
-                    <span class="status-label">Storage Mechanism</span>
-                    <span class="status-val">
-                        {% if is_serverless %}
-                            Session Storage (Serverless)
-                        {% else %}
-                            Local Environment File (<code>.env</code>)
-                        {% endif %}
-                    </span>
-                </div>
-
-                <div class="status-row">
-                    <span class="status-label">Third-Party Auth Required</span>
-                    <span class="status-val" style="color: #10b981;">None (BYOK Architecture)</span>
+                <div style="margin-top: 1rem; display: flex; gap: 10px;">
+                    <a href="{{ url_for('setup', mode='change') }}" class="btn btn-primary" style="text-decoration: none; display: inline-flex; font-size: 0.9rem;">
+                        {% if is_configured %}Change API Key{% else %}Configure API Key{% endif %}
+                    </a>
                 </div>
             </div>
 
-            <div style="display: flex; gap: 1rem; align-items: center;">
-                <a href="{{ url_for('setup', mode='change') }}" class="btn btn-primary" style="flex: 1; text-align: center; text-decoration: none;">
-                    {% if is_configured %}Change API Key{% else %}Configure API Key{% endif %}
-                </a>
-                <a href="{{ url_for('home') }}" class="btn" style="background: rgba(148, 163, 184, 0.1); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.2); text-decoration: none;">
-                    Back to Dashboard
-                </a>
+            <!-- 2. Default Summarization Preferences -->
+            <div class="settings-section">
+                <div class="section-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M12 20h9"/>
+                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
+                    </svg>
+                    <h3>Summary Preferences</h3>
+                </div>
+                <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 0.75rem;">
+                    Choose your preferred default summarization mode when loading the app.
+                </p>
+
+                <div class="pref-grid" id="mode-pref-grid">
+                    {% for m_key, m_info in modes.items() %}
+                    <div class="pref-card" data-mode="{{ m_key }}" onclick="setDefaultMode('{{ m_key }}')">
+                        <div style="font-size: 1.25rem;">
+                            {% if m_key == 'quick' %}⚡
+                            {% elif m_key == 'detailed' %}📖
+                            {% elif m_key == 'bullet' %}📋
+                            {% elif m_key == 'technical' %}⚙️
+                            {% endif %}
+                        </div>
+                        <div>
+                            <strong style="color: var(--text-primary); font-size: 0.92rem; display: block;">{{ m_info.name }}</strong>
+                            <span style="font-size: 0.78rem; color: var(--text-muted);">
+                                {% if m_key == 'quick' %}Concise highlights
+                                {% elif m_key == 'detailed' %}Comprehensive depth
+                                {% elif m_key == 'bullet' %}Clean bullet points
+                                {% elif m_key == 'technical' %}Technical precision
+                                {% endif %}
+                            </span>
+                        </div>
+                    </div>
+                    {% endfor %}
+                </div>
             </div>
 
+            <!-- 3. Theme Preferences -->
+            <div class="settings-section">
+                <div class="section-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="5"/>
+                        <path d="M12 1v2m0 18v2M4.22 4.22l1.42 1.42m12.72 12.72l1.42 1.42M1 12h2m18 0h2M4.22 19.78l1.42-1.42M18.36 5.64l1.42-1.42"/>
+                    </svg>
+                    <h3>Appearance & Theme</h3>
+                </div>
+
+                <div class="pref-grid">
+                    <div class="pref-card" id="theme-dark-card" onclick="setTheme('dark')">
+                        <span style="font-size: 1.25rem;">🌙</span>
+                        <div>
+                            <strong style="color: var(--text-primary); font-size: 0.92rem; display: block;">Dark Theme</strong>
+                            <span style="font-size: 0.78rem; color: var(--text-muted);">Modern high-contrast dark aesthetic</span>
+                        </div>
+                    </div>
+
+                    <div class="pref-card" id="theme-light-card" onclick="setTheme('light')">
+                        <span style="font-size: 1.25rem;">☀️</span>
+                        <div>
+                            <strong style="color: var(--text-primary); font-size: 0.92rem; display: block;">Light Theme</strong>
+                            <span style="font-size: 0.78rem; color: var(--text-muted);">Clean, crisp daytime appearance</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 4. Summary History Management -->
+            <div class="settings-section">
+                <div class="section-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <polyline points="12 6 12 12 16 14"/>
+                    </svg>
+                    <h3>Summary Library & History</h3>
+                </div>
+
+                <div class="status-box">
+                    <div class="status-row">
+                        <span class="status-label">Total Saved Summaries</span>
+                        <span class="status-val">{{ history_count }}</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Data Persistence</span>
+                        <span class="status-val">Local SQLite Database</span>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1rem; display: flex; gap: 10px;">
+                    <a href="{{ url_for('view_history') }}" class="btn btn-secondary" style="text-decoration: none; font-size: 0.88rem;">
+                        Open Full History View
+                    </a>
+                    {% if history_count > 0 %}
+                    <button type="button" onclick="clearAllHistory()" class="btn btn-secondary" style="font-size: 0.88rem; color: #f87171;">
+                        Clear All History
+                    </button>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- 5. Application Info -->
+            <div class="settings-section">
+                <div class="section-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="12" cy="12" r="10"/>
+                        <line x1="12" y1="16" x2="12" y2="12"/>
+                        <line x1="12" y1="8" x2="12.01" y2="8"/>
+                    </svg>
+                    <h3>Application Information</h3>
+                </div>
+
+                <div class="status-box">
+                    <div class="status-row">
+                        <span class="status-label">Release Version</span>
+                        <span class="status-val"><span class="badge">v0.10</span></span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Architecture</span>
+                        <span class="status-val">Python / Flask + Map-Reduce Pipeline</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Scraper Fallback</span>
+                        <span class="status-val">Requests + Playwright Headless Chromium</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Security & SSRF Guard</span>
+                        <span class="status-val" style="color: #10b981;">Active (Private IP & Loopback Filter)</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 6. Danger Zone: Reset Key -->
             {% if is_configured %}
             <div class="danger-zone">
-                <h3 style="font-size: 1rem; font-weight: 600; color: #f87171; margin-bottom: 0.5rem;">Remove Configuration</h3>
-                <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 1rem;">
-                    Clearing your API key will remove it from your active session and environment. You will be required to re-configure a key before summarizing webpages.
+                <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--error-text); margin-bottom: 4px;">Remove Saved API Key</h4>
+                <p style="font-size: 0.85rem; color: var(--text-muted); margin-bottom: 12px;">
+                    Removing your key resets your local configuration. You will need to complete the setup wizard before summarizing further webpages.
                 </p>
                 <form action="{{ url_for('clear_key') }}" method="POST" onsubmit="return confirm('Are you sure you want to remove your saved OpenAI API key?');">
                     <button type="submit" class="btn-danger">Clear Saved Key</button>
                 </form>
             </div>
             {% endif %}
+
         </section>
 
     </main>
 
+    <script>
+        // Theme initialization & switching
+        const themeIcon = document.getElementById("theme-icon");
+        const themeBtn = document.getElementById("theme-toggle-btn");
+
+        function updateThemeCards(theme) {
+            document.querySelectorAll("#theme-dark-card, #theme-light-card").forEach(el => el.classList.remove("selected"));
+            if (theme === "dark") {
+                document.getElementById("theme-dark-card")?.classList.add("selected");
+            } else {
+                document.getElementById("theme-light-card")?.classList.add("selected");
+            }
+            if (themeIcon) {
+                themeIcon.textContent = theme === "dark" ? "🌙" : "☀️";
+            }
+        }
+
+        function setTheme(theme) {
+            document.documentElement.setAttribute("data-theme", theme);
+            localStorage.setItem("webbrief_theme", theme);
+            updateThemeCards(theme);
+        }
+
+        const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
+        updateThemeCards(currentTheme);
+
+        if (themeBtn) {
+            themeBtn.addEventListener("click", () => {
+                const cur = document.documentElement.getAttribute("data-theme") || "dark";
+                const next = cur === "dark" ? "light" : "dark";
+                setTheme(next);
+            });
+        }
+
+        // Mode preference handling
+        function updateModeCards(mode) {
+            document.querySelectorAll("#mode-pref-grid .pref-card").forEach(c => {
+                c.classList.remove("selected");
+                if (c.getAttribute("data-mode") === mode) {
+                    c.classList.add("selected");
+                }
+            });
+        }
+
+        function setDefaultMode(mode) {
+            localStorage.setItem("webbrief_default_mode", mode);
+            updateModeCards(mode);
+        }
+
+        const savedMode = localStorage.getItem("webbrief_default_mode") || "quick";
+        updateModeCards(savedMode);
+
+        // Clear history helper
+        async function clearAllHistory() {
+            if (!confirm("Are you sure you want to clear your entire summary history?")) return;
+            try {
+                const res = await fetch("/api/history/clear", { method: "POST" });
+                const data = await res.json();
+                if (data.success) {
+                    window.location.reload();
+                }
+            } catch (err) {
+                alert("Failed to clear history.");
+            }
+        }
+    </script>
 </body>
 </html>
