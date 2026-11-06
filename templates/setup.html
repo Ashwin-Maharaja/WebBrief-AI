@@ -1,0 +1,380 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebBrief AI — API Key Setup & Configuration</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .setup-card {
+            max-width: 620px;
+            margin: 2rem auto;
+        }
+        .setup-header {
+            text-align: center;
+            margin-bottom: 2rem;
+        }
+        .setup-icon-bubble {
+            width: 56px;
+            height: 56px;
+            background: linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(168, 85, 247, 0.2));
+            border: 1px solid rgba(99, 102, 241, 0.4);
+            border-radius: 16px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            margin-bottom: 1rem;
+            color: #818cf8;
+        }
+        .setup-title {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #f1f5f9;
+            margin-bottom: 0.5rem;
+        }
+        .setup-desc {
+            color: #94a3b8;
+            font-size: 0.95rem;
+            line-height: 1.5;
+        }
+        .key-input-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+        .key-input-wrapper input {
+            padding-right: 48px;
+            font-family: monospace;
+            font-size: 0.92rem;
+            letter-spacing: 0.04em;
+        }
+        .toggle-password-btn {
+            position: absolute;
+            right: 12px;
+            background: none;
+            border: none;
+            color: #94a3b8;
+            cursor: pointer;
+            padding: 6px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: color 0.2s;
+        }
+        .toggle-password-btn:hover {
+            color: #f1f5f9;
+        }
+        .security-notes {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 12px;
+            padding: 1.25rem;
+            margin: 1.5rem 0;
+            font-size: 0.88rem;
+            color: #94a3b8;
+        }
+        .security-notes ul {
+            margin: 0.5rem 0 0 1.25rem;
+            padding: 0;
+        }
+        .security-notes li {
+            margin-bottom: 0.35rem;
+        }
+        .confirmation-group {
+            background: rgba(245, 158, 11, 0.1);
+            border: 1px solid rgba(245, 158, 11, 0.3);
+            border-radius: 10px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            display: flex;
+            align-items: flex-start;
+            gap: 0.75rem;
+        }
+        .confirmation-group input[type="checkbox"] {
+            margin-top: 0.25rem;
+            accent-color: #f59e0b;
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+        .confirmation-group label {
+            font-size: 0.88rem;
+            color: #fde68a;
+            line-height: 1.4;
+            cursor: pointer;
+        }
+        .btn-secondary {
+            background: rgba(148, 163, 184, 0.1);
+            color: #cbd5e1;
+            border: 1px solid rgba(148, 163, 184, 0.2);
+            padding: 0.75rem 1.25rem;
+            border-radius: 10px;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+        .btn-secondary:hover {
+            background: rgba(148, 163, 184, 0.2);
+            color: #fff;
+        }
+        .form-actions {
+            display: flex;
+            gap: 1rem;
+            margin-top: 1.5rem;
+        }
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.25rem 0.75rem;
+            border-radius: 9999px;
+            font-size: 0.8rem;
+            font-weight: 600;
+            margin-bottom: 1rem;
+        }
+        .status-configured {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+        }
+        .status-missing {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+        }
+    </style>
+</head>
+<body>
+
+    <main class="app-container">
+
+        <!-- App Header -->
+        <header class="app-header">
+            <div class="logo-wrapper">
+                <div class="logo-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                        <path d="M8 7h6"/>
+                        <path d="M8 11h8"/>
+                    </svg>
+                </div>
+                <div class="brand-info">
+                    <h1>WebBrief <span class="accent-text">AI</span></h1>
+                    <span class="badge">v0.9</span>
+                </div>
+            </div>
+            <p class="tagline">Bring Your Own Key (BYOK) Configuration & Security Onboarding</p>
+        </header>
+
+        <!-- Setup Card -->
+        <section class="card setup-card">
+            <div class="setup-header">
+                <div class="setup-icon-bubble">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M21 2l-2 2m-1.5 1.5L16 7l-1.5-1.5L13 7l-1.5-1.5L10 7 8.5 5.5 7 7 5.5 5.5 4 7l-2-2"/>
+                        <circle cx="7.5" cy="16.5" r="4.5"/>
+                        <path d="m10.7 13.3 6.3-6.3"/>
+                        <path d="m14 10 3 3"/>
+                    </svg>
+                </div>
+
+                {% if is_configured %}
+                    <div class="status-badge status-configured">
+                        <span>●</span> Key Configured Active
+                    </div>
+                    <h2 class="setup-title">Change OpenAI API Key</h2>
+                    <p class="setup-desc">Update your existing credentials. The new key will be securely tested with OpenAI before updating your environment.</p>
+                {% else %}
+                    <div class="status-badge status-missing">
+                        <span>●</span> Setup Required
+                    </div>
+                    <h2 class="setup-title">First-Run Configuration</h2>
+                    <p class="setup-desc">Welcome to WebBrief AI. To summarize webpages, please configure your personal OpenAI API key below.</p>
+                {% endif %}
+            </div>
+
+            <!-- Error Banner -->
+            <div id="setup-error" class="alert alert-error" style="display: {% if error %}block{% else %}none{% endif %};">
+                <span id="setup-error-text">{{ error or '' }}</span>
+            </div>
+
+            <!-- Success Banner -->
+            <div id="setup-success" class="alert alert-success" style="display: {% if success %}block{% else %}none{% endif %};">
+                <span id="setup-success-text">{{ success or '' }}</span>
+            </div>
+
+            <form id="setup-form" action="{{ url_for('save_key') }}" method="POST" novalidate>
+                
+                <div class="form-group">
+                    <label for="api-key-input" class="form-label">
+                        OpenAI API Key <span class="required">*</span>
+                    </label>
+                    <div class="key-input-wrapper">
+                        <input
+                            type="password"
+                            id="api-key-input"
+                            name="api_key"
+                            class="form-control"
+                            placeholder="sk-proj-..."
+                            required
+                            autocomplete="off"
+                            spellcheck="false"
+                        >
+                        <button type="button" id="toggle-password-btn" class="toggle-password-btn" aria-label="Toggle password visibility">
+                            <svg id="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                                <circle cx="12" cy="12" r="3"/>
+                            </svg>
+                        </button>
+                    </div>
+                    <p class="form-help">
+                        Get your key from the <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: underline;">OpenAI Dashboard</a>.
+                    </p>
+                </div>
+
+                {% if env_exists or is_configured %}
+                <div class="confirmation-group">
+                    <input type="checkbox" id="confirm-overwrite" name="confirm_overwrite" value="true" required>
+                    <label for="confirm-overwrite">
+                        <strong>Confirm Key Replacement:</strong> I understand that saving this validated key will update my active local <code>.env</code> configuration.
+                    </label>
+                </div>
+                {% endif %}
+
+                <div class="security-notes">
+                    <strong style="color: #f1f5f9;">🔒 BYOK Security & Privacy:</strong>
+                    <ul>
+                        <li>Your key is saved locally in your own <code>.env</code> file (git-ignored).</li>
+                        <li>Credentials are verified with a 0-token authentication check before saving.</li>
+                        <li>Keys are never stored in browser cookies, localStorage, or sent to client-side scripts.</li>
+                        <li>No Google Authentication or third-party OAuth account is required.</li>
+                    </ul>
+                </div>
+
+                <div class="form-actions">
+                    <button type="submit" id="save-btn" class="btn btn-primary" style="flex: 1;">
+                        <span id="save-btn-text">Validate & Save Configuration</span>
+                    </button>
+
+                    {% if is_configured %}
+                    <a href="{{ url_for('home') }}" class="btn-secondary">Cancel</a>
+                    {% endif %}
+                </div>
+            </form>
+        </section>
+
+    </main>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const apiKeyInput = document.getElementById("api-key-input");
+            const togglePasswordBtn = document.getElementById("toggle-password-btn");
+            const eyeIcon = document.getElementById("eye-icon");
+            const setupForm = document.getElementById("setup-form");
+            const saveBtn = document.getElementById("save-btn");
+            const saveBtnText = document.getElementById("save-btn-text");
+            const setupError = document.getElementById("setup-error");
+            const setupErrorText = document.getElementById("setup-error-text");
+            const setupSuccess = document.getElementById("setup-success");
+            const setupSuccessText = document.getElementById("setup-success-text");
+            const confirmOverwrite = document.getElementById("confirm-overwrite");
+
+            // Toggle password mask
+            togglePasswordBtn.addEventListener("click", () => {
+                if (apiKeyInput.type === "password") {
+                    apiKeyInput.type = "text";
+                    eyeIcon.innerHTML = `
+                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
+                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
+                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>
+                        <line x1="2" y1="2" x2="22" y2="22"/>
+                    `;
+                } else {
+                    apiKeyInput.type = "password";
+                    eyeIcon.innerHTML = `
+                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
+                        <circle cx="12" cy="12" r="3"/>
+                    `;
+                }
+            });
+
+            function showError(msg) {
+                setupSuccess.style.display = "none";
+                setupErrorText.textContent = msg;
+                setupError.style.display = "block";
+            }
+
+            function showSuccess(msg) {
+                setupError.style.display = "none";
+                setupSuccessText.textContent = msg;
+                setupSuccess.style.display = "block";
+            }
+
+            // AJAX form submission with validation feedback
+            setupForm.addEventListener("submit", async (e) => {
+                e.preventDefault();
+                setupError.style.display = "none";
+                setupSuccess.style.display = "none";
+
+                const rawKey = apiKeyInput.value.trim();
+
+                if (!rawKey) {
+                    showError("Please enter your OpenAI API key.");
+                    apiKeyInput.focus();
+                    return;
+                }
+
+                if (confirmOverwrite && !confirmOverwrite.checked) {
+                    showError("Please check the confirmation box to replace your existing key.");
+                    confirmOverwrite.focus();
+                    return;
+                }
+
+                // Loading state
+                saveBtn.disabled = true;
+                saveBtnText.textContent = "Verifying with OpenAI...";
+
+                try {
+                    const response = await fetch("{{ url_for('save_key') }}", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Requested-With": "XMLHttpRequest"
+                        },
+                        body: JSON.stringify({
+                            api_key: rawKey,
+                            confirm_overwrite: confirmOverwrite ? confirmOverwrite.checked : false
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok || !data.success) {
+                        showError(data.error || "Failed to validate API key. Please try again.");
+                    } else {
+                        showSuccess(data.message || "Key verified and saved successfully! Redirecting...");
+                        // Clear password field from DOM memory immediately
+                        apiKeyInput.value = "";
+                        setTimeout(() => {
+                            window.location.href = "{{ url_for('home') }}";
+                        }, 1200);
+                    }
+                } catch (err) {
+                    showError("Network error: Could not reach application server.");
+                } finally {
+                    saveBtn.disabled = false;
+                    saveBtnText.textContent = "Validate & Save Configuration";
+                }
+            });
+        });
+    </script>
+</body>
+</html>

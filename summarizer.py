@@ -310,7 +310,13 @@ def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, ch
     if active_mode not in MODES:
         active_mode = DEFAULT_MODE
 
-    resolved_key = (api_key or "").strip() or os.getenv("OPENAI_API_KEY")
+    try:
+        from byok import get_configured_api_key
+        configured = get_configured_api_key()
+    except ImportError:
+        configured = os.getenv("OPENAI_API_KEY")
+
+    resolved_key = (api_key or "").strip() or configured
 
     if not resolved_key:
         raise SummarizerError(

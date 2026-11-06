@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebBrief AI — API Key Settings</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        .settings-card {
+            max-width: 620px;
+            margin: 2rem auto;
+        }
+        .status-box {
+            background: rgba(15, 23, 42, 0.6);
+            border: 1px solid rgba(148, 163, 184, 0.15);
+            border-radius: 12px;
+            padding: 1.5rem;
+            margin-bottom: 2rem;
+        }
+        .status-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.75rem 0;
+            border-bottom: 1px solid rgba(148, 163, 184, 0.1);
+        }
+        .status-row:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+        .status-label {
+            font-size: 0.9rem;
+            color: #94a3b8;
+            font-weight: 500;
+        }
+        .status-val {
+            font-size: 0.92rem;
+            color: #f1f5f9;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        .badge-active {
+            background: rgba(16, 185, 129, 0.15);
+            color: #34d399;
+            border: 1px solid rgba(16, 185, 129, 0.3);
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+        }
+        .badge-unconfigured {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            padding: 0.2rem 0.6rem;
+            border-radius: 9999px;
+            font-size: 0.75rem;
+        }
+        .danger-zone {
+            margin-top: 2rem;
+            padding-top: 1.5rem;
+            border-top: 1px solid rgba(239, 68, 68, 0.2);
+        }
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.15);
+            color: #f87171;
+            border: 1px solid rgba(239, 68, 68, 0.3);
+            padding: 0.65rem 1rem;
+            border-radius: 8px;
+            font-weight: 600;
+            font-size: 0.88rem;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.25);
+            color: #fff;
+        }
+    </style>
+</head>
+<body>
+
+    <main class="app-container">
+
+        <header class="app-header">
+            <div class="logo-wrapper">
+                <div class="logo-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                        <path d="M8 7h6"/>
+                        <path d="M8 11h8"/>
+                    </svg>
+                </div>
+                <div class="brand-info">
+                    <h1>WebBrief <span class="accent-text">AI</span></h1>
+                    <span class="badge">v0.9</span>
+                </div>
+            </div>
+            <p class="tagline">BYOK Key Management & Configuration Settings</p>
+        </header>
+
+        <section class="card settings-card">
+            <h2 style="font-size: 1.4rem; font-weight: 700; color: #f1f5f9; margin-bottom: 1.25rem;">
+                OpenAI Configuration Status
+            </h2>
+
+            <div class="status-box">
+                <div class="status-row">
+                    <span class="status-label">Configuration Status</span>
+                    <span class="status-val">
+                        {% if is_configured %}
+                            <span class="badge-active">● Active & Verified</span>
+                        {% else %}
+                            <span class="badge-unconfigured">● Not Configured</span>
+                        {% endif %}
+                    </span>
+                </div>
+
+                <div class="status-row">
+                    <span class="status-label">Active Credentials</span>
+                    <span class="status-val">
+                        {% if is_configured %}
+                            <span style="letter-spacing: 0.15em; color: #94a3b8;">••••••••••••••••</span>
+                        {% else %}
+                            <span style="color: #64748b;">None</span>
+                        {% endif %}
+                    </span>
+                </div>
+
+                <div class="status-row">
+                    <span class="status-label">Storage Mechanism</span>
+                    <span class="status-val">
+                        {% if is_serverless %}
+                            Session Storage (Serverless)
+                        {% else %}
+                            Local Environment File (<code>.env</code>)
+                        {% endif %}
+                    </span>
+                </div>
+
+                <div class="status-row">
+                    <span class="status-label">Third-Party Auth Required</span>
+                    <span class="status-val" style="color: #10b981;">None (BYOK Architecture)</span>
+                </div>
+            </div>
+
+            <div style="display: flex; gap: 1rem; align-items: center;">
+                <a href="{{ url_for('setup', mode='change') }}" class="btn btn-primary" style="flex: 1; text-align: center; text-decoration: none;">
+                    {% if is_configured %}Change API Key{% else %}Configure API Key{% endif %}
+                </a>
+                <a href="{{ url_for('home') }}" class="btn" style="background: rgba(148, 163, 184, 0.1); color: #cbd5e1; border: 1px solid rgba(148, 163, 184, 0.2); text-decoration: none;">
+                    Back to Dashboard
+                </a>
+            </div>
+
+            {% if is_configured %}
+            <div class="danger-zone">
+                <h3 style="font-size: 1rem; font-weight: 600; color: #f87171; margin-bottom: 0.5rem;">Remove Configuration</h3>
+                <p style="font-size: 0.85rem; color: #94a3b8; margin-bottom: 1rem;">
+                    Clearing your API key will remove it from your active session and environment. You will be required to re-configure a key before summarizing webpages.
+                </p>
+                <form action="{{ url_for('clear_key') }}" method="POST" onsubmit="return confirm('Are you sure you want to remove your saved OpenAI API key?');">
+                    <button type="submit" class="btn-danger">Clear Saved Key</button>
+                </form>
+            </div>
+            {% endif %}
+        </section>
+
+    </main>
+
+</body>
+</html>

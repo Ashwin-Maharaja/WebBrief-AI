@@ -3,41 +3,34 @@
 An AI-powered website summarizer that extracts readable content from any webpage (including JavaScript-rendered single page applications) and generates concise, high-value structured summaries for both short and long-form content across multiple summarization modes.
 
 ## Version
-**v0.8 — Dynamic Scraping Fallback**
+**v0.9 — BYOK Onboarding & Security**
 
-## Features in v0.8
-- **Dynamic JavaScript Rendering Fallback**:
-  - Two-stage hybrid extraction pipeline: attempts standard static extraction (`requests` + `BeautifulSoup`) first for maximum speed.
-  - Automatically invokes headless browser rendering (`Playwright` + Chromium) when static extraction yields inadequate content (e.g., client-side React, Vue, Angular, or SPA shells).
-  - Configurable timeouts (`STATIC_TIMEOUT = 15s`, `BROWSER_TIMEOUT = 15s`) and DOM readiness polling.
-  - Efficient resource aborts: blocks images, media, web fonts, and stylesheets during browser rendering to minimize bandwidth and latency.
-  - Clean lifecycle management: ensures browser contexts and instances are always closed and released.
-- **Enterprise-Grade SSRF & Security Defense**:
-  - Validates URLs and strictly blocks internal and private network destinations (`127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`).
-  - Blocks `localhost`, `.local`, `.internal`, `.lan`, and cloud metadata endpoints (`169.254.169.254`).
-  - DNS resolution validation: verifies that domain names resolve exclusively to public, routable IP addresses.
-  - Redirect validation: verifies every intermediate hop and the final destination against SSRF rules.
-  - Request filtering in browser: enforces SSRF and scheme checks on subresources and frame navigations.
-- **Multiple Summarization Modes (from v0.7)**:
-  - ⚡ **Quick Summary** *(Default)*: Highly concise overview focusing strictly on core highlights.
-  - 📖 **Detailed Summary**: In-depth explanation with background context, nuances, and comprehensive detail.
-  - 📋 **Bullet-Point Summary**: Highly scannable, cleanly structured key takeaways.
-  - ⚙️ **Technical Summary**: Strictly preserves technical terminology, specifications, and architecture.
+## Features in v0.9
+- **Secure Bring Your Own Key (BYOK) Onboarding**:
+  - **First-Run Setup Wizard (`/setup`)**: Automatically detects whether an active OpenAI API key is configured. If not, seamlessly redirects visitors to a dedicated onboarding wizard.
+  - **Zero-Token Key Validation**: Verifies credentials against OpenAI's authentication server using a minimal 0-token verification call (`client.models.list()`) before saving.
+  - **Password Masking & Visibility Toggle**: API keys are masked by default (`type="password"`) with an interactive Show/Hide toggle.
+  - **Sanitized Error Messaging**: Friendly user feedback for invalid keys, billing/quota limitations, network timeouts, and permissions without echoing the submitted key or leaking credentials.
+  - **Protected Local Persistence**: Safely writes validated keys to a local `.env` file (`OPENAI_API_KEY`) with restricted file permissions (`chmod 600` on POSIX systems).
+  - **Overwrite Protection**: Detects existing `.env` files and requires explicit user confirmation before replacing active credentials.
+- **Dedicated Key Management (`/settings`)**:
+  - Displays real-time configuration status, masked credential indicator (`••••••••••••••••`), and active storage mechanism.
+  - Provides options to update the API key or safely clear saved credentials.
+  - Never displays previously saved keys in cleartext and never transmits credentials to frontend JavaScript.
+- **Local & Serverless Deployment Compatibility**:
+  - **Local / Self-Hosted**: Automatically creates and persists `.env` configurations across application restarts with zero third-party auth requirements (no Google OAuth required).
+  - **Hosted / Serverless (Vercel, AWS Lambda, Netlify)**: Gracefully detects read-only or ephemeral filesystems and maintains session-level BYOK using cryptographically signed, `HttpOnly`, `SameSite=Lax` cookies.
+- **Dynamic JavaScript Scraping Fallback (from v0.8)**: Hybrid static requests + Playwright headless Chromium fallback for SPA/client-rendered websites with asset blocking (images, fonts, stylesheets, media).
+- **Enterprise SSRF Protection (from v0.8)**: Blocks `localhost`, private network IP ranges, cloud metadata endpoints (`169.254.169.254`), non-HTTP schemes, and unverified redirects.
+- **Multiple Summarization Modes (from v0.7)**: Quick, Detailed, Bullet-Point, and Technical modes.
 - **Chunking & Map-Reduce Pipeline (from v0.6)**: Paragraph-aware chunking and hierarchical intermediate reduction for long-form content.
 - **Structured 5-Section Architecture (from v0.5)**: Consistent format across all modes (Title, Overview, Key Points, Important Details, Conclusion).
-- **BYOK (Bring Your Own Key) Support**: Optional custom OpenAI API key field directly in the UI.
-- **Security by Design**: Zero exposure of environment variables or API keys to frontend assets or public logs.
-
-## Deployment & Serverless Considerations
-
-- **Headless Browser Binaries**: Standard serverless functions (e.g. AWS Lambda, Vercel Serverless) enforce tight package size limits (~50MB compressed / 250MB uncompressed). Full Chromium binaries can exceed these limits unless deployed using container images or specialized packages (e.g. `@sparticuz/chromium`).
-- **Recommended Environments**: Containerized environments (Docker on Render, Railway, Fly.io, Google Cloud Run, AWS ECS) or traditional Linux/Windows VPS provide native support for Playwright browser binaries.
-- **Graceful Degradation**: If Playwright or browser binaries are not installed in the target host environment, WebBrief AI automatically degrades gracefully: static scraping remains fully operational, and informative diagnostic errors are returned if dynamic rendering is required.
 
 ## Project Structure
 ```
 WebBrief AI/
-├── app.py              # Flask application routes, mode routing, and request coordination
+├── app.py              # Flask application routes, BYOK onboarding enforcement, and coordination
+├── byok.py             # Key validation, safe .env persistence, and serverless compatibility
 ├── chunker.py          # Paragraph-aware chunking and boundary management
 ├── scraper.py          # Dual static/dynamic scraper, SSRF protection, and Playwright fallback
 ├── summarizer.py       # Multi-mode prompt engine, Map-Reduce pipeline, and schema validation
@@ -45,7 +38,9 @@ WebBrief AI/
 │   └── style.css       # Responsive styling, mode cards, section styling, animations
 ├── templates/
 │   ├── index.html      # Primary interactive web interface with mode selector
-│   └── result.html     # Structured summary view template with mode badging
+│   ├── result.html     # Structured summary view template with mode badging
+│   ├── setup.html      # First-run BYOK onboarding wizard & key update modal
+│   └── settings.html   # Key management, configuration status, and credential reset
 ├── .env.example        # Environment variable template
 ├── .gitignore          # Git ignore configuration
 ├── requirements.txt    # Lean dependencies including Playwright
@@ -65,14 +60,14 @@ pip install -r requirements.txt
 playwright install chromium
 ```
 
-### 3. Configure Environment
-Copy `.env.example` to `.env` and add your OpenAI API key:
-```bash
-OPENAI_API_KEY=your_openai_api_key_here
-```
-
-### 4. Run the Application
+### 3. Run the Application
 ```bash
 python app.py
 ```
 Visit `http://127.0.0.1:5000` in your web browser.
+- On your first run, WebBrief AI will automatically launch the **First-Run Setup Wizard** at `/setup`.
+- Enter your personal OpenAI API key to validate and save your configuration.
+- Alternatively, you can pre-configure credentials by copying `.env.example` to `.env`:
+```bash
+OPENAI_API_KEY=your_openai_api_key_here
+```
