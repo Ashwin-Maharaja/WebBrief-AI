@@ -1,30 +1,454 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>WebBrief AI</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebBrief AI — Smart Structured Website Summarizer</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 </head>
-
 <body>
 
-    <div class="container">
+    <main class="app-container">
 
-        <h1>WebBrief AI</h1>
+        <!-- App Header -->
+        <header class="app-header">
+            <div class="logo-wrapper">
+                <div class="logo-icon">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                        <path d="M8 7h6"/>
+                        <path d="M8 11h8"/>
+                    </svg>
+                </div>
+                <div class="brand-info">
+                    <h1>WebBrief <span class="accent-text">AI</span></h1>
+                    <span class="badge">v0.5</span>
+                </div>
+            </div>
+            <p class="tagline">Turn any webpage or article into an accurate, structured AI summary in seconds.</p>
+        </header>
 
-        <p>Turn any webpage into a concise AI-powered summary.</p>
+        <!-- Main Form Card -->
+        <section class="card input-card">
+            <form id="summarize-form" action="/summarize" method="POST" novalidate>
+                <div class="form-group">
+                    <label for="url-input" class="form-label">Webpage URL</label>
+                    <div class="input-wrapper">
+                        <span class="input-icon">
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <circle cx="12" cy="12" r="10"/>
+                                <line x1="2" y1="12" x2="22" y2="12"/>
+                                <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+                            </svg>
+                        </span>
+                        <input
+                            type="url"
+                            id="url-input"
+                            name="url"
+                            class="form-control"
+                            placeholder="https://example.com/article"
+                            value="{{ url if url else '' }}"
+                            required
+                            autocomplete="off"
+                        >
+                    </div>
+                </div>
 
-        <form action="/summarize" method="POST">
-            <input
-                type="text"
-                name="url"
-                placeholder="Paste webpage URL here"
-                required
-            >
+                <!-- Collapsible BYOK Section -->
+                <details class="byok-details">
+                    <summary class="byok-toggle">
+                        <span class="toggle-icon">⚙️</span>
+                        <span>Bring Your Own Key (Optional)</span>
+                    </summary>
+                    <div class="byok-body">
+                        <label for="api-key-input" class="byok-label">Custom OpenAI API Key</label>
+                        <input
+                            type="password"
+                            id="api-key-input"
+                            name="api_key"
+                            class="form-control form-control-sm"
+                            placeholder="sk-..."
+                            autocomplete="off"
+                        >
+                        <p class="byok-hint">
+                            Leave blank to use the backend's default environment key. Keys entered here are used solely for your session and never stored.
+                        </p>
+                    </div>
+                </details>
 
-            <button type="submit">Summarize</button>
-        </form>
+                <div class="form-actions">
+                    <button type="submit" id="submit-btn" class="btn btn-primary">
+                        <span class="btn-text">Summarize Webpage</span>
+                        <span class="btn-spinner" aria-hidden="true">
+                            <svg class="spinner-svg" viewBox="0 0 24 24" fill="none">
+                                <circle class="spinner-track" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="3"></circle>
+                                <path class="spinner-head" fill="currentColor" d="M4 12a8 8 0 018-8v4a4 4 0 00-4 4H4z"></path>
+                            </svg>
+                        </span>
+                    </button>
+                </div>
+            </form>
+        </section>
 
-    </div>
+        <!-- Dynamic / Server Error Alert -->
+        <div id="error-alert" class="alert alert-error {{ 'active' if error else '' }}" role="alert">
+            <div class="alert-icon">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <line x1="12" y1="8" x2="12" y2="12"/>
+                    <line x1="12" y1="16" x2="12.01" y2="16"/>
+                </svg>
+            </div>
+            <div class="alert-content">
+                <strong class="alert-title">Unable to summarize</strong>
+                <p id="error-message" class="alert-message">{{ error if error else '' }}</p>
+            </div>
+            <button type="button" id="error-close-btn" class="alert-close" aria-label="Dismiss error">&times;</button>
+        </div>
 
+        <!-- Loading State Card -->
+        <div id="loading-card" class="card loading-card" style="display: none;">
+            <div class="loading-indicator">
+                <div class="pulse-ring"></div>
+                <div class="pulse-dot"></div>
+            </div>
+            <div class="loading-copy">
+                <h3>Analyzing webpage content...</h3>
+                <p>Extracting readable text and generating an accurate structured summary with OpenAI.</p>
+            </div>
+        </div>
+
+        <!-- Structured Summary Result Card (Displayed directly on page) -->
+        <section id="result-card" class="card result-card {{ 'active' if summary else '' }}" style="{{ '' if summary else 'display: none;' }}">
+            <div class="result-header">
+                <div class="result-title-group">
+                    <div class="sparkle-icon">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="m12 3-1.9 5.8a2 2 0 0 1-1.3 1.3L3 12l5.8 1.9a2 2 0 0 1 1.3 1.3L12 21l1.9-5.8a2 2 0 0 1 1.3-1.3L21 12l-5.8-1.9a2 2 0 0 1-1.3-1.3L12 3Z"/>
+                        </svg>
+                    </div>
+                    <span class="structured-badge">Structured Brief</span>
+                </div>
+                <div class="result-actions">
+                    <button type="button" id="copy-btn" class="btn btn-secondary btn-sm" title="Copy structured summary">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <rect width="14" height="14" x="8" y="8" rx="2" ry="2"/>
+                            <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/>
+                        </svg>
+                        <span id="copy-btn-text">Copy Summary</span>
+                    </button>
+                    <button type="button" id="clear-btn" class="btn btn-ghost btn-sm" title="Clear result">
+                        Clear
+                    </button>
+                </div>
+            </div>
+
+            <!-- Article Title -->
+            <div class="title-container">
+                <h2 id="summary-article-title" class="article-title">
+                    {% if summary is mapping %}
+                        {{ summary.title }}
+                    {% elif summary %}
+                        Webpage Summary
+                    {% endif %}
+                </h2>
+                <div id="source-url-banner" class="source-url-banner" style="{{ '' if url else 'display: none;' }}">
+                    <span class="source-label">Source:</span>
+                    <a id="source-url-link" href="{{ url if url else '#' }}" target="_blank" rel="noopener noreferrer" class="source-link">
+                        {{ url if url else '' }}
+                    </a>
+                </div>
+            </div>
+
+            <!-- Structured Sections Container -->
+            <div id="structured-content" class="structured-content">
+
+                <!-- 1. Overview Section -->
+                <div id="section-overview" class="summary-section overview-section">
+                    <div class="section-header">
+                        <span class="section-icon">📌</span>
+                        <h3 class="section-heading">Overview</h3>
+                    </div>
+                    <p id="summary-overview" class="section-text">
+                        {% if summary is mapping %}
+                            {{ summary.overview }}
+                        {% elif summary %}
+                            {{ summary }}
+                        {% endif %}
+                    </p>
+                </div>
+
+                <!-- 2. Key Points Section -->
+                <div id="section-key-points" class="summary-section key-points-section" style="{% if summary is mapping and not summary.key_points %}display: none;{% endif %}">
+                    <div class="section-header">
+                        <span class="section-icon">🎯</span>
+                        <h3 class="section-heading">Key Points</h3>
+                    </div>
+                    <ul id="summary-key-points" class="section-list">
+                        {% if summary is mapping and summary.key_points %}
+                            {% for pt in summary.key_points %}
+                                <li>{{ pt }}</li>
+                            {% endfor %}
+                        {% endif %}
+                    </ul>
+                </div>
+
+                <!-- 3. Important Details Section -->
+                <div id="section-important-details" class="summary-section details-section" style="{% if not summary or not summary is mapping or not summary.important_details %}display: none;{% endif %}">
+                    <div class="section-header">
+                        <span class="section-icon">🔍</span>
+                        <h3 class="section-heading">Important Details</h3>
+                    </div>
+                    <ul id="summary-important-details" class="section-list details-list">
+                        {% if summary is mapping and summary.important_details %}
+                            {% for detail in summary.important_details %}
+                                <li>{{ detail }}</li>
+                            {% endfor %}
+                        {% endif %}
+                    </ul>
+                </div>
+
+                <!-- 4. Conclusion Section -->
+                <div id="section-conclusion" class="summary-section conclusion-section" style="{% if not summary or not summary is mapping or not summary.conclusion %}display: none;{% endif %}">
+                    <div class="section-header">
+                        <span class="section-icon">💡</span>
+                        <h3 class="section-heading">Conclusion</h3>
+                    </div>
+                    <p id="summary-conclusion" class="section-text conclusion-text">
+                        {% if summary is mapping and summary.conclusion %}
+                            {{ summary.conclusion }}
+                        {% endif %}
+                    </p>
+                </div>
+
+            </div>
+        </section>
+
+        <!-- Footer -->
+        <footer class="app-footer">
+            <p>WebBrief AI &bull; Lightweight Python &amp; Flask Pipeline</p>
+        </footer>
+
+    </main>
+
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            const form = document.getElementById("summarize-form");
+            const urlInput = document.getElementById("url-input");
+            const apiKeyInput = document.getElementById("api-key-input");
+            const submitBtn = document.getElementById("submit-btn");
+            const btnText = submitBtn.querySelector(".btn-text");
+            const errorAlert = document.getElementById("error-alert");
+            const errorMessage = document.getElementById("error-message");
+            const errorCloseBtn = document.getElementById("error-close-btn");
+            const loadingCard = document.getElementById("loading-card");
+            const resultCard = document.getElementById("result-card");
+            const sourceUrlBanner = document.getElementById("source-url-banner");
+            const sourceUrlLink = document.getElementById("source-url-link");
+            const copyBtn = document.getElementById("copy-btn");
+            const copyBtnText = document.getElementById("copy-btn-text");
+            const clearBtn = document.getElementById("clear-btn");
+
+            // Structured section elements
+            const articleTitle = document.getElementById("summary-article-title");
+            const sectionOverview = document.getElementById("section-overview");
+            const summaryOverview = document.getElementById("summary-overview");
+            const sectionKeyPoints = document.getElementById("section-key-points");
+            const summaryKeyPoints = document.getElementById("summary-key-points");
+            const sectionDetails = document.getElementById("section-important-details");
+            const summaryDetails = document.getElementById("summary-important-details");
+            const sectionConclusion = document.getElementById("section-conclusion");
+            const summaryConclusion = document.getElementById("summary-conclusion");
+
+            let currentSummaryData = null;
+
+            function showError(msg) {
+                errorMessage.textContent = msg;
+                errorAlert.classList.add("active");
+                errorAlert.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            }
+
+            function hideError() {
+                errorAlert.classList.remove("active");
+                errorMessage.textContent = "";
+            }
+
+            errorCloseBtn.addEventListener("click", hideError);
+
+            clearBtn.addEventListener("click", () => {
+                resultCard.style.display = "none";
+                resultCard.classList.remove("active");
+                articleTitle.textContent = "";
+                summaryOverview.textContent = "";
+                summaryKeyPoints.innerHTML = "";
+                summaryDetails.innerHTML = "";
+                summaryConclusion.textContent = "";
+                sourceUrlBanner.style.display = "none";
+                sourceUrlLink.textContent = "";
+                sourceUrlLink.href = "#";
+                urlInput.value = "";
+                currentSummaryData = null;
+                hideError();
+                urlInput.focus();
+            });
+
+            function renderStructuredSummary(data, sourceUrl) {
+                currentSummaryData = data;
+
+                // Render Title
+                articleTitle.textContent = data.title || "Webpage Summary";
+
+                // Render Source URL
+                if (sourceUrl) {
+                    sourceUrlLink.textContent = sourceUrl;
+                    sourceUrlLink.href = sourceUrl;
+                    sourceUrlBanner.style.display = "flex";
+                } else {
+                    sourceUrlBanner.style.display = "none";
+                }
+
+                // Render Overview
+                if (data.overview) {
+                    summaryOverview.textContent = data.overview;
+                    sectionOverview.style.display = "block";
+                } else {
+                    sectionOverview.style.display = "none";
+                }
+
+                // Render Key Points
+                summaryKeyPoints.innerHTML = "";
+                if (Array.isArray(data.key_points) && data.key_points.length > 0) {
+                    data.key_points.forEach(point => {
+                        const li = document.createElement("li");
+                        li.textContent = point;
+                        summaryKeyPoints.appendChild(li);
+                    });
+                    sectionKeyPoints.style.display = "block";
+                } else {
+                    sectionKeyPoints.style.display = "none";
+                }
+
+                // Render Important Details
+                summaryDetails.innerHTML = "";
+                if (Array.isArray(data.important_details) && data.important_details.length > 0) {
+                    data.important_details.forEach(detail => {
+                        const li = document.createElement("li");
+                        li.textContent = detail;
+                        summaryDetails.appendChild(li);
+                    });
+                    sectionDetails.style.display = "block";
+                } else {
+                    sectionDetails.style.display = "none";
+                }
+
+                // Render Conclusion
+                if (data.conclusion && data.conclusion.trim()) {
+                    summaryConclusion.textContent = data.conclusion;
+                    sectionConclusion.style.display = "block";
+                } else {
+                    sectionConclusion.style.display = "none";
+                }
+
+                resultCard.style.display = "block";
+                resultCard.classList.add("active");
+                resultCard.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+
+            copyBtn.addEventListener("click", async () => {
+                let textToCopy = "";
+
+                if (currentSummaryData && typeof currentSummaryData === "object") {
+                    const parts = [];
+                    if (currentSummaryData.title) parts.push("# " + currentSummaryData.title + "\n");
+                    if (currentSummaryData.overview) parts.push("## Overview\n" + currentSummaryData.overview + "\n");
+                    if (Array.isArray(currentSummaryData.key_points) && currentSummaryData.key_points.length) {
+                        parts.push("## Key Points\n" + currentSummaryData.key_points.map(p => "- " + p).join("\n") + "\n");
+                    }
+                    if (Array.isArray(currentSummaryData.important_details) && currentSummaryData.important_details.length) {
+                        parts.push("## Important Details\n" + currentSummaryData.important_details.map(d => "- " + d).join("\n") + "\n");
+                    }
+                    if (currentSummaryData.conclusion) {
+                        parts.push("## Conclusion\n" + currentSummaryData.conclusion + "\n");
+                    }
+                    textToCopy = parts.join("\n").trim();
+                } else {
+                    textToCopy = document.getElementById("structured-content").innerText;
+                }
+
+                if (!textToCopy) return;
+
+                try {
+                    await navigator.clipboard.writeText(textToCopy);
+                    const originalText = copyBtnText.textContent;
+                    copyBtnText.textContent = "Copied!";
+                    copyBtn.classList.add("btn-copied");
+                    setTimeout(() => {
+                        copyBtnText.textContent = originalText;
+                        copyBtn.classList.remove("btn-copied");
+                    }, 2000);
+                } catch (err) {
+                    console.error("Copy failed: ", err);
+                }
+            });
+
+            form.addEventListener("submit", async (e) => {
+                e.preventDefault();
+                hideError();
+
+                const rawUrl = urlInput.value.trim();
+
+                // Prevent empty submissions
+                if (!rawUrl) {
+                    showError("Please enter a webpage URL before submitting.");
+                    urlInput.focus();
+                    return;
+                }
+
+                // UI loading state
+                submitBtn.disabled = true;
+                submitBtn.classList.add("loading");
+                btnText.textContent = "Summarizing...";
+                loadingCard.style.display = "flex";
+                resultCard.style.display = "none";
+                resultCard.classList.remove("active");
+
+                const apiKey = apiKeyInput.value.trim();
+
+                try {
+                    const response = await fetch("/summarize", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Requested-With": "XMLHttpRequest"
+                        },
+                        body: JSON.stringify({
+                            url: rawUrl,
+                            api_key: apiKey
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (!response.ok || !data.success) {
+                        const errMsg = data.error || "An error occurred during summarization.";
+                        showError(errMsg);
+                    } else {
+                        // Render structured summary directly on page
+                        renderStructuredSummary(data.summary, data.url);
+                    }
+                } catch (err) {
+                    showError("Network error: Could not reach the server. Please check your connection and try again.");
+                } finally {
+                    loadingCard.style.display = "none";
+                    submitBtn.disabled = false;
+                    submitBtn.classList.remove("loading");
+                    btnText.textContent = "Summarize Webpage";
+                }
+            });
+        });
+    </script>
 </body>
 </html>
