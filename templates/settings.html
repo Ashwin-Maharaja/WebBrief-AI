@@ -127,7 +127,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.3</span>
+                    <span class="badge">v1.4</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -378,6 +378,43 @@
                 </div>
             </div>
 
+            <!-- Local Vector Knowledge & Semantic Search (v1.4) -->
+            <div class="settings-section">
+                <div class="section-header">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <h3>Local Vector Knowledge & Semantic Search</h3>
+                </div>
+
+                <div class="status-box">
+                    <div class="status-row">
+                        <span class="status-label">Vector Storage Architecture</span>
+                        <span class="status-val" style="color: #10b981;">SQLite Binary Float Vectors (1536 dims)</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Embedding Model</span>
+                        <span class="status-val">OpenAI <code>text-embedding-3-small</code></span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Indexing Cache</span>
+                        <span class="status-val">SHA-256 Content Hash (Zero Duplicate Billing)</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Total Indexed Documents</span>
+                        <span class="status-val" id="indexed-count-display">Loading...</span>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1rem; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <button type="button" id="rebuild-index-btn" onclick="rebuildVectorIndex()" class="btn btn-secondary" style="font-size: 0.88rem;">
+                        🔄 Rebuild Vector Index
+                    </button>
+                    <span id="rebuild-status-msg" style="font-size: 0.82rem; font-weight: 600; color: var(--text-muted);"></span>
+                </div>
+            </div>
+
             <!-- 6. Summary History Management -->
             <div class="settings-section">
                 <div class="section-header">
@@ -411,7 +448,7 @@
                 </div>
             </div>
 
-            <!-- 6. Application Info -->
+            <!-- 7. Application Info -->
             <div class="settings-section">
                 <div class="section-header">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -425,7 +462,7 @@
                 <div class="status-box">
                     <div class="status-row">
                         <span class="status-label">Release Version</span>
-                        <span class="status-val"><span class="badge">v1.3</span></span>
+                        <span class="status-val"><span class="badge">v1.4</span></span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Architecture</span>
@@ -711,8 +748,56 @@
             }
         }
 
+        async function loadVectorStats() {
+            try {
+                const res = await fetch("/api/search/stats");
+                const data = await res.json();
+                const display = document.getElementById("indexed-count-display");
+                if (display) {
+                    display.textContent = `${data.indexed_count || 0} summaries indexed (${data.model || 'text-embedding-3-small'})`;
+                }
+            } catch (err) {
+                console.warn("Could not load vector stats", err);
+            }
+        }
+
+        async function rebuildVectorIndex() {
+            const btn = document.getElementById("rebuild-index-btn");
+            const msg = document.getElementById("rebuild-status-msg");
+            if (btn) btn.disabled = true;
+            if (msg) {
+                msg.textContent = "Rebuilding vector embeddings...";
+                msg.style.color = "var(--primary)";
+            }
+
+            try {
+                const res = await fetch("/api/search/rebuild-index", { method: "POST" });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    if (msg) {
+                        msg.textContent = `✓ ${data.message || 'Index rebuilt successfully!'}`;
+                        msg.style.color = "#10b981";
+                    }
+                    loadVectorStats();
+                } else {
+                    if (msg) {
+                        msg.textContent = data.error || "Failed to rebuild index.";
+                        msg.style.color = "var(--error-text)";
+                    }
+                }
+            } catch (err) {
+                if (msg) {
+                    msg.textContent = "Network error rebuilding index.";
+                    msg.style.color = "var(--error-text)";
+                }
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        }
+
         document.addEventListener("DOMContentLoaded", () => {
             checkNotionStatus();
+            loadVectorStats();
         });
     </script>
 </body>

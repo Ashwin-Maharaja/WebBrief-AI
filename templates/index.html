@@ -31,7 +31,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.3</span>
+                    <span class="badge">v1.4</span>
                 </div>
             </div>
             
@@ -47,12 +47,12 @@
                 </button>
             </div>
 
-            <p class="tagline" style="margin-top: 12px;">Accurate, multi-mode AI summaries, comparative research & Notion export.</p>
+            <p class="tagline" style="margin-top: 12px;">Accurate, multi-mode AI summaries, comparative research & local semantic search.</p>
         </header>
 
         <!-- Main Form Card -->
         <section class="card input-card">
-            <!-- Mode Switcher Tabs: Single URL vs Batch Summarize vs Compare Articles -->
+            <!-- Mode Switcher Tabs: Single URL vs Batch Summarize vs Compare Articles vs Semantic Search -->
             <div class="tab-bar">
                 <button type="button" class="tab-btn active" id="tab-single-btn" onclick="switchSubmissionTab('single')">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -78,6 +78,13 @@
                         <circle cx="16" cy="12" r="2"/>
                     </svg>
                     <span>Compare Two Articles</span>
+                </button>
+                <button type="button" class="tab-btn" id="tab-search-btn" onclick="switchSubmissionTab('search')">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <span>Semantic Search</span>
                 </button>
             </div>
 
@@ -161,6 +168,48 @@
                                 >
                             </div>
                             <div id="error-compare-b" class="field-error-msg" style="display: none; color: #ef4444; font-size: 12px; margin-top: 4px;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Semantic Search Input Container (v1.4) -->
+                <div id="semantic-search-container" style="display: none;">
+                    <div class="form-group">
+                        <label for="semantic-query-input" class="form-label">
+                            <span>Natural-Language Knowledge Query</span>
+                            <span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; font-weight: 600;">Vector Search</span>
+                        </label>
+                        <div class="input-wrapper">
+                            <span class="input-icon">🔍</span>
+                            <input
+                                type="text"
+                                id="semantic-query-input"
+                                class="form-control"
+                                placeholder="e.g., What are the key ethical risks of AI models discussed in my saved articles?"
+                                autocomplete="off"
+                            >
+                        </div>
+                        <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 6px;">
+                            Searches your saved summary library using AI vector embeddings (<code>text-embedding-3-small</code>).
+                        </p>
+                    </div>
+
+                    <!-- Search Controls: Filter Type & Relevance Threshold Slider -->
+                    <div class="search-controls-row" style="display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; justify-content: space-between;">
+                        <div class="filter-group" style="display: flex; gap: 8px; align-items: center;">
+                            <label class="form-label" style="margin-bottom: 0; font-size: 13px;">Filter:</label>
+                            <select id="search-filter-type" class="form-control" style="width: auto; padding: 6px 12px; font-size: 13px;">
+                                <option value="all">All Documents</option>
+                                <option value="single">Single Webpages</option>
+                                <option value="comparison">Comparative Briefs</option>
+                            </select>
+                        </div>
+
+                        <div class="threshold-group" style="display: flex; gap: 8px; align-items: center;">
+                            <label for="search-threshold-slider" class="form-label" style="margin-bottom: 0; font-size: 13px;" title="Minimum cosine similarity score to qualify as relevant">
+                                Min Relevance: <span id="threshold-display" style="font-weight: 700; color: var(--primary);">35%</span>
+                            </label>
+                            <input type="range" id="search-threshold-slider" min="15" max="85" value="35" step="5" style="width: 110px;" oninput="document.getElementById('threshold-display').textContent = this.value + '%'">
                         </div>
                     </div>
                 </div>
@@ -660,6 +709,36 @@
             </div>
         </section>
 
+        <!-- Semantic Search Results Card (v1.4) -->
+        <section id="semantic-results-card" class="card result-card" style="display: none;">
+            <div class="result-header">
+                <div>
+                    <div class="result-title-group" style="margin-bottom: 4px;">
+                        <span class="sparkle-icon">
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <circle cx="11" cy="11" r="8"/>
+                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                            </svg>
+                        </span>
+                        <h2 class="article-title" id="search-results-heading">Semantic Search Matches</h2>
+                    </div>
+                    <p id="search-results-meta" style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
+                        0 matching summaries found.
+                    </p>
+                </div>
+                <div style="display: flex; gap: 8px; align-items: center;">
+                    <button type="button" class="btn btn-secondary" onclick="clearSearchResults()">
+                        Clear Results
+                    </button>
+                </div>
+            </div>
+
+            <!-- List of Semantic Match Cards -->
+            <div id="semantic-matches-list" style="display: flex; flex-direction: column; gap: 14px; margin-top: 16px;">
+                <!-- Populated dynamically via JS -->
+            </div>
+        </section>
+
         <!-- Notion Export Modal Dialog -->
         <div id="notion-modal" class="notion-modal-overlay">
             <div class="notion-modal-card">
@@ -719,7 +798,7 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>WebBrief AI v1.3 • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI v1.4 • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>
@@ -819,22 +898,26 @@
                 document.getElementById("tab-single-btn")?.classList.toggle("active", tab === 'single');
                 document.getElementById("tab-batch-btn")?.classList.toggle("active", tab === 'batch');
                 document.getElementById("tab-compare-btn")?.classList.toggle("active", tab === 'compare');
+                document.getElementById("tab-search-btn")?.classList.toggle("active", tab === 'search');
                 
                 const singleContainer = document.getElementById("single-url-container");
                 const batchContainer = document.getElementById("batch-url-container");
                 const compareContainer = document.getElementById("compare-container");
+                const searchContainer = document.getElementById("semantic-search-container");
                 const modeSelector = document.querySelector(".mode-selector-grid")?.closest(".form-group");
 
                 if (tab === 'single') {
                     if (singleContainer) singleContainer.style.display = "block";
                     if (batchContainer) batchContainer.style.display = "none";
                     if (compareContainer) compareContainer.style.display = "none";
+                    if (searchContainer) searchContainer.style.display = "none";
                     if (modeSelector) modeSelector.style.display = "block";
                     if (btnText) btnText.textContent = "Summarize Webpage";
                 } else if (tab === 'batch') {
                     if (singleContainer) singleContainer.style.display = "none";
                     if (batchContainer) batchContainer.style.display = "block";
                     if (compareContainer) compareContainer.style.display = "none";
+                    if (searchContainer) searchContainer.style.display = "none";
                     if (modeSelector) modeSelector.style.display = "block";
                     // Initialize with 2 rows if empty
                     const list = document.getElementById("batch-url-list");
@@ -847,10 +930,111 @@
                     if (singleContainer) singleContainer.style.display = "none";
                     if (batchContainer) batchContainer.style.display = "none";
                     if (compareContainer) compareContainer.style.display = "block";
+                    if (searchContainer) searchContainer.style.display = "none";
                     if (modeSelector) modeSelector.style.display = "none";
                     if (btnText) btnText.textContent = "⚖️ Run Comparative Research";
+                } else if (tab === 'search') {
+                    if (singleContainer) singleContainer.style.display = "none";
+                    if (batchContainer) batchContainer.style.display = "none";
+                    if (compareContainer) compareContainer.style.display = "none";
+                    if (searchContainer) searchContainer.style.display = "block";
+                    if (modeSelector) modeSelector.style.display = "none";
+                    if (btnText) btnText.textContent = "🔍 Search Knowledge Base";
+                    document.getElementById("semantic-query-input")?.focus();
                 }
             };
+
+            // Semantic Search Results UI
+            window.clearSearchResults = function() {
+                const card = document.getElementById("semantic-results-card");
+                const list = document.getElementById("semantic-matches-list");
+                if (card) card.style.display = "none";
+                if (list) list.innerHTML = "";
+            };
+
+            function escapeHtml(text) {
+                if (!text) return "";
+                const div = document.createElement("div");
+                div.textContent = text;
+                return div.innerHTML;
+            }
+
+            function renderSemanticSearchResults(data) {
+                const card = document.getElementById("semantic-results-card");
+                const list = document.getElementById("semantic-matches-list");
+                const meta = document.getElementById("search-results-meta");
+                if (!card || !list) return;
+
+                list.innerHTML = "";
+                const count = data.count || 0;
+                meta.textContent = `Found ${count} matching summaries for "${data.query}".`;
+
+                if (count === 0) {
+                    const pct = Math.round((data.threshold || 0.35) * 100);
+                    list.innerHTML = `
+                        <div class="empty-history-state" style="padding: 24px 16px;">
+                            <p style="font-size: 15px; font-weight: 600; color: var(--text-primary); margin-bottom: 6px;">
+                                No saved summaries matched your query (Threshold &ge; ${pct}%).
+                            </p>
+                            <p style="font-size: 13px; color: var(--text-muted);">
+                                Try lowering the minimum relevance slider or rephrasing your question with different keywords.
+                            </p>
+                        </div>
+                    `;
+                } else {
+                    data.results.forEach(res => {
+                        const pct = Math.round((res.similarity || 0) * 100);
+                        const scoreClass = pct >= 65 ? "match-score-high" : pct >= 45 ? "match-score-medium" : "match-score-moderate";
+                        const isComparison = res.entry_type === "comparison";
+                        const typeBadge = isComparison ? "⚖️ Comparison" : (res.mode_name || "Summary");
+
+                        const matchItem = document.createElement("div");
+                        matchItem.className = "semantic-match-card";
+                        matchItem.innerHTML = `
+                            <div class="match-header-row">
+                                <div class="match-title-group">
+                                    <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
+                                        <span class="match-score-pill ${scoreClass}">
+                                            ● ${pct}% Match
+                                        </span>
+                                        <span class="badge" style="font-size: 11px;">${escapeHtml(typeBadge)}</span>
+                                        <span style="font-size: 12px; color: var(--text-muted);">${escapeHtml(res.created_at_formatted || '')}</span>
+                                    </div>
+                                    <h3 class="match-card-title">${escapeHtml(res.title || 'Saved Summary')}</h3>
+                                </div>
+                                <button type="button" class="btn btn-primary" style="font-size: 12px; padding: 6px 14px; white-space: nowrap;" onclick="reopenSummaryDirect('${res.id}')">
+                                    Open Summary &rarr;
+                                </button>
+                            </div>
+
+                            <div class="match-excerpt-box">
+                                <span class="match-excerpt-label">Matching Content Excerpt</span>
+                                <div>"${escapeHtml(res.relevant_snippet || '')}"</div>
+                            </div>
+
+                            <div class="match-meta-footer">
+                                <div style="display: flex; gap: 6px; align-items: center; max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                    <span>Source:</span>
+                                    <a href="${escapeHtml(res.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;">
+                                        ${escapeHtml(res.url)}
+                                    </a>
+                                </div>
+                                ${res.id ? `<a href="/export-pdf/${res.id}" class="btn btn-secondary" style="font-size: 11px; padding: 3px 8px; text-decoration: none;">PDF</a>` : ''}
+                            </div>
+                        `;
+                        list.appendChild(matchItem);
+                    });
+                }
+
+                card.style.display = "block";
+                card.classList.add("active");
+                card.scrollIntoView({ behavior: "smooth", block: "start" });
+            }
+
+            if (window.location.hash === "#search" || localStorage.getItem("webbrief_active_tab") === "search") {
+                localStorage.removeItem("webbrief_active_tab");
+                window.switchSubmissionTab('search');
+            }
 
             function updateBatchSubmitBtnText() {
                 if (currentTab !== 'batch') return;
@@ -1827,6 +2011,78 @@
                 const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
                 const customDir = localStorage.getItem("webbrief_custom_directive") || "";
                 const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
+
+                // ==========================================
+                // SEMANTIC SEARCH SUBMISSION (v1.4)
+                // ==========================================
+                if (currentTab === 'search') {
+                    const queryInput = document.getElementById("semantic-query-input");
+                    const query = queryInput ? queryInput.value.trim() : "";
+
+                    if (!query) {
+                        showError("Please enter a natural-language search query.");
+                        queryInput?.focus();
+                        return;
+                    }
+
+                    const thresholdSlider = document.getElementById("search-threshold-slider");
+                    const thresholdVal = thresholdSlider ? (parseFloat(thresholdSlider.value) / 100.0) : 0.35;
+                    const filterSelect = document.getElementById("search-filter-type");
+                    const filterType = filterSelect ? filterSelect.value : "all";
+
+                    submitBtn.disabled = true;
+                    submitBtn.classList.add("loading");
+                    btnText.textContent = "Searching Knowledge Base...";
+                    loadingCard.style.display = "flex";
+                    if (loadingStepText) loadingStepText.textContent = "Embedding query and searching saved summaries...";
+                    resultCard.style.display = "none";
+                    resultCard.classList.remove("active");
+                    const compareCard = document.getElementById("compare-results-card");
+                    if (compareCard) {
+                        compareCard.style.display = "none";
+                        compareCard.classList.remove("active");
+                    }
+                    const searchResultsCard = document.getElementById("semantic-results-card");
+                    if (searchResultsCard) searchResultsCard.style.display = "none";
+
+                    try {
+                        const response = await fetch("/api/search/semantic", {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "X-Requested-With": "XMLHttpRequest"
+                            },
+                            body: JSON.stringify({
+                                query: query,
+                                top_k: 10,
+                                threshold: thresholdVal,
+                                filter_type: filterType,
+                                api_key: apiKey
+                            })
+                        });
+
+                        const data = await response.json();
+
+                        if (!response.ok || !data.success) {
+                            if (response.status === 401 && data.redirect) {
+                                window.location.href = data.redirect;
+                                return;
+                            }
+                            showError(data.error || "Semantic search retrieval failed.");
+                        } else {
+                            renderSemanticSearchResults(data);
+                        }
+                    } catch (err) {
+                        showError("Network error: Could not complete semantic search query.");
+                    } finally {
+                        loadingCard.style.display = "none";
+                        submitBtn.disabled = false;
+                        submitBtn.classList.remove("loading");
+                        btnText.textContent = "🔍 Search Knowledge Base";
+                        if (loadingStepText) loadingStepText.textContent = "Fetching content & analyzing key information...";
+                    }
+                    return;
+                }
 
                 // ==========================================
                 // COMPARATIVE RESEARCH SUBMISSION (v1.3)

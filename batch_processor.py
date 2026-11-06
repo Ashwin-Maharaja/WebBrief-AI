@@ -154,6 +154,11 @@ def process_single_item(
                 if hist_entry:
                     result_item["history_id"] = hist_entry.get("id")
                     summary["history_id"] = hist_entry.get("id")
+                    try:
+                        from vector_store import index_summary_entry
+                        index_summary_entry(hist_entry["id"], api_key=api_key)
+                    except Exception:
+                        pass
             except Exception as e:
                 logger.warning("Could not record history for %s: %s", safe_url, str(e))
 

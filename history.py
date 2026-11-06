@@ -73,6 +73,14 @@ def init_db(db_path: Optional[str] = None) -> None:
                 except sqlite3.OperationalError:
                     pass
         conn.close()
+
+        # Initialize vector store table in the same database
+        try:
+            from vector_store import init_vector_store
+            init_vector_store(db_path)
+        except Exception as e:
+            logger.debug("Vector store table init deferred: %s", str(e))
+
     except Exception as e:
         logger.warning("Failed to initialize SQLite history database: %s", str(e))
 
@@ -260,7 +268,7 @@ def get_history_entry(entry_id: str, db_path: Optional[str] = None) -> Optional[
 
 def delete_history_entry(entry_id: str, db_path: Optional[str] = None) -> bool:
     """
-    Deletes an individual history entry by its ID.
+    Deletes an individual history entry by its ID, and removes any corresponding vector embedding.
     """
     init_db(db_path)
     try:
@@ -269,6 +277,14 @@ def delete_history_entry(entry_id: str, db_path: Optional[str] = None) -> bool:
             cursor = conn.execute("DELETE FROM summary_history WHERE id = ?", (entry_id,))
             affected = cursor.rowcount
         conn.close()
+
+        # Delete corresponding vector embedding
+        try:
+            from vector_store import delete_embedding
+            delete_embedding(entry_id, db_path=db_path)
+        except Exception:
+            pass
+
         return affected > 0
     except Exception as e:
         logger.warning("Failed to delete history entry %s: %s", entry_id, str(e))
@@ -277,7 +293,7 @@ def delete_history_entry(entry_id: str, db_path: Optional[str] = None) -> bool:
 
 def clear_history(db_path: Optional[str] = None) -> bool:
     """
-    Clears all entries from the summary history database.
+    Clears all entries from the summary history database and vector embeddings.
     """
     init_db(db_path)
     try:
@@ -285,6 +301,14 @@ def clear_history(db_path: Optional[str] = None) -> bool:
         with conn:
             conn.execute("DELETE FROM summary_history")
         conn.close()
+
+        # Clear vector embeddings
+        try:
+            from vector_store import clear_all_embeddings
+            clear_all_embeddings(db_path=db_path)
+        except Exception:
+            pass
+
         return True
     except Exception as e:
         logger.warning("Failed to clear summary history: %s", str(e))

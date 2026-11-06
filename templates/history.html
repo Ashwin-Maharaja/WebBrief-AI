@@ -130,7 +130,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.3</span>
+                    <span class="badge">v1.4</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -149,16 +149,36 @@
                         Summary History
                     </h2>
                     <p style="font-size: 0.88rem; color: var(--text-muted);">
-                        Access and reopen your previously generated webpage summaries.
+                        Access, search, and reopen your previously generated webpage summaries.
                     </p>
                 </div>
 
-                {% if entries and entries|length > 0 %}
-                <button id="clear-all-btn" class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 14px;">
-                    Clear All History
-                </button>
-                {% endif %}
+                <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                    <a href="{{ url_for('home') }}#search" class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 12px; text-decoration: none;" onclick="localStorage.setItem('webbrief_active_tab', 'search')">
+                        🔍 Vector Search
+                    </a>
+                    {% if entries and entries|length > 0 %}
+                    <button id="clear-all-btn" class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 14px;">
+                        Clear All History
+                    </button>
+                    {% endif %}
+                </div>
             </div>
+
+            <!-- Instant Filter Input -->
+            {% if entries and entries|length > 0 %}
+            <div class="search-controls-row" style="margin-bottom: 16px; display: flex; align-items: center; gap: 10px;">
+                <span style="font-size: 1.1rem;">🔎</span>
+                <input
+                    type="text"
+                    id="history-filter-input"
+                    class="form-control"
+                    placeholder="Quick filter saved summaries by keyword or URL..."
+                    style="border: none; background: transparent; padding: 4px 8px; font-size: 0.9rem;"
+                    oninput="filterHistoryList(this.value)"
+                >
+            </div>
+            {% endif %}
 
             <div id="history-container" class="history-list">
                 {% if entries and entries|length > 0 %}
@@ -256,6 +276,16 @@
             } catch (err) {
                 console.error("Could not load summary: ", err);
             }
+        }
+
+        // Quick client-side filter
+        function filterHistoryList(q) {
+            const query = (q || "").toLowerCase().trim();
+            const items = document.querySelectorAll(".history-item");
+            items.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                item.style.display = text.includes(query) ? "flex" : "none";
+            });
         }
 
         // Delete single entry

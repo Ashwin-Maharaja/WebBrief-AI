@@ -38,8 +38,20 @@ from notion_service import (
     format_comparison_blocks,
     NotionError,
 )
+from vector_store import (
+    semantic_search,
+    rebuild_vector_index,
+    get_vector_store_stats,
+    index_summary_entry,
+    generate_embedding,
+    VectorStoreError,
+    DEFAULT_EMBEDDING_MODEL,
+    EMBEDDING_DIMENSIONS,
+    DEFAULT_SIMILARITY_THRESHOLD,
+    DEFAULT_SEARCH_LIMIT,
+)
 
-APP_VERSION = "1.3"
+APP_VERSION = "1.4"
 
 app = Flask(__name__)
 
@@ -96,6 +108,10 @@ def enforce_byok_onboarding():
         "api_notion_disconnect",
         "api_notion_pages",
         "api_notion_export",
+        "api_search_semantic",
+        "api_search_stats",
+        "api_search_rebuild_index",
+        "api_search_embed",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -545,6 +561,11 @@ def compare_articles_route():
             title_b=art_b_title,
         )
         history_id = history_entry["id"] if history_entry else None
+        if history_id:
+            try:
+                index_summary_entry(history_id, api_key=api_key)
+            except Exception:
+                pass
 
         return jsonify({
             "success": True,
@@ -695,6 +716,117 @@ def api_notion_export():
 
 
 # -------------------------------------------------------------
+# Local Knowledge Retrieval & Semantic Search Endpoints (v1.4)
+# -------------------------------------------------------------
+@app.route("/api/search/semantic", methods=["POST"])
+def api_search_semantic():
+    """
+    Performs natural-language semantic vector retrieval over saved summaries.
+    Computes exact dot-product cosine similarity against query embedding.
+    """
+    data = request.get_json() or {}
+    query = data.get("query", "").strip()
+
+    if not query:
+        return jsonify({"error": "Please enter a search query."}), 400
+
+    api_key = data.get("api_key") or get_configured_api_key(session_dict=session)
+    if not api_key:
+        return jsonify({
+            "error": "OpenAI API key required to embed search queries. Please configure your key in Settings.",
+            "redirect": url_for("setup")
+        }), 401
+
+    try:
+        top_k = int(data.get("top_k", DEFAULT_SEARCH_LIMIT))
+        if top_k < 1 or top_k > 25:
+            top_k = DEFAULT_SEARCH_LIMIT
+    except (ValueError, TypeError):
+        top_k = DEFAULT_SEARCH_LIMIT
+
+    try:
+        threshold = float(data.get("threshold", DEFAULT_SIMILARITY_THRESHOLD))
+        if threshold < 0.0 or threshold > 1.0:
+            threshold = DEFAULT_SIMILARITY_THRESHOLD
+    except (ValueError, TypeError):
+        threshold = DEFAULT_SIMILARITY_THRESHOLD
+
+    filter_type = data.get("filter_type")
+
+    try:
+        results = semantic_search(
+            query=query,
+            api_key=api_key,
+            top_k=top_k,
+            threshold=threshold,
+            filter_type=filter_type,
+        )
+        return jsonify({
+            "success": True,
+            "query": query,
+            "count": len(results),
+            "threshold": threshold,
+            "results": results,
+        })
+    except VectorStoreError as ve:
+        return jsonify({"error": str(ve)}), 400
+    except Exception as e:
+        return jsonify({"error": f"Semantic search failed: {str(e)}"}), 500
+
+
+@app.route("/api/search/stats", methods=["GET"])
+def api_search_stats():
+    """Returns local vector index statistics."""
+    stats = get_vector_store_stats()
+    return jsonify(stats)
+
+
+@app.route("/api/search/rebuild-index", methods=["POST"])
+def api_search_rebuild_index():
+    """Rebuilds vector embeddings across all saved summaries in local history."""
+    data = request.get_json() or {}
+    api_key = data.get("api_key") or get_configured_api_key(session_dict=session)
+    if not api_key:
+        return jsonify({
+            "error": "OpenAI API key required to generate embeddings. Please configure your key in Settings.",
+            "redirect": url_for("setup")
+        }), 401
+
+    try:
+        result = rebuild_vector_index(api_key=api_key)
+        return jsonify({
+            "success": True,
+            "stats": result,
+            "message": f"Successfully indexed {result.get('indexed', 0)} of {result.get('total', 0)} summaries."
+        })
+    except Exception as e:
+        return jsonify({"error": f"Failed to rebuild index: {str(e)}"}), 500
+
+
+@app.route("/api/search/embed", methods=["POST"])
+def api_search_embed():
+    """Generates an embedding vector for a snippet of text (useful for client-side search)."""
+    data = request.get_json() or {}
+    text = data.get("text", "").strip()
+    if not text:
+        return jsonify({"error": "No text provided to embed."}), 400
+
+    api_key = data.get("api_key") or get_configured_api_key(session_dict=session)
+    if not api_key:
+        return jsonify({"error": "OpenAI API key required."}), 401
+
+    try:
+        vector = generate_embedding(text, api_key=api_key)
+        return jsonify({
+            "embedding": vector,
+            "model": DEFAULT_EMBEDDING_MODEL,
+            "dimensions": len(vector),
+        })
+    except Exception as e:
+        return jsonify({"error": f"Embedding generation failed: {str(e)}"}), 500
+
+
+# -------------------------------------------------------------
 # BYOK Configuration Endpoints
 # -------------------------------------------------------------
 @app.route("/api/validate-key", methods=["POST"])
@@ -821,6 +953,11 @@ def summarize():
             )
             if entry:
                 summary["history_id"] = entry["id"]
+                try:
+                    effective_key = api_key or get_configured_api_key(session_dict=session)
+                    index_summary_entry(entry["id"], api_key=effective_key)
+                except Exception:
+                    pass
         except Exception:
             # History recording should not break summarization return
             pass
