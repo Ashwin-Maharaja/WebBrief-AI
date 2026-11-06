@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebBrief AI — Smart Structured Website Summarizer</title>
+    <title>WebBrief AI — Smart Multi-Mode Website Summarizer</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -25,15 +25,17 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v0.6</span>
+                    <span class="badge">v0.7</span>
                 </div>
             </div>
-            <p class="tagline">Accurate, structured AI summaries for short and long-form webpages using map-reduce.</p>
+            <p class="tagline">Accurate, multi-mode AI summaries tailored for quick, detailed, bulleted, or technical briefs.</p>
         </header>
 
         <!-- Main Form Card -->
         <section class="card input-card">
             <form id="summarize-form" action="/summarize" method="POST" novalidate>
+                
+                <!-- URL Input -->
                 <div class="form-group">
                     <label for="url-input" class="form-label">Webpage URL</label>
                     <div class="input-wrapper">
@@ -54,6 +56,58 @@
                             required
                             autocomplete="off"
                         >
+                    </div>
+                </div>
+
+                <!-- Summarization Mode Selector -->
+                <div class="form-group">
+                    <label class="form-label">Summarization Mode</label>
+                    <div class="mode-selector-grid">
+                        
+                        <label class="mode-card {{ 'selected' if (not mode or mode == 'quick') else '' }}">
+                            <input type="radio" name="mode" value="quick" {{ 'checked' if (not mode or mode == 'quick') else '' }}>
+                            <div class="mode-card-content">
+                                <div class="mode-header">
+                                    <span class="mode-icon">⚡</span>
+                                    <strong class="mode-title">Quick</strong>
+                                </div>
+                                <p class="mode-desc">Concise overview with high-level highlights</p>
+                            </div>
+                        </label>
+
+                        <label class="mode-card {{ 'selected' if mode == 'detailed' else '' }}">
+                            <input type="radio" name="mode" value="detailed" {{ 'checked' if mode == 'detailed' else '' }}>
+                            <div class="mode-card-content">
+                                <div class="mode-header">
+                                    <span class="mode-icon">📖</span>
+                                    <strong class="mode-title">Detailed</strong>
+                                </div>
+                                <p class="mode-desc">Comprehensive depth & supporting context</p>
+                            </div>
+                        </label>
+
+                        <label class="mode-card {{ 'selected' if mode == 'bullet' else '' }}">
+                            <input type="radio" name="mode" value="bullet" {{ 'checked' if mode == 'bullet' else '' }}>
+                            <div class="mode-card-content">
+                                <div class="mode-header">
+                                    <span class="mode-icon">📋</span>
+                                    <strong class="mode-title">Bullet-Point</strong>
+                                </div>
+                                <p class="mode-desc">Scannable, organized key takeaways</p>
+                            </div>
+                        </label>
+
+                        <label class="mode-card {{ 'selected' if mode == 'technical' else '' }}">
+                            <input type="radio" name="mode" value="technical" {{ 'checked' if mode == 'technical' else '' }}>
+                            <div class="mode-card-content">
+                                <div class="mode-header">
+                                    <span class="mode-icon">⚙️</span>
+                                    <strong class="mode-title">Technical</strong>
+                                </div>
+                                <p class="mode-desc">Preserves terminology, specs & architecture</p>
+                            </div>
+                        </label>
+
                     </div>
                 </div>
 
@@ -117,7 +171,7 @@
             </div>
             <div class="loading-copy">
                 <h3>Analyzing webpage content...</h3>
-                <p id="loading-subtext">Chunking text, processing sections with map-reduce, and synthesizing summary.</p>
+                <p id="loading-subtext">Extracting article content, adapting prompt to selected mode, and generating summary.</p>
             </div>
         </div>
 
@@ -131,6 +185,17 @@
                         </svg>
                     </div>
                     <span class="structured-badge">Structured Brief</span>
+                    
+                    <!-- Mode Badge -->
+                    <span id="summary-mode-badge" class="mode-badge">
+                        {% if summary is mapping and summary.mode_name %}
+                            {{ summary.mode_name }}
+                        {% else %}
+                            Quick Summary
+                        {% endif %}
+                    </span>
+
+                    <!-- Execution Stats Badge -->
                     <span id="summary-stats-badge" class="stats-badge" style="{% if not summary or not summary.stats %}display: none;{% endif %}">
                         {% if summary and summary.stats %}
                             {% if summary.stats.is_map_reduce %}
@@ -261,8 +326,18 @@
             const copyBtnText = document.getElementById("copy-btn-text");
             const clearBtn = document.getElementById("clear-btn");
 
+            // Mode cards selection feedback
+            const modeCards = document.querySelectorAll(".mode-card");
+            modeCards.forEach(card => {
+                card.addEventListener("click", () => {
+                    modeCards.forEach(c => c.classList.remove("selected"));
+                    card.classList.add("selected");
+                });
+            });
+
             // Structured section elements
             const articleTitle = document.getElementById("summary-article-title");
+            const modeBadge = document.getElementById("summary-mode-badge");
             const statsBadge = document.getElementById("summary-stats-badge");
             const sectionOverview = document.getElementById("section-overview");
             const summaryOverview = document.getElementById("summary-overview");
@@ -312,6 +387,14 @@
 
                 // Render Title
                 articleTitle.textContent = data.title || "Webpage Summary";
+
+                // Render Mode Badge
+                if (data.mode_name) {
+                    modeBadge.textContent = data.mode_name;
+                    modeBadge.style.display = "inline-flex";
+                } else {
+                    modeBadge.style.display = "none";
+                }
 
                 // Render Map-Reduce / Stats Badge
                 if (data.stats) {
@@ -389,6 +472,7 @@
                 if (currentSummaryData && typeof currentSummaryData === "object") {
                     const parts = [];
                     if (currentSummaryData.title) parts.push("# " + currentSummaryData.title + "\n");
+                    if (currentSummaryData.mode_name) parts.push("*Mode: " + currentSummaryData.mode_name + "*\n");
                     if (currentSummaryData.overview) parts.push("## Overview\n" + currentSummaryData.overview + "\n");
                     if (Array.isArray(currentSummaryData.key_points) && currentSummaryData.key_points.length) {
                         parts.push("## Key Points\n" + currentSummaryData.key_points.map(p => "- " + p).join("\n") + "\n");
@@ -442,6 +526,7 @@
                 resultCard.classList.remove("active");
 
                 const apiKey = apiKeyInput.value.trim();
+                const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
 
                 try {
                     const response = await fetch("/summarize", {
@@ -452,7 +537,8 @@
                         },
                         body: JSON.stringify({
                             url: rawUrl,
-                            api_key: apiKey
+                            api_key: apiKey,
+                            mode: selectedMode
                         })
                     });
 

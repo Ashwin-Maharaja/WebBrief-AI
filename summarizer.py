@@ -13,14 +13,62 @@ class SummarizerError(Exception):
     pass
 
 
-def build_summarization_prompt(article_text):
+MODES = {
+    "quick": {
+        "name": "Quick Summary",
+        "directive": (
+            "STYLE & MODE DIRECTIVE: Quick Summary\n"
+            "- Be exceptionally concise, highlighting only the primary purpose and headline conclusions.\n"
+            "- Keep the overview limited to 2-3 tight sentences.\n"
+            "- Select only the top 2-3 most essential key points.\n"
+            "- Minimize peripheral details; focus on high-impact takeaways."
+        )
+    },
+    "detailed": {
+        "name": "Detailed Summary",
+        "directive": (
+            "STYLE & MODE DIRECTIVE: Detailed Summary\n"
+            "- Provide an in-depth, comprehensive explanation of the webpage.\n"
+            "- Elaborate on context, causes, background, mechanisms, and implications.\n"
+            "- Include thorough key points and comprehensive supporting details."
+        )
+    },
+    "bullet": {
+        "name": "Bullet-Point Summary",
+        "directive": (
+            "STYLE & MODE DIRECTIVE: Bullet-Point Summary\n"
+            "- Maximize scannability and structural clarity.\n"
+            "- Keep the overview minimal (1-2 sentences).\n"
+            "- Present all core insights, arguments, and details as concise, well-formatted bullet points.\n"
+            "- Avoid dense prose paragraphs; emphasize scannable takeaways."
+        )
+    },
+    "technical": {
+        "name": "Technical Summary",
+        "directive": (
+            "STYLE & MODE DIRECTIVE: Technical Summary\n"
+            "- Strictly preserve domain-specific terminology, acronyms, and technical precision.\n"
+            "- Highlight system architecture, parameters, protocols, specifications, and data points.\n"
+            "- Retain technical relationships and constraints accurately without oversimplification."
+        )
+    }
+}
+
+DEFAULT_MODE = "quick"
+
+
+def build_summarization_prompt(article_text, mode=DEFAULT_MODE):
     """
-    Constructs the prompt and system instructions for single-pass structured summarization.
-    Used for content that fits comfortably within a single chunk.
+    Constructs the prompt and system instructions for single-pass structured summarization,
+    adapting tone and depth based on the selected mode.
     """
+    mode_info = MODES.get(mode, MODES[DEFAULT_MODE])
+    directive = mode_info["directive"]
+
     instructions = (
         "You are an expert webpage summarizer. Your task is to produce an accurate, "
         "well-organized, and faithful structured summary of the provided webpage content.\n\n"
+        f"{directive}\n\n"
         "STRICT FACTUALITY AND ACCURACY RULES:\n"
         "1. Strictly preserve the original meaning and factual accuracy of the source.\n"
         "2. Do NOT introduce or assume information, metrics, or claims that are not present in the source.\n"
@@ -31,7 +79,7 @@ def build_summarization_prompt(article_text):
         "You MUST respond ONLY with a valid JSON object matching this schema:\n"
         "{\n"
         '  "title": "Article or webpage title (infer from content if not explicitly stated)",\n'
-        '  "overview": "A concise paragraph giving a high-level overview of what the webpage is about.",\n'
+        '  "overview": "A cohesive overview of what the webpage is about (tailored to mode style).",\n'
         '  "key_points": [\n'
         '    "First key takeaway or major point",\n'
         '    "Second key takeaway or major point"\n'
@@ -46,20 +94,22 @@ def build_summarization_prompt(article_text):
     )
 
     user_input = (
-        f"Summarize the following webpage content into the structured JSON format:\n\n{article_text}"
+        f"Summarize the following webpage content into the structured JSON format using mode '{mode_info['name']}':\n\n{article_text}"
     )
 
     return instructions, user_input
 
 
-def build_chunk_map_prompt(chunk_content, chunk_index, total_chunks):
+def build_chunk_map_prompt(chunk_content, chunk_index, total_chunks, mode=DEFAULT_MODE):
     """
     Constructs the prompt for the Map phase: summarizing an individual chunk
-    accurately and concisely to extract essential facts and context.
+    accurately and concisely to extract essential facts and context, adapted to mode.
     """
+    mode_info = MODES.get(mode, MODES[DEFAULT_MODE])
     instructions = (
         f"You are summarizing section {chunk_index} of {total_chunks} of a long webpage.\n"
-        "Extract the core facts, key points, and critical context from this section concisely.\n"
+        f"Current summarization mode: {mode_info['name']}.\n"
+        "Extract the core facts, key points, and critical context from this section.\n"
         "STRICT FACTUALITY RULES:\n"
         "- Do not extrapolate, assume, or hallucinate.\n"
         "- Preserve the original order of events, arguments, and facts.\n"
@@ -70,14 +120,18 @@ def build_chunk_map_prompt(chunk_content, chunk_index, total_chunks):
     return instructions, user_input
 
 
-def build_reduce_prompt(combined_summaries, total_chunks):
+def build_reduce_prompt(combined_summaries, total_chunks, mode=DEFAULT_MODE):
     """
     Constructs the prompt for the Reduce phase: synthesizing intermediate chunk
-    summaries into the final unified structured JSON summary.
+    summaries into the final unified structured JSON summary according to mode.
     """
+    mode_info = MODES.get(mode, MODES[DEFAULT_MODE])
+    directive = mode_info["directive"]
+
     instructions = (
         f"You are synthesizing intermediate summaries from {total_chunks} sequential sections "
-        "of a long webpage into a single, cohesive, unified structured summary.\n\n"
+        f"of a long webpage into a single, cohesive, unified structured summary in '{mode_info['name']}' mode.\n\n"
+        f"{directive}\n\n"
         "STRICT FACTUALITY AND ACCURACY RULES:\n"
         "1. Strictly preserve the original meaning and factual accuracy of the combined sections.\n"
         "2. Do NOT introduce or assume information that is not present in the section summaries.\n"
@@ -86,7 +140,7 @@ def build_reduce_prompt(combined_summaries, total_chunks):
         "You MUST respond ONLY with a valid JSON object matching this schema:\n"
         "{\n"
         '  "title": "Unified article or webpage title",\n'
-        '  "overview": "A cohesive paragraph providing an overarching summary of the full webpage.",\n'
+        '  "overview": "A cohesive overview paragraph providing an overarching summary of the full webpage.",\n'
         '  "key_points": [\n'
         '    "First major takeaway from across the article",\n'
         '    "Second major takeaway from across the article"\n'
@@ -187,6 +241,8 @@ def format_summary_as_text(structured):
     parts = []
     if structured.get("title"):
         parts.append(f"# {structured['title']}\n")
+    if structured.get("mode_name"):
+        parts.append(f"*Mode: {structured['mode_name']}*\n")
     if structured.get("overview"):
         parts.append(f"## Overview\n{structured['overview']}\n")
     if structured.get("key_points"):
@@ -232,26 +288,27 @@ def _call_openai_responses(client, instructions, user_input):
             raise SummarizerError(f"Summarization failed: {err_msg}")
 
 
-def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, chunk_overlap=DEFAULT_CHUNK_OVERLAP):
+def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, chunk_overlap=DEFAULT_CHUNK_OVERLAP, mode=DEFAULT_MODE):
     """
-    Summarizes webpage text using OpenAI.
+    Summarizes webpage text using OpenAI across configurable summarization modes.
     Supports single-pass for short content, or chunking & map-reduce for long webpages.
     
-    Workflow:
-    1. Validate input text.
-    2. Divide text into paragraph-aware chunks.
-    3. If 1 chunk: perform direct structured summarization.
-    4. If > 1 chunks:
-       - Map phase: summarize each chunk independently, handling API failures gracefully.
-       - Combine intermediate summaries in order.
-       - Reduce phase: synthesize intermediate summaries into final structured JSON.
-    5. Return validated structured summary with chunking stats.
+    Modes:
+    - quick: Concise overview with highest-impact takeaways.
+    - detailed: In-depth explanation with background and nuance.
+    - bullet: Scannable bullet points with minimal prose.
+    - technical: Preserves technical terminology and specifications.
     
     Returns:
-        dict: Validated structured summary with title, overview, key_points, important_details, conclusion, and stats.
+        dict: Validated structured summary with title, overview, key_points, important_details, conclusion, mode, and stats.
     """
     if not article_text or not article_text.strip():
         raise SummarizerError("Cannot summarize empty content.")
+
+    # Validate and normalize mode
+    active_mode = (mode or "").strip().lower()
+    if active_mode not in MODES:
+        active_mode = DEFAULT_MODE
 
     resolved_key = (api_key or "").strip() or os.getenv("OPENAI_API_KEY")
 
@@ -273,11 +330,13 @@ def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, ch
 
     total_chunks = len(chunks)
 
-    # Short webpage / Single-chunk path: Direct structured summarization (avoids extra API calls)
+    # Short webpage / Single-chunk path: Direct structured summarization
     if total_chunks == 1:
-        instructions, user_input = build_summarization_prompt(chunks[0])
+        instructions, user_input = build_summarization_prompt(chunks[0], mode=active_mode)
         raw_output = _call_openai_responses(client, instructions, user_input)
         result = parse_and_validate_summary(raw_output)
+        result["mode"] = active_mode
+        result["mode_name"] = MODES[active_mode]["name"]
         result["stats"] = {
             "total_chunks": 1,
             "is_map_reduce": False
@@ -291,18 +350,16 @@ def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, ch
     # Map Phase: Summarize each chunk independently
     for idx, chunk in enumerate(chunks, 1):
         try:
-            map_inst, map_input = build_chunk_map_prompt(chunk, idx, total_chunks)
+            map_inst, map_input = build_chunk_map_prompt(chunk, idx, total_chunks, mode=active_mode)
             chunk_summary = _call_openai_responses(client, map_inst, map_input)
             if chunk_summary and chunk_summary.strip():
                 intermediate_summaries.append((idx, chunk_summary.strip()))
         except SummarizerError as e:
-            # Check for fatal errors that affect all chunks (e.g. invalid key or quota)
             err_text = str(e).lower()
             if "invalid openai api key" in err_text or "rate limit or quota" in err_text:
                 raise
             chunk_errors.append((idx, str(e)))
 
-    # If all chunk API calls failed, raise an error
     if not intermediate_summaries:
         error_detail = "; ".join(f"Chunk {i}: {err}" for i, err in chunk_errors[:3])
         raise SummarizerError(f"Failed to process content chunks. Errors encountered: {error_detail}")
@@ -314,21 +371,23 @@ def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, ch
 
     combined_text = "\n\n".join(combined_parts)
 
-    # Hierarchical Reduce: if combined intermediate text is exceptionally long, chunk and reduce again
+    # Hierarchical Reduce: if combined intermediate text is exceptionally long
     if len(combined_text) > max(chunk_size * 4, 15000):
         sub_chunks = chunk_text(combined_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         sub_summaries = []
         for s_idx, s_chunk in enumerate(sub_chunks, 1):
-            s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks))
+            s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks), mode=active_mode)
             sub_res = _call_openai_responses(client, s_inst, s_input)
             sub_summaries.append(sub_res.strip())
         combined_text = "\n\n".join(sub_summaries)
 
     # Reduce Phase: Generate final structured summary from combined intermediate summaries
-    reduce_inst, reduce_input = build_reduce_prompt(combined_text, total_chunks)
+    reduce_inst, reduce_input = build_reduce_prompt(combined_text, total_chunks, mode=active_mode)
     final_raw_output = _call_openai_responses(client, reduce_inst, reduce_input)
     result = parse_and_validate_summary(final_raw_output)
 
+    result["mode"] = active_mode
+    result["mode_name"] = MODES[active_mode]["name"]
     result["stats"] = {
         "total_chunks": total_chunks,
         "processed_chunks": len(intermediate_summaries),

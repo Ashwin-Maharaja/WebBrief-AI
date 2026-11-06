@@ -42,7 +42,7 @@ body {
 
 .app-container {
     width: 100%;
-    max-width: 760px;
+    max-width: 780px;
     display: flex;
     flex-direction: column;
     gap: 24px;
@@ -104,7 +104,7 @@ body {
 .tagline {
     color: var(--text-secondary);
     font-size: 15px;
-    max-width: 540px;
+    max-width: 560px;
     margin: 0 auto;
 }
 
@@ -120,7 +120,7 @@ body {
 
 /* Input Form */
 .form-group {
-    margin-bottom: 20px;
+    margin-bottom: 22px;
 }
 
 .form-label {
@@ -166,6 +166,73 @@ body {
 
 .form-control::placeholder {
     color: var(--text-muted);
+}
+
+/* Mode Selector Grid */
+.mode-selector-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 12px;
+}
+
+.mode-card {
+    position: relative;
+    display: block;
+    border: 1px solid var(--border-color);
+    background-color: #ffffff;
+    border-radius: var(--radius-md);
+    padding: 14px 12px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    user-select: none;
+}
+
+.mode-card input[type="radio"] {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.mode-card:hover {
+    border-color: #93c5fd;
+    background-color: #f8fafc;
+}
+
+.mode-card.selected,
+.mode-card:has(input[type="radio"]:checked) {
+    border-color: var(--primary);
+    background-color: #eff6ff;
+    box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.mode-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.mode-icon {
+    font-size: 16px;
+    line-height: 1;
+}
+
+.mode-title {
+    font-size: 13.5px;
+    font-weight: 700;
+    color: var(--text-primary);
+}
+
+.mode-card.selected .mode-title,
+.mode-card:has(input[type="radio"]:checked) .mode-title {
+    color: var(--primary);
+}
+
+.mode-desc {
+    font-size: 11px;
+    color: var(--text-secondary);
+    line-height: 1.35;
+    margin: 0;
 }
 
 /* BYOK Collapsible */
@@ -476,6 +543,7 @@ body {
 .result-title-group {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 8px;
 }
 
@@ -495,6 +563,17 @@ body {
     border: 1px solid #bfdbfe;
     text-transform: uppercase;
     letter-spacing: 0.04em;
+}
+
+.mode-badge {
+    background: #f1f5f9;
+    color: #334155;
+    font-size: 11.5px;
+    font-weight: 700;
+    padding: 3px 10px;
+    border-radius: 9999px;
+    border: 1px solid #cbd5e1;
+    letter-spacing: 0.02em;
 }
 
 .stats-badge {
@@ -670,7 +749,7 @@ body {
 }
 
 /* Mobile Responsiveness */
-@media (max-width: 640px) {
+@media (max-width: 680px) {
     body {
         padding: 20px 14px;
     }
@@ -681,6 +760,10 @@ body {
 
     .brand-info h1 {
         font-size: 24px;
+    }
+
+    .mode-selector-grid {
+        grid-template-columns: repeat(2, 1fr);
     }
 
     .article-title {

@@ -24,7 +24,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v0.6</span>
+                    <span class="badge">v0.7</span>
                 </div>
             </div>
         </header>
@@ -38,6 +38,11 @@
                         </svg>
                     </div>
                     <span class="structured-badge">Structured Brief</span>
+                    
+                    {% if summary is mapping and summary.mode_name %}
+                        <span class="mode-badge">{{ summary.mode_name }}</span>
+                    {% endif %}
+
                     {% if summary is mapping and summary.stats %}
                         <span class="stats-badge {{ 'badge-map-reduce' if summary.stats.is_map_reduce else 'badge-direct' }}">
                             {% if summary.stats.is_map_reduce %}
