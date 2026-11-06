@@ -25,10 +25,10 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v0.5</span>
+                    <span class="badge">v0.6</span>
                 </div>
             </div>
-            <p class="tagline">Turn any webpage or article into an accurate, structured AI summary in seconds.</p>
+            <p class="tagline">Accurate, structured AI summaries for short and long-form webpages using map-reduce.</p>
         </header>
 
         <!-- Main Form Card -->
@@ -117,7 +117,7 @@
             </div>
             <div class="loading-copy">
                 <h3>Analyzing webpage content...</h3>
-                <p>Extracting readable text and generating an accurate structured summary with OpenAI.</p>
+                <p id="loading-subtext">Chunking text, processing sections with map-reduce, and synthesizing summary.</p>
             </div>
         </div>
 
@@ -131,6 +131,15 @@
                         </svg>
                     </div>
                     <span class="structured-badge">Structured Brief</span>
+                    <span id="summary-stats-badge" class="stats-badge" style="{% if not summary or not summary.stats %}display: none;{% endif %}">
+                        {% if summary and summary.stats %}
+                            {% if summary.stats.is_map_reduce %}
+                                📑 Map-Reduce ({{ summary.stats.total_chunks }} sections)
+                            {% else %}
+                                ⚡ Direct Analysis
+                            {% endif %}
+                        {% endif %}
+                    </span>
                 </div>
                 <div class="result-actions">
                     <button type="button" id="copy-btn" class="btn btn-secondary btn-sm" title="Copy structured summary">
@@ -254,6 +263,7 @@
 
             // Structured section elements
             const articleTitle = document.getElementById("summary-article-title");
+            const statsBadge = document.getElementById("summary-stats-badge");
             const sectionOverview = document.getElementById("section-overview");
             const summaryOverview = document.getElementById("summary-overview");
             const sectionKeyPoints = document.getElementById("section-key-points");
@@ -282,6 +292,8 @@
                 resultCard.style.display = "none";
                 resultCard.classList.remove("active");
                 articleTitle.textContent = "";
+                statsBadge.style.display = "none";
+                statsBadge.textContent = "";
                 summaryOverview.textContent = "";
                 summaryKeyPoints.innerHTML = "";
                 summaryDetails.innerHTML = "";
@@ -300,6 +312,20 @@
 
                 // Render Title
                 articleTitle.textContent = data.title || "Webpage Summary";
+
+                // Render Map-Reduce / Stats Badge
+                if (data.stats) {
+                    if (data.stats.is_map_reduce) {
+                        statsBadge.textContent = `📑 Map-Reduce (${data.stats.total_chunks} sections)`;
+                        statsBadge.className = "stats-badge badge-map-reduce";
+                    } else {
+                        statsBadge.textContent = "⚡ Direct Analysis";
+                        statsBadge.className = "stats-badge badge-direct";
+                    }
+                    statsBadge.style.display = "inline-flex";
+                } else {
+                    statsBadge.style.display = "none";
+                }
 
                 // Render Source URL
                 if (sourceUrl) {

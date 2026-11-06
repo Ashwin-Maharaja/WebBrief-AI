@@ -1,31 +1,36 @@
 # WebBrief AI
 
-An AI-powered website summarizer that extracts readable content from any webpage and generates a concise, high-value structured summary.
+An AI-powered website summarizer that extracts readable content from any webpage and generates concise, high-value structured summaries for both short and long-form content.
 
 ## Version
-**v0.5 — Structured Summarization Output**
+**v0.6 — Chunking and Map-Reduce Summarization**
 
-## Features in v0.5
-- **Structured Summary Architecture**: Summaries are consistently organized into distinct, high-value sections:
+## Features in v0.6
+- **Long-Form Summarization Pipeline**: Supports arbitrarily long webpages and documents via paragraph-aware chunking and Map-Reduce.
+- **Paragraph & Sentence-Aware Chunking**: Content is divided at paragraph and sentence boundaries rather than arbitrary byte/character breaks, preserving context and coherence.
+- **Contextual Chunk Overlap**: Sensible chunk overlap ensures continuity and prevents concept fragmentation across section boundaries.
+- **Adaptive Execution**:
+  - **Direct Analysis**: Short webpages (< chunk threshold) execute in a single direct pass, eliminating extra API calls and latency.
+  - **Map Phase**: Independent, factual extraction for each content section.
+  - **Reduce Phase**: Unified synthesis that deduplicates overlapping context and outputs the final structured schema.
+- **Partial Failure Resilience**: Tolerates transient individual chunk errors without aborting the entire process if other sections succeed.
+- **Structured 5-Section Output**: Consistently outputs:
   - **Article / Website Title**
   - **Overview**: High-level contextual overview
   - **Key Points**: Core takeaways
   - **Important Details**: Supporting facts, metrics, and details
   - **Conclusion**: Concluding takeaway or outcome
-- **Strict Factuality Prompting**: Explicit guardrails against hallucinations; summaries strictly reflect source content.
-- **Graceful Section Handling**: Short or limited content articles seamlessly omit empty optional sections without breaking the UI.
-- **Modular Architecture**: Complete separation of prompt construction, model communication, validation, and presentation.
-- **Flask Web Interface**: Clean, responsive layout with mobile and desktop typography hierarchy.
-- **Interactive Feedback**: Instant loading indicator, error alerts for malformed URLs/unreachable sites, and one-click copy-to-clipboard.
-- **BYOK (Bring Your Own Key) Support**: Optional custom OpenAI API key field directly in the UI (falls back to server environment variable if left blank).
+- **Visual Execution Badging**: UI displays whether an article was processed via `⚡ Direct Analysis` or `📑 Map-Reduce (N sections)`.
+- **BYOK (Bring Your Own Key) Support**: Optional custom OpenAI API key field directly in the UI.
 - **Security by Design**: Zero exposure of environment variables or API keys to frontend assets or public logs.
 
 ## Project Structure
 ```
 WebBrief AI/
 ├── app.py              # Flask application routes and request coordination
+├── chunker.py          # Paragraph-aware chunking and boundary management
 ├── scraper.py          # Webpage fetching, title extraction, and text cleaning
-├── summarizer.py       # OpenAI structured summarization pipeline & schema validation
+├── summarizer.py       # Map-reduce pipeline, OpenAI communication, and schema validation
 ├── static/
 │   └── style.css       # Responsive styling, structured section cards, animations
 ├── templates/

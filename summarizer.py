@@ -3,6 +3,7 @@ import os
 import re
 from dotenv import load_dotenv
 from openai import OpenAI
+from chunker import chunk_text, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 
 load_dotenv()
 
@@ -14,8 +15,8 @@ class SummarizerError(Exception):
 
 def build_summarization_prompt(article_text):
     """
-    Constructs the prompt and system instructions for structured summarization.
-    Separates prompt engineering from network/API communication.
+    Constructs the prompt and system instructions for single-pass structured summarization.
+    Used for content that fits comfortably within a single chunk.
     """
     instructions = (
         "You are an expert webpage summarizer. Your task is to produce an accurate, "
@@ -46,6 +47,62 @@ def build_summarization_prompt(article_text):
 
     user_input = (
         f"Summarize the following webpage content into the structured JSON format:\n\n{article_text}"
+    )
+
+    return instructions, user_input
+
+
+def build_chunk_map_prompt(chunk_content, chunk_index, total_chunks):
+    """
+    Constructs the prompt for the Map phase: summarizing an individual chunk
+    accurately and concisely to extract essential facts and context.
+    """
+    instructions = (
+        f"You are summarizing section {chunk_index} of {total_chunks} of a long webpage.\n"
+        "Extract the core facts, key points, and critical context from this section concisely.\n"
+        "STRICT FACTUALITY RULES:\n"
+        "- Do not extrapolate, assume, or hallucinate.\n"
+        "- Preserve the original order of events, arguments, and facts.\n"
+        "- Respond in clean, concise prose or bullet points without meta-commentary."
+    )
+
+    user_input = f"Webpage Section {chunk_index}/{total_chunks}:\n\n{chunk_content}"
+    return instructions, user_input
+
+
+def build_reduce_prompt(combined_summaries, total_chunks):
+    """
+    Constructs the prompt for the Reduce phase: synthesizing intermediate chunk
+    summaries into the final unified structured JSON summary.
+    """
+    instructions = (
+        f"You are synthesizing intermediate summaries from {total_chunks} sequential sections "
+        "of a long webpage into a single, cohesive, unified structured summary.\n\n"
+        "STRICT FACTUALITY AND ACCURACY RULES:\n"
+        "1. Strictly preserve the original meaning and factual accuracy of the combined sections.\n"
+        "2. Do NOT introduce or assume information that is not present in the section summaries.\n"
+        "3. Synthesize the overall narrative, deduplicating overlapping information while preserving key nuances.\n\n"
+        "OUTPUT FORMAT:\n"
+        "You MUST respond ONLY with a valid JSON object matching this schema:\n"
+        "{\n"
+        '  "title": "Unified article or webpage title",\n'
+        '  "overview": "A cohesive paragraph providing an overarching summary of the full webpage.",\n'
+        '  "key_points": [\n'
+        '    "First major takeaway from across the article",\n'
+        '    "Second major takeaway from across the article"\n'
+        "  ],\n"
+        '  "important_details": [\n'
+        '    "Critical context, metric, or detail from the body",\n'
+        '    "Another important supporting fact"\n'
+        "  ],\n"
+        '  "conclusion": "Final concluding takeaway or outcome (or empty string if none)"\n'
+        "}\n\n"
+        "Do NOT include markdown formatting like ```json ... ``` or any text outside the JSON object."
+    )
+
+    user_input = (
+        f"Synthesize the following {total_chunks} sequential section summaries into the final structured JSON summary:\n\n"
+        f"{combined_summaries}"
     )
 
     return instructions, user_input
@@ -102,7 +159,6 @@ def parse_and_validate_summary(raw_text):
         if isinstance(val, list):
             return [str(item).strip() for item in val if item and str(item).strip()]
         elif isinstance(val, str) and val.strip():
-            # If returned as a bulleted string, split into lines
             lines = [re.sub(r"^[-*•\d.]+\s*", "", line).strip() for line in val.split("\n") if line.strip()]
             return [line for line in lines if line]
         return []
@@ -145,43 +201,17 @@ def format_summary_as_text(structured):
     return "\n".join(parts).strip()
 
 
-def summarize_text(article_text, api_key=None):
+def _call_openai_responses(client, instructions, user_input):
     """
-    Summarizes webpage text using OpenAI with structured JSON output.
-    Supports BYOK (Bring Your Own Key) or falls back to OPENAI_API_KEY from environment.
-    
-    Returns:
-        dict: A validated dictionary with title, overview, key_points, important_details, conclusion.
-        
-    Raises:
-        SummarizerError: When API key is missing or OpenAI request fails.
+    Helper to execute an OpenAI call and capture standardized errors.
     """
-    if not article_text or not article_text.strip():
-        raise SummarizerError("Cannot summarize empty content.")
-
-    # Support BYOK while falling back to environment variable
-    resolved_key = (api_key or "").strip() or os.getenv("OPENAI_API_KEY")
-
-    if not resolved_key:
-        raise SummarizerError(
-            "OpenAI API key not found. Please configure OPENAI_API_KEY in the environment or provide a key."
-        )
-
-    try:
-        client = OpenAI(api_key=resolved_key)
-    except Exception as e:
-        raise SummarizerError(f"Failed to initialize OpenAI client: {str(e)}")
-
-    instructions, user_input = build_summarization_prompt(article_text)
-
     try:
         response = client.responses.create(
             model="gpt-5.6-luna",
             instructions=instructions,
             input=user_input
         )
-        raw_output = response.output_text
-        return parse_and_validate_summary(raw_output)
+        return response.output_text
     except Exception as e:
         err_name = type(e).__name__
         err_msg = str(e)
@@ -200,3 +230,110 @@ def summarize_text(article_text, api_key=None):
             raise
         else:
             raise SummarizerError(f"Summarization failed: {err_msg}")
+
+
+def summarize_text(article_text, api_key=None, chunk_size=DEFAULT_CHUNK_SIZE, chunk_overlap=DEFAULT_CHUNK_OVERLAP):
+    """
+    Summarizes webpage text using OpenAI.
+    Supports single-pass for short content, or chunking & map-reduce for long webpages.
+    
+    Workflow:
+    1. Validate input text.
+    2. Divide text into paragraph-aware chunks.
+    3. If 1 chunk: perform direct structured summarization.
+    4. If > 1 chunks:
+       - Map phase: summarize each chunk independently, handling API failures gracefully.
+       - Combine intermediate summaries in order.
+       - Reduce phase: synthesize intermediate summaries into final structured JSON.
+    5. Return validated structured summary with chunking stats.
+    
+    Returns:
+        dict: Validated structured summary with title, overview, key_points, important_details, conclusion, and stats.
+    """
+    if not article_text or not article_text.strip():
+        raise SummarizerError("Cannot summarize empty content.")
+
+    resolved_key = (api_key or "").strip() or os.getenv("OPENAI_API_KEY")
+
+    if not resolved_key:
+        raise SummarizerError(
+            "OpenAI API key not found. Please configure OPENAI_API_KEY in the environment or provide a key."
+        )
+
+    try:
+        client = OpenAI(api_key=resolved_key)
+    except Exception as e:
+        raise SummarizerError(f"Failed to initialize OpenAI client: {str(e)}")
+
+    # Step 1 & 2: Divide content into manageable chunks
+    chunks = chunk_text(article_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+
+    if not chunks:
+        raise SummarizerError("Webpage does not contain sufficient text content to chunk.")
+
+    total_chunks = len(chunks)
+
+    # Short webpage / Single-chunk path: Direct structured summarization (avoids extra API calls)
+    if total_chunks == 1:
+        instructions, user_input = build_summarization_prompt(chunks[0])
+        raw_output = _call_openai_responses(client, instructions, user_input)
+        result = parse_and_validate_summary(raw_output)
+        result["stats"] = {
+            "total_chunks": 1,
+            "is_map_reduce": False
+        }
+        return result
+
+    # Long-form / Multi-chunk path: Map-Reduce Summarization
+    intermediate_summaries = []
+    chunk_errors = []
+
+    # Map Phase: Summarize each chunk independently
+    for idx, chunk in enumerate(chunks, 1):
+        try:
+            map_inst, map_input = build_chunk_map_prompt(chunk, idx, total_chunks)
+            chunk_summary = _call_openai_responses(client, map_inst, map_input)
+            if chunk_summary and chunk_summary.strip():
+                intermediate_summaries.append((idx, chunk_summary.strip()))
+        except SummarizerError as e:
+            # Check for fatal errors that affect all chunks (e.g. invalid key or quota)
+            err_text = str(e).lower()
+            if "invalid openai api key" in err_text or "rate limit or quota" in err_text:
+                raise
+            chunk_errors.append((idx, str(e)))
+
+    # If all chunk API calls failed, raise an error
+    if not intermediate_summaries:
+        error_detail = "; ".join(f"Chunk {i}: {err}" for i, err in chunk_errors[:3])
+        raise SummarizerError(f"Failed to process content chunks. Errors encountered: {error_detail}")
+
+    # Combine intermediate summaries preserving original sequential order
+    combined_parts = []
+    for chunk_num, summary_text in intermediate_summaries:
+        combined_parts.append(f"--- Section {chunk_num} of {total_chunks} Summary ---\n{summary_text}")
+
+    combined_text = "\n\n".join(combined_parts)
+
+    # Hierarchical Reduce: if combined intermediate text is exceptionally long, chunk and reduce again
+    if len(combined_text) > max(chunk_size * 4, 15000):
+        sub_chunks = chunk_text(combined_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        sub_summaries = []
+        for s_idx, s_chunk in enumerate(sub_chunks, 1):
+            s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks))
+            sub_res = _call_openai_responses(client, s_inst, s_input)
+            sub_summaries.append(sub_res.strip())
+        combined_text = "\n\n".join(sub_summaries)
+
+    # Reduce Phase: Generate final structured summary from combined intermediate summaries
+    reduce_inst, reduce_input = build_reduce_prompt(combined_text, total_chunks)
+    final_raw_output = _call_openai_responses(client, reduce_inst, reduce_input)
+    result = parse_and_validate_summary(final_raw_output)
+
+    result["stats"] = {
+        "total_chunks": total_chunks,
+        "processed_chunks": len(intermediate_summaries),
+        "failed_chunks": len(chunk_errors),
+        "is_map_reduce": True
+    }
+
+    return result
