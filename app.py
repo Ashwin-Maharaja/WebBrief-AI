@@ -287,6 +287,8 @@ def enforce_byok_onboarding():
         "api_delete_job",
         "api_pause_job",
         "api_cancel_job",
+        "health_check",
+        "api_health",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -322,6 +324,18 @@ def enforce_byok_onboarding():
         return redirect(url_for("setup"))
 
     return redirect(url_for("setup"))
+
+
+@app.route("/health")
+@app.route("/api/health")
+def health_check():
+    """Health check endpoint for platform monitoring and uptime probes."""
+    return jsonify({
+        "status": "healthy",
+        "version": APP_VERSION,
+        "is_hosted": is_serverless_env(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }), 200
 
 
 @app.route("/")

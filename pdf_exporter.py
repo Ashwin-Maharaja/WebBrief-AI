@@ -12,23 +12,32 @@ import re
 import urllib.parse
 from typing import Dict, Any, Optional
 
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    HRFlowable,
-    KeepTogether,
-    PageBreak,
-)
-from reportlab.pdfgen import canvas
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Paragraph,
+        Spacer,
+        Table,
+        TableStyle,
+        HRFlowable,
+        KeepTogether,
+        PageBreak,
+    )
+    from reportlab.pdfgen import canvas
+    REPORTLAB_AVAILABLE = True
+except (ImportError, OSError, Exception) as e:
+    REPORTLAB_AVAILABLE = False
+    letter = colors = getSampleStyleSheet = ParagraphStyle = None
+    SimpleDocTemplate = Paragraph = Spacer = Table = TableStyle = HRFlowable = KeepTogether = PageBreak = None
+    canvas = None
+
+CanvasBase = canvas.Canvas if (REPORTLAB_AVAILABLE and canvas) else object
 
 
-class NumberedCanvas(canvas.Canvas):
+class NumberedCanvas(CanvasBase):
     """
     Two-pass canvas to dynamically compute and display total page count:
     'Page X of Y' in the running footer, along with clean running headers on subsequent pages.
@@ -115,6 +124,9 @@ def generate_summary_pdf(
     Returns:
         io.BytesIO: In-memory byte buffer containing the completed PDF.
     """
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("ReportLab library is unavailable in this runtime environment.")
+
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
@@ -330,6 +342,9 @@ def generate_batch_summary_pdf(
     Generates a single, consolidated multi-article PDF containing all completed
     summaries in a batch, separated by clean page breaks.
     """
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("ReportLab library is unavailable in this runtime environment.")
+
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
@@ -585,6 +600,9 @@ def generate_comparison_pdf(comp: Dict[str, Any]) -> io.BytesIO:
     Generates a beautifully styled, multi-page ReportLab PDF
     specifically structured for comparative research briefs.
     """
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("ReportLab library is unavailable in this runtime environment.")
+
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
