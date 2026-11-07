@@ -119,13 +119,20 @@ logger = logging.getLogger(__name__)
 
 APP_VERSION = "1.7.0"
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static"),
+)
+handler = app
 
 # Initialize resumable jobs database tables & recover stale runs (v1.7.0)
-try:
-    init_job_tables()
-except Exception as e:
-    logger.debug("Job tables initialization deferred: %s", str(e))
+if not is_serverless_env():
+    try:
+        init_job_tables()
+    except Exception as e:
+        logger.debug("Job tables initialization deferred: %s", str(e))
 
 # Request payload limit: enforce 2MB maximum
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", 2 * 1024 * 1024))
@@ -172,6 +179,27 @@ def apply_security_headers(response):
         "connect-src 'self';"
     )
     return response
+
+
+@app.errorhandler(500)
+def handle_internal_server_error(e):
+    """Graceful handling of unhandled exceptions to prevent naked serverless crashes."""
+    logger.error("Unhandled internal server error: %s", str(e), exc_info=True)
+    if request.path.startswith("/api/") or request.is_json:
+        return jsonify({"error": "Internal server error occurred.", "details": str(e)}), 500
+    try:
+        return render_template(
+            "index.html",
+            default_mode=DEFAULT_MODE,
+            modes=MODES,
+            is_configured=has_valid_config(session_dict=session),
+            provider_config=get_active_provider_config(session_dict=session),
+            provider_catalogue=PROVIDER_CATALOGUE,
+            recent_history=[],
+            error_message="An unexpected server error occurred. Please try again or check provider settings."
+        ), 500
+    except Exception:
+        return "Internal Server Error", 500
 
 
 @app.context_processor

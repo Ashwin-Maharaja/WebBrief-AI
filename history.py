@@ -6,6 +6,8 @@ import sqlite3
 import uuid
 from typing import List, Optional, Dict, Any
 
+from byok import is_serverless_env
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_FILENAME = "webbrief_history.db"
@@ -22,6 +24,11 @@ def get_db_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     Creates and returns a SQLite connection with row factory.
     Gracefully falls back to an in-memory database if disk is read-only or inaccessible.
     """
+    if is_serverless_env() and db_path is None:
+        conn = sqlite3.connect(":memory:", timeout=5.0)
+        conn.row_factory = sqlite3.Row
+        return conn
+
     target_path = db_path or get_default_db_path()
     try:
         conn = sqlite3.connect(target_path, timeout=5.0)
@@ -36,6 +43,9 @@ def get_db_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
 
 def init_db(db_path: Optional[str] = None) -> None:
     """Initializes the database schema if not already present."""
+    if is_serverless_env() and db_path is None:
+        return
+
     try:
         conn = get_db_connection(db_path)
         with conn:
@@ -347,6 +357,9 @@ _FALLBACK_PREFS: Dict[str, str] = {
 
 def get_preference(key: str, default: Optional[str] = None, db_path: Optional[str] = None) -> Optional[str]:
     """Retrieves a single preference value by key."""
+    if is_serverless_env() and db_path is None:
+        return _FALLBACK_PREFS.get(key, default)
+
     init_db(db_path)
     try:
         conn = get_db_connection(db_path)
@@ -362,8 +375,11 @@ def get_preference(key: str, default: Optional[str] = None, db_path: Optional[st
 
 def set_preference(key: str, value: str, db_path: Optional[str] = None) -> bool:
     """Sets a single preference value."""
-    init_db(db_path)
     _FALLBACK_PREFS[key] = str(value)
+    if is_serverless_env() and db_path is None:
+        return True
+
+    init_db(db_path)
     try:
         conn = get_db_connection(db_path)
         with conn:

@@ -16,6 +16,8 @@ import threading
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from byok import is_serverless_env
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_DB_FILENAME = "webbrief_history.db"
@@ -80,6 +82,11 @@ def get_default_db_path() -> str:
 
 def get_db_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     """Creates a thread-safe connection to the SQLite database."""
+    if is_serverless_env() and db_path is None:
+        conn = sqlite3.connect(":memory:", timeout=10.0)
+        conn.row_factory = sqlite3.Row
+        return conn
+
     target_path = db_path or get_default_db_path()
     try:
         conn = sqlite3.connect(target_path, timeout=10.0)
@@ -103,6 +110,9 @@ def init_job_tables(db_path: Optional[str] = None) -> None:
     chunks, and audit events.
     Recovers any stale in-progress jobs from previous server runs.
     """
+    if is_serverless_env() and db_path is None:
+        return
+
     with _db_lock:
         conn = get_db_connection(db_path)
         try:
