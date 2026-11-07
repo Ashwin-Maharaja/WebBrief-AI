@@ -856,6 +856,13 @@
     </main>
 
     <script>
+        function escapeHtml(text) {
+            if (!text) return "";
+            const div = document.createElement("div");
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
         // Global copy section helper
         async function copySectionText(sectionId, btn) {
             const section = document.getElementById(sectionId);
@@ -1061,13 +1068,30 @@
             refreshRecentShelf();
 
             // Mode radio selection UI binding
-            const modeCards = document.querySelectorAll(".mode-card");
-            modeCards.forEach(card => {
-                card.addEventListener("click", () => {
-                    modeCards.forEach(c => c.classList.remove("selected"));
-                    card.classList.add("selected");
+            function updateModeSelection(selectedVal) {
+                document.querySelectorAll(".mode-card").forEach(c => {
+                    const r = c.querySelector('input[type="radio"]');
+                    if (r && r.value === selectedVal) {
+                        c.classList.add("selected");
+                        r.checked = true;
+                    } else {
+                        c.classList.remove("selected");
+                    }
+                });
+            }
+
+            document.querySelectorAll('input[name="mode"]').forEach(radio => {
+                radio.addEventListener("change", (e) => {
+                    updateModeSelection(e.target.value);
+                });
+            });
+
+            document.querySelectorAll(".mode-card").forEach(card => {
+                card.addEventListener("click", (e) => {
                     const radio = card.querySelector('input[type="radio"]');
-                    if (radio) radio.checked = true;
+                    if (radio) {
+                        updateModeSelection(radio.value);
+                    }
                 });
             });
 
@@ -1877,10 +1901,6 @@
                         d.innerHTML = `🔍 <strong>Comparative Divergence / Alignment:</strong> ${escapeHtml(conc.comparison_note)}`;
                         concContainer.appendChild(d);
                     }
-                    concSec.style.display = "block";
-                } else {
-                    concSec.style.display = "none";
-                }
                     concSec.style.display = "block";
                 } else {
                     concSec.style.display = "none";
