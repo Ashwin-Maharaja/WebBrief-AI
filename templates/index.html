@@ -72,46 +72,46 @@
                 </div>
 
                 <div class="hosted-key-row" style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                    <div class="input-wrapper" style="flex: 1; min-width: 240px; position: relative;">
-                        <span class="input-icon">🔑</span>
-                        <input
-                            type="password"
-                            id="hosted-api-key-input"
-                            class="form-control"
-                            placeholder="Enter your OpenAI API key (sk-...)"
-                            autocomplete="off"
-                            spellcheck="false"
-                            style="padding-right: 44px; font-family: monospace;"
-                        >
-                        <button type="button" id="hosted-toggle-vis-btn" onclick="toggleHostedKeyVis()" title="Show/Hide Key" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; color: var(--text-muted); font-size: 14px;">
-                            👁️
-                        </button>
+                    <select id="hosted-provider-select" class="form-control" style="width: auto; max-width: 190px; font-size: 13px;" onchange="onHostedProviderChange()">
+                        <option value="cloudflare">⚡ Cloudflare AI</option>
+                        <option value="groq">🚀 GroqCloud</option>
+                    </select>
+                    <div id="hosted-cf-inputs" style="display: flex; gap: 8px; flex: 1; flex-wrap: wrap;">
+                        <input type="text" id="hosted-cf-id" class="form-control" placeholder="Account ID" style="flex: 1; min-width: 140px; font-size: 13px;">
+                        <input type="password" id="hosted-cf-token" class="form-control" placeholder="API Token" style="flex: 1; min-width: 140px; font-size: 13px;">
+                    </div>
+                    <div id="hosted-groq-inputs" style="display: none; flex: 1;">
+                        <input type="password" id="hosted-api-key-input" class="form-control" placeholder="Groq API Key (gsk_...)" style="font-size: 13px; font-family: monospace;">
                     </div>
                     <button type="button" class="btn btn-secondary" id="hosted-verify-btn" onclick="verifyHostedKey()" style="padding: 9px 16px; font-size: 13px;">
-                        Verify & Use Key
+                        Verify & Use
                     </button>
                     <button type="button" class="btn btn-secondary" id="hosted-clear-btn" onclick="clearHostedKey()" style="padding: 9px 12px; font-size: 13px; display: none; color: #f87171;">
-                        Clear Key
+                        Clear
                     </button>
                 </div>
                 <div id="hosted-key-alert" style="display: none; font-size: 12px; margin-top: 6px; font-weight: 600;"></div>
                 <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: 12px;">
-                    <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 5px; color: var(--primary); text-decoration: none; font-weight: 600;">
-                        <span>🔑 Don't have an OpenAI key? Create one in seconds</span>
-                        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                    </a>
-                    <span style="color: var(--text-muted); font-size: 11.5px;">Pay-as-you-go (~$0.001 / summary)</span>
+                    <div style="display: flex; gap: 12px;">
+                        <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                            ⚡ Get Cloudflare Token ↗
+                        </a>
+                        <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                            🚀 Get Groq API Key ↗
+                        </a>
+                    </div>
+                    <span style="color: var(--text-muted); font-size: 11.5px;">Free tier compatible</span>
                 </div>
                 <p style="font-size: 11.5px; color: var(--text-muted); margin-top: 8px; line-height: 1.45;">
-                    🛡️ <b>Hosted Privacy Guarantee:</b> Your API key is stored strictly in browser memory for this tab. It is transmitted directly to OpenAI over HTTPS and never saved to cookies, localStorage, or server disks. Your summaries are saved directly to your browser's IndexedDB.
+                    🛡️ <b>Hosted Privacy Guarantee:</b> Your credentials are held strictly in browser memory for this tab. They are transmitted over HTTPS to your chosen provider and never saved to cookies, localStorage, or server disks.
                 </p>
             </div>
             {% endif %}
 
-            <!-- Friendly Quick Link Chip for OpenAI Keys -->
+            <!-- Friendly Quick Link Chip for Provider Configuration -->
             <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 8px;">
-                <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); text-decoration: none; padding: 4px 10px; border-radius: 9999px; background: var(--section-bg); border: 1px solid var(--border-color); transition: all 0.2s;" onmouseover="this.style.color='var(--primary)'; this.style.borderColor='var(--primary)'" onmouseout="this.style.color='var(--text-muted)'; this.style.borderColor='var(--border-color)'">
-                    <span>🔑 Need an OpenAI API Key? Get one here</span>
+                <a href="{{ url_for('setup') }}" style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); text-decoration: none; padding: 4px 10px; border-radius: 9999px; background: var(--section-bg); border: 1px solid var(--border-color); transition: all 0.2s;" onmouseover="this.style.color='var(--primary)'; this.style.borderColor='var(--primary)'" onmouseout="this.style.color='var(--text-muted)'; this.style.borderColor='var(--border-color)'">
+                    <span>⚡ Configure Cloudflare / Groq</span>
                     <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
                 </a>
             </div>
@@ -347,13 +347,13 @@
                             id="api-key-input"
                             name="api_key"
                             class="form-control"
-                            placeholder="sk-proj-..."
+                            placeholder="Groq key (gsk_...) or Cloudflare token"
                             autocomplete="off"
                             spellcheck="false"
                         >
                         <p style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
                             Temporarily override your saved configuration for this request.
-                            <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: underline; margin-left: 4px;">Get an OpenAI key ↗</a>
+                            <a href="{{ url_for('settings') }}" style="color: var(--primary); text-decoration: underline; margin-left: 4px;">Configure in Settings ↗</a>
                         </p>
                     </div>
                 </details>
@@ -479,6 +479,12 @@
                             {{ summary.mode_name if summary and summary.mode_name else 'Quick Summary' }}
                         </span>
                         <span id="analysis-type-badge" class="badge">Structured Brief</span>
+                        <span id="result-provider-badge" class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3);">
+                            Provider: <span id="summary-provider-name">{{ summary.provider_name if summary and summary.provider_name else 'Cloudflare Workers AI' }}</span> (<span id="summary-model-name">{{ summary.model if summary and summary.model else '@cf/meta/llama-3.1-8b-instruct' }}</span>)
+                        </span>
+                        <span id="result-fallback-badge" class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); display: {% if summary and summary.switched_to_fallback %}inline-flex{% else %}none{% endif %};">
+                            ⚠️ Switched to Fallback
+                        </span>
                     </div>
 
                     <!-- Source Link Banner -->
@@ -619,6 +625,9 @@
                         </span>
                         <span class="badge" style="background: var(--bg-secondary); color: var(--text-muted);">
                             Dual Source Synthesis
+                        </span>
+                        <span id="compare-provider-badge" class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3);">
+                            Provider: <span id="compare-provider-name">Cloudflare Workers AI</span> (<span id="compare-model-name">@cf/meta/llama-3.1-8b-instruct</span>)
                         </span>
                     </div>
                 </div>
@@ -915,77 +924,119 @@
             }
         };
 
+        window.onHostedProviderChange = function() {
+            const sel = document.getElementById("hosted-provider-select");
+            const cfInputs = document.getElementById("hosted-cf-inputs");
+            const groqInputs = document.getElementById("hosted-groq-inputs");
+            if (sel.value === "cloudflare") {
+                cfInputs.style.display = "flex";
+                groqInputs.style.display = "none";
+            } else {
+                cfInputs.style.display = "none";
+                groqInputs.style.display = "flex";
+            }
+        };
+
         window.verifyHostedKey = async function() {
-            const input = document.getElementById("hosted-api-key-input");
+            const providerSel = document.getElementById("hosted-provider-select");
+            const provider = providerSel ? providerSel.value : "cloudflare";
             const alertBox = document.getElementById("hosted-key-alert");
             const clearBtn = document.getElementById("hosted-clear-btn");
             const statusLabel = document.getElementById("hosted-status-label");
-            const val = input ? input.value.trim() : "";
 
-            if (!val) {
-                if (alertBox) {
-                    alertBox.style.display = "block";
-                    alertBox.style.color = "var(--error-text)";
-                    alertBox.textContent = "Please enter an OpenAI API key.";
+            let payload = { provider: provider };
+            if (provider === "cloudflare") {
+                const cfId = document.getElementById("hosted-cf-id")?.value.trim() || "";
+                const cfToken = document.getElementById("hosted-cf-token")?.value.trim() || "";
+                if (!cfId || !cfToken) {
+                    if (alertBox) {
+                        alertBox.style.display = "block";
+                        alertBox.style.color = "var(--error-text)";
+                        alertBox.textContent = "Please enter both Cloudflare Account ID and API Token.";
+                    }
+                    return;
                 }
-                return;
+                payload.cloudflare_account_id = cfId;
+                payload.cloudflare_api_token = cfToken;
+            } else {
+                const groqKey = document.getElementById("hosted-api-key-input")?.value.trim() || "";
+                if (!groqKey) {
+                    if (alertBox) {
+                        alertBox.style.display = "block";
+                        alertBox.style.color = "var(--error-text)";
+                        alertBox.textContent = "Please enter your Groq API key.";
+                    }
+                    return;
+                }
+                payload.groq_api_key = groqKey;
             }
 
             if (alertBox) {
                 alertBox.style.display = "block";
                 alertBox.style.color = "var(--primary)";
-                alertBox.textContent = "Verifying credentials with OpenAI...";
+                alertBox.textContent = "Verifying credentials with provider...";
             }
 
             try {
                 const res = await fetch("/api/validate-key", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ api_key: val })
+                    body: JSON.stringify(payload)
                 });
                 const data = await res.json();
                 if (res.ok && data.valid) {
-                    StorageAdapter.setHostedKey(val);
+                    if (provider === "cloudflare") {
+                        StorageAdapter.setProviderConfig({
+                            primary_provider: "cloudflare",
+                            cloudflare_account_id: payload.cloudflare_account_id,
+                            cloudflare_api_token: payload.cloudflare_api_token
+                        });
+                    } else {
+                        StorageAdapter.setProviderConfig({
+                            primary_provider: "groq",
+                            groq_api_key: payload.groq_api_key
+                        });
+                    }
                     if (alertBox) {
                         alertBox.style.color = "#10b981";
-                        alertBox.textContent = "✓ Key verified & active in session memory!";
+                        alertBox.textContent = "✓ Credentials verified & active in session memory!";
                     }
                     if (clearBtn) clearBtn.style.display = "inline-flex";
                     if (statusLabel) {
-                        statusLabel.textContent = "● Key Active in Session Memory";
+                        statusLabel.textContent = "● Credentials Active in Session Memory";
                         statusLabel.style.color = "#10b981";
                         statusLabel.style.fontWeight = "600";
                     }
                 } else {
-                    StorageAdapter.clearHostedKey();
+                    StorageAdapter.clearCredentials();
                     if (alertBox) {
                         alertBox.style.color = "var(--error-text)";
-                        alertBox.textContent = data.message || "Invalid API key.";
+                        alertBox.textContent = data.message || "Invalid credentials.";
                     }
                 }
             } catch (err) {
                 if (alertBox) {
                     alertBox.style.color = "var(--error-text)";
-                    alertBox.textContent = "Connection error validating key.";
+                    alertBox.textContent = "Connection error validating credentials.";
                 }
             }
         };
 
         window.clearHostedKey = function() {
-            StorageAdapter.clearHostedKey();
-            const input = document.getElementById("hosted-api-key-input");
-            const alertBox = document.getElementById("hosted-key-alert");
+            StorageAdapter.clearCredentials();
+            const cfId = document.getElementById("hosted-cf-id");
+            const cfToken = document.getElementById("hosted-cf-token");
+            const groqKey = document.getElementById("hosted-api-key-input");
+            if (cfId) cfId.value = "";
+            if (cfToken) cfToken.value = "";
+            if (groqKey) groqKey.value = "";
             const clearBtn = document.getElementById("hosted-clear-btn");
-            const statusLabel = document.getElementById("hosted-status-label");
-            if (input) input.value = "";
             if (clearBtn) clearBtn.style.display = "none";
-            if (alertBox) {
-                alertBox.style.display = "block";
-                alertBox.style.color = "var(--text-muted)";
-                alertBox.textContent = "Credentials removed from memory.";
-            }
+            const alertBox = document.getElementById("hosted-key-alert");
+            if (alertBox) alertBox.style.display = "none";
+            const statusLabel = document.getElementById("hosted-status-label");
             if (statusLabel) {
-                statusLabel.textContent = "No Key Active • Enter your key to summarize";
+                statusLabel.textContent = "Active Session • In-Memory Credentials Only";
                 statusLabel.style.color = "var(--text-muted)";
                 statusLabel.style.fontWeight = "normal";
             }
@@ -1685,6 +1736,23 @@
                     analysisTypeBadge.textContent = "Direct Analysis";
                 }
 
+                // Provider transparency update
+                const provBadge = document.getElementById("result-provider-badge");
+                const provNameSpan = document.getElementById("summary-provider-name");
+                const modelNameSpan = document.getElementById("summary-model-name");
+                const fallbackBadge = document.getElementById("result-fallback-badge");
+                if (provBadge && (data.provider_name || data.provider)) {
+                    if (provNameSpan) provNameSpan.textContent = data.provider_name || data.provider;
+                    if (modelNameSpan) modelNameSpan.textContent = data.model || "";
+                    provBadge.style.display = "inline-flex";
+                }
+                if (fallbackBadge) {
+                    fallbackBadge.style.display = data.switched_to_fallback ? "inline-flex" : "none";
+                    if (data.switched_to_fallback && data.fallback_reason) {
+                        fallbackBadge.title = `Primary unavailable (${data.fallback_reason}). Switched to fallback.`;
+                    }
+                }
+
                 // Overview
                 if (data.overview && data.overview.trim()) {
                     summaryOverview.textContent = data.overview;
@@ -2237,9 +2305,8 @@
                 const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
 
                 // Hosted mode check: require visitor's in-memory key
-                if (window.StorageAdapter && window.StorageAdapter.isHosted() && !apiKey) {
-                    showError("Please enter your OpenAI API key in the Hosted BYOK box above to proceed.");
-                    document.getElementById("hosted-api-key-input")?.focus();
+                if (window.StorageAdapter && window.StorageAdapter.isHosted() && !window.StorageAdapter.hasValidCredentials()) {
+                    showError("Please configure your AI provider credentials in the Hosted BYOK box above to proceed.");
                     return;
                 }
 
@@ -2544,23 +2611,26 @@
                 }, 1500);
 
                 let stepTimer2 = setTimeout(() => {
-                    if (loadingStepText) loadingStepText.textContent = "Analyzing content with OpenAI models...";
+                    if (loadingStepText) loadingStepText.textContent = "Analyzing content with AI models...";
                 }, 4000);
 
                 try {
+                    const provConfig = (window.StorageAdapter ? window.StorageAdapter.getProviderConfig() : {}) || {};
+                    const reqBody = Object.assign({
+                        url: rawUrl,
+                        api_key: apiKey,
+                        mode: selectedMode,
+                        custom_directive: customDir,
+                        custom_directive_enabled: customDirEnabled
+                    }, provConfig);
+
                     const response = await fetch("/summarize", {
                         method: "POST",
                         headers: {
                             "Content-Type": "application/json",
                             "X-Requested-With": "XMLHttpRequest"
                         },
-                        body: JSON.stringify({
-                            url: rawUrl,
-                            api_key: apiKey,
-                            mode: selectedMode,
-                            custom_directive: customDir,
-                            custom_directive_enabled: customDirEnabled
-                        })
+                        body: JSON.stringify(reqBody)
                     });
 
                     const data = await response.json();

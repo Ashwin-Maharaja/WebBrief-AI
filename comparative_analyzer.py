@@ -1,5 +1,5 @@
 """
-WebBrief AI — Comparative Research & Analysis Engine
+WebBrief AI — Comparative Research & Analysis Engine (v1.6.0).
 Performs deep comparative synthesis across two articles/sources.
 Extracts common arguments, contradictions, differing perspectives,
 unique information, and side-by-side claim comparisons with strict factuality.
@@ -12,10 +12,11 @@ import re
 from typing import Dict, Any, Optional, Tuple
 
 from dotenv import load_dotenv
-from openai import OpenAI
 
 from scraper import scrape_article, validate_safe_url, ScraperError
 from summarizer import summarize_text, SummarizerError
+from services.providers.router import AIRouter, RouterResult
+from services.providers.exceptions import ProviderError
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -125,33 +126,37 @@ def build_comparison_prompt(
     return instructions, user_input
 
 
-def parse_comparison_response(raw_text: str, default_a_title: str, default_b_title: str, url_a: str, url_b: str) -> Dict[str, Any]:
+def parse_comparison_response(raw_text_or_dict, default_a_title: str, default_b_title: str, url_a: str, url_b: str) -> Dict[str, Any]:
     """
-    Parses and validates the JSON comparative response from OpenAI.
+    Parses and validates the JSON comparative response from the AI model.
     Gracefully sanitizes malformed responses.
     """
-    if not raw_text or not isinstance(raw_text, str):
+    if not raw_text_or_dict:
         raise ComparisonError("Received empty response from comparative analysis model.")
 
-    cleaned = raw_text.strip()
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```[a-zA-Z]*\s*\n?", "", cleaned)
-        cleaned = re.sub(r"\n?```\s*$", "", cleaned)
-        cleaned = cleaned.strip()
+    if isinstance(raw_text_or_dict, dict):
+        data = raw_text_or_dict
+    elif isinstance(raw_text_or_dict, str):
+        cleaned = raw_text_or_dict.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```[a-zA-Z]*\s*\n?", "", cleaned)
+            cleaned = re.sub(r"\n?```\s*$", "", cleaned)
+            cleaned = cleaned.strip()
 
-    try:
-        data = json.loads(cleaned)
-    except json.JSONDecodeError as e:
-        # Fallback: search for first { and last }
-        start = cleaned.find("{")
-        end = cleaned.rfind("}")
-        if start != -1 and end != -1 and end > start:
-            try:
-                data = json.loads(cleaned[start:end + 1])
-            except Exception:
-                raise ComparisonError(f"Could not parse comparative model response as JSON: {str(e)}")
-        else:
-            raise ComparisonError(f"Invalid JSON format returned by comparative analysis: {str(e)}")
+        try:
+            data = json.loads(cleaned)
+        except json.JSONDecodeError as e:
+            start = cleaned.find("{")
+            end = cleaned.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                try:
+                    data = json.loads(cleaned[start:end + 1])
+                except Exception:
+                    raise ComparisonError(f"Could not parse comparative model response as JSON: {str(e)}")
+            else:
+                raise ComparisonError(f"Invalid JSON format returned by comparative analysis: {str(e)}")
+    else:
+        raise ComparisonError("Invalid data format returned by model.")
 
     if not isinstance(data, dict):
         raise ComparisonError("Comparative model did not return a valid dictionary structure.")
@@ -191,11 +196,11 @@ def parse_comparison_response(raw_text: str, default_a_title: str, default_b_tit
 
     unique_to_a = data.get("unique_to_a")
     if not isinstance(unique_to_a, list):
-        unique_to_a = [str(unique_to_a)] if unique_a else []
+        unique_to_a = [str(unique_to_a)] if unique_to_a else []
 
     unique_to_b = data.get("unique_to_b")
     if not isinstance(unique_to_b, list):
-        unique_to_b = [str(unique_to_b)] if unique_b else []
+        unique_to_b = [str(unique_to_b)] if unique_to_b else []
 
     conclusions = data.get("conclusions_comparison", {})
     if not isinstance(conclusions, dict):
@@ -232,14 +237,16 @@ def compare_articles(
     text_b_override: Optional[str] = None,
     title_a_override: Optional[str] = None,
     title_b_override: Optional[str] = None,
+    router: Optional[AIRouter] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Full pipeline to compare two articles:
     1. Validates both URLs (SSRF prevention).
     2. Scrapes both articles (or uses overrides for testing/offline).
     3. Handles long articles via map-reduce summarization if character counts exceed threshold.
-    4. Submits to comparative reasoning model.
-    5. Returns structured comparison.
+    4. Submits to comparative reasoning model via AIRouter.
+    5. Returns structured comparison with provider metadata.
     """
     # Step 1: Validate URLs
     safe_url_a = validate_safe_url(url_a)
@@ -277,12 +284,26 @@ def compare_articles(
             "to perform a reliable comparison. The website may require authentication or block scraping."
         )
 
+    # Initialize AIRouter if not provided
+    if router is None:
+        from byok import get_router, has_valid_config
+        req_payload = provider_config or {}
+        if api_key:
+            if api_key.startswith("gsk_"):
+                req_payload["groq_api_key"] = api_key
+                req_payload["primary_provider"] = "groq"
+            else:
+                req_payload["api_key"] = api_key
+
+        if not has_valid_config(request_data=req_payload):
+            raise ComparisonError("No AI provider configured. Please configure credentials in Settings.")
+        router = get_router(request_data=req_payload)
+
     # Step 3: Handle long articles (> 12,000 characters) by summarizing them first
-    # This prevents token overflow and maintains high fidelity comparison
     effective_text_a = text_a
     if len(text_a) > LONG_ARTICLE_THRESHOLD:
         logger.info("Article A is long (%d chars); running structured extraction first", len(text_a))
-        summary_a = summarize_text(text_a, api_key=api_key, mode="detailed")
+        summary_a = summarize_text(text_a, router=router, mode="detailed")
         effective_text_a = (
             f"SUMMARY OF ARTICLE A:\n"
             f"Overview: {summary_a.get('overview', '')}\n"
@@ -295,7 +316,7 @@ def compare_articles(
     effective_text_b = text_b
     if len(text_b) > LONG_ARTICLE_THRESHOLD:
         logger.info("Article B is long (%d chars); running structured extraction first", len(text_b))
-        summary_b = summarize_text(text_b, api_key=api_key, mode="detailed")
+        summary_b = summarize_text(text_b, router=router, mode="detailed")
         effective_text_b = (
             f"SUMMARY OF ARTICLE B:\n"
             f"Overview: {summary_b.get('overview', '')}\n"
@@ -305,7 +326,7 @@ def compare_articles(
             f"EXCERPT: {text_b[:4000]}"
         )
 
-    # Step 4: Build prompt & call OpenAI
+    # Step 4: Build prompt & call AIRouter
     instructions, user_input = build_comparison_prompt(
         text_a=effective_text_a,
         text_b=effective_text_b,
@@ -317,38 +338,33 @@ def compare_articles(
         custom_directive_enabled=custom_directive_enabled
     )
 
-    client_key = api_key or os.getenv("OPENAI_API_KEY")
-    if not client_key:
-        raise ComparisonError("OpenAI API key not found. Please provide an API key.")
-
-    client = OpenAI(api_key=client_key)
+    messages = [
+        {"role": "system", "content": instructions},
+        {"role": "user", "content": user_input}
+    ]
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-5.6-luna",
-            messages=[
-                {"role": "system", "content": instructions},
-                {"role": "user", "content": user_input}
-            ],
-            response_format={"type": "json_object"}
-        )
-        raw_output = response.choices[0].message.content
+        router_res = router.generate_structured_json(messages=messages)
+    except ProviderError as pe:
+        raise ComparisonError(str(pe))
     except Exception as e:
-        err_msg = str(e)
-        if "AuthenticationError" in err_msg or "invalid_api_key" in err_msg:
-            raise ComparisonError("Invalid OpenAI API key. Please check your credentials.")
-        elif "RateLimitError" in err_msg or "insufficient_quota" in err_msg:
-            raise ComparisonError("OpenAI quota or rate limit exceeded. Please verify your account balance.")
-        else:
-            raise ComparisonError(f"Comparative analysis failed: {err_msg}")
+        raise ComparisonError(f"Comparative analysis failed: {str(e)}")
 
     # Step 5: Parse and return structured comparison
     comparison_result = parse_comparison_response(
-        raw_output,
+        router_res.content,
         default_a_title=title_a,
         default_b_title=title_b,
         url_a=safe_url_a,
         url_b=safe_url_b
     )
+
+    # Provider transparency metadata (Phase 9)
+    comparison_result["provider"] = router_res.provider_id
+    comparison_result["provider_name"] = router_res.provider_name
+    comparison_result["model"] = router_res.model
+    comparison_result["switched_to_fallback"] = router_res.switched_to_fallback
+    if router_res.switched_to_fallback:
+        comparison_result["fallback_reason"] = router_res.fallback_reason
 
     return comparison_result

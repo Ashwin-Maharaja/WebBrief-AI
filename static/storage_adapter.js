@@ -18,6 +18,17 @@
 
     // Private in-memory key storage (never written to web storage)
     let _inMemoryApiKey = '';
+    let _inMemoryProviderConfig = {
+        primary_provider: 'cloudflare',
+        cloudflare_account_id: '',
+        cloudflare_api_token: '',
+        cloudflare_model: '@cf/meta/llama-3.1-8b-instruct',
+        groq_api_key: '',
+        groq_model: 'llama-3.3-70b-versatile',
+        fallback_enabled: false,
+        fallback_provider: 'groq',
+        fallback_model: 'llama-3.3-70b-versatile'
+    };
 
     // Database configuration for Hosted IndexedDB mode
     const DB_NAME = 'WebBriefDB';
@@ -142,7 +153,36 @@
         },
 
         hasHostedKey: function() {
-            return Boolean(_inMemoryApiKey && _inMemoryApiKey.length >= 20);
+            return this.hasValidCredentials();
+        },
+
+        setProviderConfig: function(cfg) {
+            if (cfg && typeof cfg === 'object') {
+                _inMemoryProviderConfig = Object.assign({}, _inMemoryProviderConfig, cfg);
+                if (cfg.groq_api_key) _inMemoryApiKey = cfg.groq_api_key;
+                else if (cfg.cloudflare_api_token) _inMemoryApiKey = cfg.cloudflare_api_token;
+            }
+        },
+
+        getProviderConfig: function() {
+            return Object.assign({}, _inMemoryProviderConfig);
+        },
+
+        clearCredentials: function() {
+            _inMemoryApiKey = '';
+            _inMemoryProviderConfig.cloudflare_account_id = '';
+            _inMemoryProviderConfig.cloudflare_api_token = '';
+            _inMemoryProviderConfig.groq_api_key = '';
+        },
+
+        hasValidCredentials: function() {
+            const p = _inMemoryProviderConfig.primary_provider || 'cloudflare';
+            if (p === 'cloudflare') {
+                return Boolean(_inMemoryProviderConfig.cloudflare_account_id && _inMemoryProviderConfig.cloudflare_api_token);
+            } else if (p === 'groq') {
+                return Boolean(_inMemoryProviderConfig.groq_api_key);
+            }
+            return Boolean(_inMemoryApiKey && _inMemoryApiKey.length >= 10);
         },
 
         /**

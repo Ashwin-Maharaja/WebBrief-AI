@@ -1,33 +1,34 @@
 # WebBrief AI
 
-> **Production Release — v1.5.1**  
-> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
+> **Production Release — v1.6.0**  
+> An intelligent, multi-mode website summarizer powered by a modular multi-provider AI architecture (Cloudflare Workers AI & GroqCloud) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and automatic provider failover routing.
 
 ---
 
 ## Table of Contents
 1. [Project Overview](#1-project-overview)
-2. [Features](#2-features)
-3. [Deployment Models & Architecture (v1.5)](#3-deployment-models--architecture-v15)
-4. [Vector Database Architecture & Evaluation](#4-vector-database-architecture--evaluation)
-5. [Visual Previews](#5-visual-previews)
-6. [Technology Stack](#6-technology-stack)
-7. [System Architecture](#7-system-architecture)
-8. [Repository Structure](#8-repository-structure)
-9. [Installation Instructions](#9-installation-instructions)
-10. [Virtual Environment Setup](#10-virtual-environment-setup)
-11. [Dependency Installation](#11-dependency-installation)
-12. [First-Run Setup Wizard](#12-first-run-setup-wizard)
-13. [OpenAI API Key Configuration](#13-openai-api-key-configuration)
-14. [BYOK Architecture & Security Model](#14-byok-architecture--security-model)
-15. [Running Locally](#15-running-locally)
-16. [Vercel & Cloud Deployment](#16-vercel--cloud-deployment)
-17. [Environment Variables Reference](#17-environment-variables-reference)
-18. [Troubleshooting](#18-troubleshooting)
-19. [Known Limitations](#19-known-limitations)
-20. [Future Roadmap](#20-future-roadmap)
-21. [Contributing Guidelines](#21-contributing-guidelines)
-22. [License](#22-license)
+2. [What's New in v1.6.0](#2-whats-new-in-v160)
+3. [Features](#3-features)
+4. [Multi-Provider AI Architecture & Routing](#4-multi-provider-ai-architecture--routing)
+5. [Deployment Models & Architecture](#5-deployment-models--architecture)
+6. [Vector Database Architecture & Semantic Search](#6-vector-database-architecture--semantic-search)
+7. [Visual Previews](#7-visual-previews)
+8. [Technology Stack](#8-technology-stack)
+9. [Repository Structure](#9-repository-structure)
+10. [Installation Instructions](#10-installation-instructions)
+11. [Virtual Environment Setup](#11-virtual-environment-setup)
+12. [Dependency Installation](#12-dependency-installation)
+13. [First-Run Setup Wizard](#13-first-run-setup-wizard)
+14. [Provider Credential Configuration](#14-provider-credential-configuration)
+15. [BYOK Architecture & Security Model](#15-byok-architecture--security-model)
+16. [Running Locally](#16-running-locally)
+17. [Vercel & Cloud Deployment](#17-vercel--cloud-deployment)
+18. [Environment Variables Reference](#18-environment-variables-reference)
+19. [Troubleshooting](#19-troubleshooting)
+20. [Known Limitations](#20-known-limitations)
+21. [Completed Roadmap & Feature Milestones](#21-completed-roadmap--feature-milestones)
+22. [Contributing Guidelines](#22-contributing-guidelines)
+23. [License](#23-license)
 
 ---
 
@@ -37,11 +38,33 @@ WebBrief AI simplifies reading long articles, technical papers, corporate releas
 
 Built with enterprise-grade SSRF defense, deployment-aware storage, and a **Bring Your Own Key (BYOK)** security architecture, WebBrief AI guarantees that personal API credentials remain private, stored locally in `.env` for self-hosted instances or strictly in active browser memory for public Vercel visitors—never shared between users, never logged, and never exposing developer API credits.
 
+In **v1.6.0**, WebBrief AI upgrades its intelligence layer from a single vendor dependency to a modular, multi-provider engine supporting **Cloudflare Workers AI** (primary recommended) and **GroqCloud** (high-speed fallback), complete with independent model selectors, verified model catalogues, dynamic routing, and transparent fallback disclosure.
+
 ---
 
-## 2. Features
+## 2. What's New in v1.6.0
 
-- **Enterprise Security & Reliability Hardening (v1.5.1)**:
+- **Complete Decoupling from OpenAI**: The OpenAI Python SDK and all direct OpenAI API calls have been completely removed.
+- **Modular Provider Abstraction**: Introduces `BaseProvider` and dedicated adapters for Cloudflare Workers AI and GroqCloud under `services/providers/`.
+- **Primary Provider: Cloudflare Workers AI**: Fast, serverless inference utilizing Cloudflare's global edge network (recommended models: `llama-3.1-8b-instruct`, `mistral-7b-instruct-v0.2`, `qwen1.5-7b-chat`).
+- **Optional Fallback Provider: GroqCloud**: Ultra-low-latency LPU inference (recommended models: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768`).
+- **Automatic Provider Routing (`AIRouter`)**: Automatically attempts inference with the primary provider and seamlessly cascades to the fallback provider on recoverable runtime faults.
+- **Intelligent Fallback Policies**:
+  - *Eligible for Fallback*: Rate limits (HTTP 429), quota exhaustion, service unavailabilities (HTTP 500, 502, 503, 504), and bounded timeouts.
+  - *Blocked from Fallback*: Authentication failures (HTTP 401, 403), invalid credentials, unknown models, or malformed requests (surfaces actionable feedback immediately).
+- **Curated Model Catalogue & Selection UI**: Dynamically populated model catalogues with human-friendly descriptions and free-tier tags across `/setup` and `/settings`.
+- **Provider Transparency Badge**: Every summary result card now displays the exact provider and model that generated it, highlighting whether fallback was triggered and why.
+- **Upgraded Vector Embeddings**: Local SQLite semantic search now utilizes Cloudflare Workers AI (`@cf/baai/bge-base-en-v1.5`) embeddings, with a deterministic feature-vector fallback for Groq-only configurations.
+
+---
+
+## 3. Features
+
+- **Multi-Provider BYOK & Fallback Routing (v1.6.0)**:
+  - Choose between Cloudflare Workers AI and GroqCloud as your primary provider.
+  - Enable optional fallback to protect against rate limits or temporary outages.
+  - Single-provider users can use either provider independently without being forced to configure both.
+- **Enterprise Security & Reliability Hardening**:
   - **Zero Hardcoded Secrets & Production Verification**: Eliminates static fallbacks. In production environments, requires an explicit 32-byte `FLASK_SECRET_KEY`; in local development, generates an ephemeral, cryptographically secure 32-byte key (`secrets.token_hex(32)`).
   - **Defensive HTTP Security Headers**: Injects `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`, and a strict Content Security Policy (`CSP`) into every response.
   - **Origin & Anti-CSRF Protection**: Enforces Origin and Referer validation on all mutating HTTP methods (`POST`, `PUT`, `DELETE`, `PATCH`) to block cross-origin request forging, accompanied by session anti-CSRF token verification for form submissions.
@@ -50,61 +73,83 @@ Built with enterprise-grade SSRF defense, deployment-aware storage, and a **Brin
   - **DOM-Based XSS Sanitization**: Rigorously escapes all dynamic values rendered in the browser DOM (titles, URLs, excerpts, claims, and error strings) across Single, Batch, Compare, and Search views.
   - **PDF Export Path Traversal Neutralization**: Sanitizes downloaded PDF filenames to strictly alphanumeric characters, underscores, and hyphens, preventing path traversal attacks and Content-Disposition header manipulation.
   - **Request Body Payload Limit**: Enforces a strict 2MB maximum content length (`MAX_CONTENT_LENGTH`) to protect backend memory from denial-of-service attempts.
-- **Hosted BYOK & Deployment-Aware Storage (v1.5)**:
-  - **Public Vercel Hosting Ready**: Visitors can freely use the public deployment by supplying their own OpenAI API key.
-  - **In-Memory Credential Security**: Visitor API keys reside exclusively in frontend JavaScript RAM during the active tab session. Keys are **never** stored in `localStorage`, `sessionStorage`, `IndexedDB`, or browser-readable cookies, and are never written to the server's ephemeral filesystem or process environment.
+- **Hosted BYOK & Deployment-Aware Storage**:
+  - **Public Vercel Hosting Ready**: Visitors can freely use the public deployment by supplying their own Cloudflare or Groq credentials.
+  - **In-Memory Credential Security**: Visitor API credentials reside exclusively in frontend JavaScript RAM during the active tab session. Credentials are **never** stored in `localStorage`, `sessionStorage`, `IndexedDB`, or browser-readable cookies, and are never written to the server's ephemeral filesystem or process environment.
   - **Zero Developer Credit Drainage**: Hosted mode strictly disables fallback to server-side developer credentials, ensuring visitors never consume developer API credits.
   - **Zero Cross-Visitor Data Leakage**: In hosted mode, all summary records, metadata, and history are stored locally in the visitor's browser via **IndexedDB** (`WebBriefDB`). Visitors never see each other's summaries.
   - **Anonymous Visitor Experience**: Completely account-free. No Google OAuth, mandatory login, or registration required to summarize webpages.
-  - **Automatic Credential Redaction**: All OpenAI keys matching standard signatures (`sk-...`) are automatically sanitized and redacted from logs, error messages, and API traces.
-  - **Environment Discovery Endpoint**: `/api/environment` serves real-time runtime detection (detecting Vercel, AWS Lambda, Netlify, or self-hosted environments).
-- **Local Knowledge Retrieval & Semantic Search (v1.4)**:
-  - **Natural-Language Vector Search**: Query your personal summary library with questions (e.g. *"What are the ethical risks of AI training data discussed in my articles?"*) without relying on keyword matches.
+  - **Automatic Credential Redaction**: All API keys and tokens matching standard signatures (`gsk_...`, Bearer tokens, Account IDs) are automatically sanitized and redacted from logs, error messages, and API traces.
+- **Local Knowledge Retrieval & Semantic Search**:
+  - **Natural-Language Vector Search**: Query your personal summary library with questions without relying on exact keyword matches.
   - **Embedded SQLite Vector Storage**: Vectors are packed as binary float blobs (`struct.pack`) directly in `webbrief_history.db`. Zero separate database servers, zero native C++ compiler requirements, and 100% ACID persistence across all application restarts.
-  - **OpenAI `text-embedding-3-small` Integration**: 1536-dimensional semantic representations generated via your existing BYOK credentials at negligible cost ($0.00002 / 1,000 tokens).
-  - **SHA-256 Content-Hash Caching**: Computes deterministic hashes of summary texts to guarantee that embeddings are generated exactly once per version—completely eliminating duplicate OpenAI API calls and billing.
-  - **Exact Cosine Similarity Ranking**: Pure Python mathematical dot-product retrieval (< 0.05ms per comparison) with user-controlled relevance thresholds (default 35%) and result limits.
-  - **Attributed Excerpt Extraction**: Surfaces the exact matching excerpt alongside match percentage pills (`● 94% Match`) and one-click direct summary navigation.
-  - **Index Rebuilding & Maintenance**: Single-click "Rebuild Vector Index" in `/settings` to re-embed all historical documents, with automatic deletion cascading on summary removal.
-- **Comparative Research & Dual-Source Synthesis (v1.3)**:
+  - **SHA-256 Content-Hash Caching**: Computes deterministic hashes of summary texts to guarantee that embeddings are generated exactly once per version.
+  - **Exact Cosine Similarity Ranking**: Pure Python mathematical dot-product retrieval (< 0.05ms per comparison) with user-controlled relevance thresholds and result limits.
+- **Comparative Research & Dual-Source Synthesis**:
   - **Side-by-Side Dual URL Submission**: Input two independent website URLs to run deep comparative fact-checking and analysis.
   - **Shared Ground & Consensus Points**: Automatically isolates common arguments, shared premises, and mutual points of consensus.
   - **Contradictions & Disagreements**: Identifies and highlights direct factual conflicts, opposing claims, or incompatible conclusions with alert callouts.
-  - **Differing Perspectives & Editorial Framing**: Outlines variations in tone, framing, target audience, and analytical methodology.
   - **Comparative Claims Table**: Structured topic-by-topic comparison mapping Source A's claims directly against Source B's claims.
-  - **Unique Information**: Flags critical facts and context that appear exclusively in one article and are omitted by the other.
-  - **Conclusions Comparison & Synthesis**: Objective comparative assessment evaluating divergence or alignment without inventing unverified facts.
   - **Comparative PDF Export**: Download dedicated, multi-page ReportLab comparative briefs with custom headers, tables, and conflict callouts.
-  - **Dual-URL History Tracking**: Saves comparative entries to history, tagged with `⚖️ Comparison` badges.
-- **Notion Integration & Export (v1.3)**:
+- **Notion Integration & Export**:
   - **Official Notion REST API Integration**: Connects via Notion Internal Integration Secrets (`secret_...` or `ntn_...`).
-  - **BYOK Credential Isolation**: Masked token storage, zero logging, and instant disconnect capability in Settings.
-  - **Structured Block Formatting**: Exports both individual and comparative summaries into native Notion blocks (callouts, dividers, headings, bullet lists, bold text, and hyperlinks).
-  - **Destination Page Picker**: Automatically queries accessible shared parent pages via Notion's Search API, with support for direct Page ID entry.
-- **Multi-URL Batch Summarization (v1.2)**:
-  - **Dynamic Input Rows**: Tab-based switcher between Single, Batch, Compare, and Search modes. Manage up to 10 URLs per batch with real-time counters.
-  - **Pre-Flight Validation & Duplicate Detection**: Validates each URL independently, displays field-specific error hints, and flags duplicate URLs before submission.
-  - **Isolated Concurrency Engine**: Runs concurrent processing using `ThreadPoolExecutor` (bounded to 2–3 workers). Scraping or OpenAI API failures on one URL never terminate or impact the remaining batch.
-  - **Real-Time Progress Tracking**: Visual progress bar, percentage completion, counter (`X / Y Completed`), status pills (Total, In Progress, Completed, Failed), and active URL status text.
-  - **Interactive Accordion Results**: Organized expandable/collapsible cards for each website with title, source link, mode pill, and execution status (`✓ Completed` or `✕ Failed`).
-  - **Export All as PDF & Single Downloads**: One-click combined multi-article PDF export compiling all batch briefs into a single numbered report, or individual PDF downloads per card.
-- **Bring Your Own Key (BYOK) Security**:
-  - Zero developer key sharing. Every user configures their own OpenAI credentials.
-  - Minimal zero-token model verification (`models.list()`) validates keys before persisting.
-  - Safe local `.env` writing with automatic overwrite protection.
-  - Cryptographically signed, `HttpOnly`, `SameSite=Lax` cookie fallback for serverless deployments.
+  - **Structured Block Formatting**: Exports both individual and comparative summaries into native Notion blocks.
+- **Multi-URL Batch Summarization**:
+  - Manage up to 10 URLs per batch with real-time counters and isolated concurrency (`ThreadPoolExecutor`).
+  - Combined multi-article PDF export compiling all batch briefs into a single numbered report.
 - **Dual-Engine Scraping with Dynamic Fallback**:
   - **Static Engine**: Fast HTTP requests via `requests` + `BeautifulSoup4` with boilerplate element decomposition.
   - **Dynamic Fallback**: Automatic Playwright headless Chromium invocation for JavaScript-rendered SPAs (React, Vue, Angular).
 - **Four Distinct Summarization Modes**: Quick, Detailed, Bullet-Point, and Technical.
 - **Hierarchical Map-Reduce for Long Articles**: Natural chunking with token-safe overlap and multi-pass synthesis.
-- **Professional PDF Document Export (v1.1)**: ReportLab multi-page briefs with running headers and `NumberedCanvas` page counts.
-- **Custom Prompt Directives (v1.1)**: Guiding instructions persisted in SQLite or browser `localStorage`.
-- **Summary History & Deployment Storage**: Unified abstraction supporting SQLite locally and IndexedDB on hosted serverless environments.
 
 ---
 
-## 3. Deployment Models & Architecture (v1.5)
+## 4. Multi-Provider AI Architecture & Routing
+
+```
+                     [ User Request + BYOK Credentials ]
+                                     |
+                                     v
+                        +--------------------------+
+                        |         AIRouter         |
+                        | (Determines Primary/Fall)|
+                        +--------------------------+
+                                     |
+                                     v
+                       [ Attempt Primary Provider ]
+                         /                      \
+                    (Success)                 (Failure)
+                       /                          \
+                      v                     [ Recoverable? ]
+            +-------------------+           /              \
+            | Normalized Result |        (Yes)             (No)
+            +-------------------+          /                  \
+                      ^                   v                    v
+                      |         [ Attempt Fallback ]    +--------------+
+                      |           /            \        | Raise Clear  |
+                      +---- (Success)        (Failure)  | Error Notice |
+                                                 \      +--------------+
+                                                  v
+                                         +------------------+
+                                         | Exhausted Notice |
+                                         +------------------+
+```
+
+### Provider Details
+
+| Feature | Cloudflare Workers AI | GroqCloud |
+| :--- | :--- | :--- |
+| **Role** | Primary Recommended Provider | Optional Fallback / Alternative Primary |
+| **Credentials Required** | Cloudflare Account ID + API Token | Groq API Key (`gsk_...`) |
+| **Inference Engine** | Cloudflare Global Edge Workers AI | Groq LPU™ Inference Engine |
+| **Verified Models** | `@cf/meta/llama-3.1-8b-instruct`<br>`@cf/mistralai/mistral-7b-instruct-v0.2`<br>`@cf/qwen/qwen1.5-7b-chat`<br>`@cf/meta/llama-3-8b-instruct` | `llama-3.3-70b-versatile`<br>`llama-3.1-8b-instant`<br>`mixtral-8x7b-32768`<br>`gemma2-9b-it` |
+| **Free-Tier Compatibility** | High (Included in standard Workers AI limits) | Free Cloud Tier with generous rate limits |
+| **Text Embeddings** | `@cf/baai/bge-base-en-v1.5` (768-dim) | Deterministic normalized feature vector fallback |
+
+---
+
+## 5. Deployment Models & Architecture
 
 WebBrief AI dynamically adapts its storage and security behavior based on its execution environment:
 
@@ -113,7 +158,7 @@ WebBrief AI dynamically adapts its storage and security behavior based on its ex
 | **Target Runtime** | Local machine, Docker, VPS | Vercel Serverless Functions |
 | **BYOK Storage** | Saved in local `.env` file | In-memory RAM during active tab session |
 | **Credential Persistence** | Durable across machine restarts | Cleared upon browser tab close or refresh |
-| **Developer API Credits** | User's own key in `.env` | Strictly protected (Zero developer key fallback) |
+| **Developer API Credits** | User's own credentials in `.env` | Strictly protected (Zero developer key fallback) |
 | **Summary & History Storage** | SQLite (`webbrief_history.db`) | Client-side IndexedDB (`WebBriefDB`) |
 | **Vector Search Architecture** | Server-side SQLite float blobs | Client-side hybrid similarity & lexical ranking |
 | **User Isolation** | Single-user machine boundary | 100% private per visitor (zero cross-user sharing) |
@@ -121,30 +166,23 @@ WebBrief AI dynamically adapts its storage and security behavior based on its ex
 
 ---
 
-## 4. Vector Database Architecture & Evaluation
+## 6. Vector Database Architecture & Semantic Search
 
-In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector database solutions were formally evaluated:
+WebBrief AI uses embedded vector storage directly inside SQLite (`webbrief_history.db`):
 
-| Architecture | Dependencies & Footprint | Portability (Windows / Serverless) | Persistence & Recovery | Recommendation |
-| :--- | :--- | :--- | :--- | :--- |
-| **ChromaDB** | Heavy (>200MB, onnxruntime, tokenizers, posthog, hnswlib) | High failure rate in serverless runtimes & Windows without Visual C++ build tools | Separate local directory; prone to SQLite >= 3.35 version lockouts | ❌ Overkill for personal summary collections |
-| **FAISS (faiss-cpu)** | Medium (>40MB binary wheel) | Prebuilt wheel mismatches on Windows; separate index serialization synchronization | Stored as separate binary file out of sync with relational SQLite database | ❌ High installation friction |
-| **SQLite + Binary Float Vectors (Chosen)** | **Zero additional dependencies** (standard Python `struct` + `sqlite3`) | **100% universal compatibility** across Windows, macOS, Linux, and Vercel | Single database file (`webbrief_history.db`); 100% ACID transactional consistency | ✅ **Optimal for WebBrief AI** |
-
-### Cosine Similarity & Model Cost:
-- **Embedding Model**: OpenAI `text-embedding-3-small` (1536 dimensions).
-- **Storage Cost**: ~6 KB per summary packed into compact binary blobs.
-- **Execution Speed**: Pure Python dot product executes in **~0.03ms** per vector comparison (searching 500 summaries takes ~15ms).
-- **API Cost**: $0.00002 per 1,000 tokens (~50,000 pages per $1.00). Content-hash caching guarantees that documents are never redundantly re-embedded.
+- **Zero Additional Daemons**: Embeddings are packed as binary float blobs (`struct.pack`) alongside article metadata.
+- **Embeddings Provider**: Cloudflare Workers AI `@cf/baai/bge-base-en-v1.5` (768 dimensions). If only Groq is configured, an internal deterministic feature-vector hashing generator is used so vector search functions seamlessly without extra dependencies.
+- **SHA-256 Content Caching**: Embeddings are indexed by content hash. Summaries are never re-embedded unless their text changes.
+- **Search Latency**: Pure Python dot product executes in **~0.03ms** per vector comparison.
 
 ---
 
-## 5. Visual Previews
+## 7. Visual Previews
 
-### Primary Interface & Mode Selector
+### Primary Interface & Multi-Provider Badging
 ```
 +-------------------------------------------------------------------------+
-| [O] WebBrief AI  v1.0             [History]  [Settings]  [* Mode: Dark]  |
+| [O] WebBrief AI  v1.6.0             [History]  [Settings]  [* Mode: Dark]|
 | Turn any webpage into an accurate, structured AI summary in seconds.    |
 +-------------------------------------------------------------------------+
 | Webpage URL: [ https://example.com/deep-dive-article                 ]  |
@@ -152,19 +190,16 @@ In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector databa
 | Summarization Mode:                                                     |
 | [⚡ Quick]       [📖 Detailed]     [📋 Bullet-Point]   [⚙️ Technical]    |
 |                                                                         |
-| [> Bring Your Own Key (Custom Override)]                                |
-|                                                                         |
-| [               Summarize Webpage (Playwright + OpenAI)               ] |
+| [               Summarize Webpage (Cloudflare / Groq)                 ] |
 +-------------------------------------------------------------------------+
 ```
 
-### Structured Output Cards
+### Result Card with Provider Transparency
 ```
 +-------------------------------------------------------------------------+
 |  ✦ Quantum Computing Breakthrough                                      |
-|  [Detailed Summary]  [Structured Brief]  Source: https://example.com...  |
-|                                                                         |
-|  [Copy Full Markdown Summary]  [+ New Summary]                          |
+|  [Detailed Summary]  Source: https://example.com...                      |
+|  ⚙️ Provider: Cloudflare Workers AI  |  Model: @cf/meta/llama-3.1-8b-instruct
 |                                                                         |
 |  ## Overview                                               [Copy Section]|
 |  Researchers achieve fault-tolerant logical qubits with neutral atoms... |
@@ -172,87 +207,26 @@ In designing WebBrief AI v1.4's semantic retrieval layer, multiple vector databa
 |  ## Key Points                                            [Copy Section]|
 |  • 48 logical qubits sustained over multi-step quantum circuits.        |
 |  • Two-qubit gate fidelities exceeded 99.5% across the array.           |
-|                                                                         |
-|  ## Important Details                                     [Copy Section]|
-|  • Coherence times were extended by a factor of 4x using dual lasers.   |
-|  • Compatible with existing optical tweezers control systems.           |
-|                                                                         |
-|  ## Conclusion                                            [Copy Section]|
-|  Marks a transition from noisy intermediate-scale to fault tolerance.   |
 +-------------------------------------------------------------------------+
 ```
 
 ---
 
-## 6. Technology Stack
+## 8. Technology Stack
 
 - **Backend Runtime**: Python 3.10+
 - **Web Framework**: Flask 3.1+ (Jinja2 templates, signed `HttpOnly` sessions)
-- **AI Engine**: OpenAI Python SDK (`gpt-5.6-luna` / modern completions with JSON enforcement)
+- **AI Engine**: Modular `AIRouter` with REST clients for **Cloudflare Workers AI** & **GroqCloud**
 - **Web Scraping**:
   - Static: `requests` + `BeautifulSoup4`
   - Dynamic: `playwright` (Chromium headless with request routing)
-- **Persistence**: SQLite3 (native standard library) with in-memory session fallback
+- **Persistence**: SQLite3 (native standard library) with IndexedDB client-side fallback
 - **Frontend**: Vanilla JavaScript (ES6+), CSS Custom Properties (zero heavy frontend frameworks)
 - **Production Server**: Gunicorn WSGI (Linux/Docker) or Vercel Python runtime
 
 ---
 
-## 7. System Architecture
-
-```
-                    [ Incoming User Request ]
-                                |
-                                v
-                   +--------------------------+
-                   | Flask Routing & Security |
-                   |  - Enforce BYOK Filter   |
-                   |  - CSRF/Session Security |
-                   +--------------------------+
-                                |
-               +----------------+----------------+
-               |                                 |
-         [ Static Path ]                  [ Dynamic Path ]
-               v                                 v
-      +-----------------+              +--------------------+
-      |  Requests GET   |              | Playwright Headless|
-      | - 15s Timeout   |              | - Headless Chrome  |
-      | - SSRF & Redirect              | - Abort Assets     |
-      |   Validation    |              | - SSRF Interceptor |
-      +-----------------+              +--------------------+
-               |                                 |
-               +----------------+----------------+
-                                |
-                                v
-                   +--------------------------+
-                   | HTML Cleaning & Extract  |
-                   | - Strip Scripts & Styles |
-                   | - Semantic Containers    |
-                   +--------------------------+
-                                |
-             [ Character Count > 12,000 chars? ]
-                    /                  \
-                (Yes)                  (No)
-                  /                      \
-                 v                        v
-      +---------------------+   +--------------------+
-      | Chunking Pipeline   |   | Single-Pass Engine |
-      | - Map Phase         |   | - JSON Directive   |
-      | - Reduce Phase      |   | - Mode Prompting   |
-      +---------------------+   +--------------------+
-                 \                        /
-                  \                      /
-                   v                    v
-                 +------------------------+
-                 | Structured JSON Brief  |
-                 | - Schema Validation    |
-                 | - Auto-Save to SQLite  |
-                 +------------------------+
-```
-
----
-
-## 8. Repository Structure
+## 9. Repository Structure
 
 ```
 WebBrief AI/
@@ -260,25 +234,34 @@ WebBrief AI/
 │   └── index.py            # Vercel serverless function entrypoint bridge
 ├── app.py                  # Core Flask application, routing, and controller logic
 ├── batch_processor.py      # Multi-URL batch processor, concurrency control, progress callback
-├── byok.py                 # Key validation, safe .env persistence, and serverless logic
+├── byok.py                 # Multi-provider credential validation, safe .env persistence
 ├── chunker.py              # Paragraph-aware chunking and token overlap management
 ├── comparative_analyzer.py # Dual-source comparative research, claims matrix & fact synthesis
 ├── history.py              # Local SQLite summary & comparison persistence layer (CRUD)
 ├── notion_service.py       # Official Notion REST API client, block parser & page exporter
 ├── pdf_exporter.py         # ReportLab multi-page PDF generation engine with NumberedCanvas
 ├── scraper.py              # Dual static/dynamic scraper, SSRF firewall, Playwright engine
-├── summarizer.py           # Multi-mode prompt engine, Map-Reduce pipeline, JSON parser
+├── summarizer.py           # Multi-mode prompt engine, Map-Reduce pipeline, AIRouter integration
 ├── vector_store.py         # Local SQLite vector database engine, cosine search & hash cache
+├── services/
+│   └── providers/
+│       ├── __init__.py     # Module initialization and exports
+│       ├── base.py         # BaseProvider abstract base class definition
+│       ├── cloudflare.py   # Cloudflare Workers AI REST adapter & embeddings
+│       ├── groq.py         # GroqCloud REST adapter
+│       ├── router.py       # AIRouter automatic routing & fallback engine
+│       ├── catalogue.py    # Verified model catalogue & free-tier mappings
+│       └── exceptions.py   # Normalized provider exception hierarchy
 ├── static/
 │   ├── storage_adapter.js  # Unified client-side adapter for in-memory BYOK and IndexedDB
 │   └── style.css           # Responsive stylesheet with light/dark theme variables
 ├── templates/
 │   ├── index.html          # Primary application dashboard, mode selector, and result cards
 │   ├── history.html        # Dedicated summary library view (search, reopen, delete)
-│   ├── result.html         # Standalone result view with mode badging
-│   ├── setup.html          # First-run BYOK onboarding wizard & credential updater
-│   └── settings.html       # Application settings, theme manager, and system status
-├── .env.example            # Environment variable template
+│   ├── result.html         # Standalone result view with provider transparency badges
+│   ├── setup.html          # First-run BYOK onboarding wizard (Cloudflare & Groq)
+│   └── settings.html       # Multi-provider configuration, model selection, danger zone
+├── .env.example            # Multi-provider environment variable template
 ├── .gitignore              # Git ignore rules (protects credentials and local DBs)
 ├── requirements.txt        # Production Python dependencies (includes Gunicorn & Playwright)
 ├── vercel.json             # Vercel Serverless deployment configuration
@@ -287,12 +270,14 @@ WebBrief AI/
 
 ---
 
-## 9. Installation Instructions
+## 10. Installation Instructions
 
 ### Prerequisites
 - Python 3.10, 3.11, or 3.12 installed on your machine.
 - Git installed.
-- An active OpenAI API key.
+- At least one AI provider account:
+  - **Cloudflare Account ID & API Token** (Cloudflare Dashboard > Workers AI), OR
+  - **Groq API Key** (https://console.groq.com/keys).
 
 ### Clone the Repository
 ```bash
@@ -302,7 +287,7 @@ cd webbrief-ai
 
 ---
 
-## 10. Virtual Environment Setup
+## 11. Virtual Environment Setup
 
 ### macOS / Linux
 ```bash
@@ -324,7 +309,7 @@ python -m venv venv
 
 ---
 
-## 11. Dependency Installation
+## 12. Dependency Installation
 
 Install all required Python libraries:
 ```bash
@@ -336,60 +321,74 @@ pip install -r requirements.txt
 ```bash
 playwright install chromium
 ```
-*Note: If Playwright binaries are omitted, WebBrief AI continues running using its static scraping engine and will notify you cleanly if a site strictly requires JavaScript rendering.*
 
 ---
 
-## 12. First-Run Setup Wizard
+## 13. First-Run Setup Wizard
 
 1. Start the Flask development server:
    ```bash
    python app.py
    ```
 2. Navigate to `http://127.0.0.1:5000` in your web browser.
-3. If no `OPENAI_API_KEY` is detected in your environment, WebBrief AI automatically redirects you to the **Setup Wizard** at `/setup`.
-4. Enter your personal OpenAI API key (format: `sk-...`).
-5. WebBrief AI executes a zero-token test request against OpenAI to verify authentication.
-6. Upon validation, your key is safely saved into a local `.env` file and you are returned to the main dashboard.
+3. If no AI provider credentials are configured, WebBrief AI automatically redirects you to `/setup`.
+4. Choose your primary provider (**Cloudflare Workers AI** or **GroqCloud**) and select your model.
+5. Provide your credentials and click **Validate & Save Configuration**.
+6. WebBrief AI executes a live, minimal verification request to verify authentication before persisting.
 
 ---
 
-## 13. OpenAI API Key Configuration
+## 14. Provider Credential Configuration
 
-You can configure your API key in any of three ways:
+You can configure your credentials via the interactive web UI or directly in `.env`:
 
-1. **Interactive Setup Wizard**: Guided configuration on first launch (`/setup`).
-2. **Pre-Configured Environment File**: Copy `.env.example` to `.env` and insert your key:
-   ```bash
-   cp .env.example .env
-   ```
-   Edit `.env`:
+### Option A: Cloudflare Workers AI (Recommended)
+1. Find your **Account ID** in the Cloudflare Dashboard URL or right sidebar overview.
+2. Generate an **API Token** at `Cloudflare Dashboard > My Profile > API Tokens > Create Token > Workers AI Read/Edit template`.
+3. In `.env`:
    ```ini
-   OPENAI_API_KEY=sk-your-actual-api-key-here
+   PRIMARY_PROVIDER=cloudflare
+   CLOUDFLARE_ACCOUNT_ID=your_account_id_here
+   CLOUDFLARE_API_TOKEN=your_token_here
+   CLOUDFLARE_DEFAULT_MODEL=@cf/meta/llama-3.1-8b-instruct
    ```
-3. **Shell Environment Variable**:
-   ```bash
-   export OPENAI_API_KEY="sk-your-actual-api-key-here"
+
+### Option B: GroqCloud
+1. Sign up for free at https://console.groq.com.
+2. Create an API key in **API Keys** (format: `gsk_...`).
+3. In `.env`:
+   ```ini
+   PRIMARY_PROVIDER=groq
+   GROQ_API_KEY=gsk_your_groq_api_key_here
+   GROQ_DEFAULT_MODEL=llama-3.3-70b-versatile
    ```
+
+### Optional Fallback Configuration
+To enable automatic failover when your primary provider is rate-limited or unavailable:
+```ini
+FALLBACK_ENABLED=true
+FALLBACK_PROVIDER=groq
+FALLBACK_MODEL=llama-3.3-70b-versatile
+```
 
 ---
 
-## 14. BYOK Architecture & Security Model
+## 15. BYOK Architecture & Security Model
 
 WebBrief AI strictly enforces a **Zero-Credential Exposure** architecture:
 
-- **Isolated Storage**: Saved keys reside exclusively in your local `.env` or in cryptographically signed, encrypted session cookies (`HttpOnly`, `SameSite=Lax`).
-- **No Client Leakage**: API keys are never rendered in frontend templates, never injected into HTML attributes, and never transmitted in client JSON payloads.
-- **Overwrite Confirmation**: Replacing an existing `.env` configuration requires explicit user confirmation to prevent accidental overwrites.
+- **Isolated Storage**: Saved credentials reside exclusively in your local `.env` or in active browser RAM on hosted Vercel deployments.
+- **No Client Leakage**: Sensitive tokens and keys are never rendered in frontend templates, never injected into HTML attributes, and never stored in cookies or client disk on hosted deployments.
+- **Automatic Sanitization**: Error messages and logs automatically mask Groq keys (`gsk_...`), Cloudflare tokens, and account IDs.
+- **Overwrite Protection**: Modifying an existing `.env` configuration requires explicit confirmation.
 - **SSRF Defense**:
-  - DNS pre-resolution restricts requests to public IP addresses.
-  - Re-evaluates destination URLs across 301/302 redirects.
-  - Blocks loopback (`127.0.0.1`), metadata endpoints (`169.254.169.254`), and private RFC 1918 subnets.
-- **Strict Error Sanitization**: API errors returned from OpenAI or scrapers are mapped to friendly messages without exposing credentials or internal call traces.
+  - DNS pre-resolution restricts scraper requests to public IP addresses.
+  - Re-evaluates destination URLs across 301/302 redirects (up to 5 hops).
+  - Blocks loopback (`127.0.0.1`), cloud metadata endpoints (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`), and private RFC 1918 subnets.
 
 ---
 
-## 15. Running Locally
+## 16. Running Locally
 
 ### Development Mode
 ```bash
@@ -410,7 +409,7 @@ waitress-serve --listen=127.0.0.1:5000 app:app
 
 ---
 
-## 16. Vercel & Cloud Deployment
+## 17. Vercel & Cloud Deployment
 
 WebBrief AI is configured for one-click deployment on **Vercel Serverless Functions**.
 
@@ -430,19 +429,23 @@ vercel
    - `SESSION_COOKIE_SECURE`: `true`
 5. Click **Deploy**.
 
-### Serverless Architecture Notes
-- In serverless environments, users enter their personal API keys via the onboarding wizard.
-- Keys are preserved in secure session cookies for the duration of their browsing session rather than written to the ephemeral serverless filesystem.
-- Headless Chromium browser automation is optimized for local/containerized deployments; on standard serverless tiers without custom binary layers, WebBrief AI uses its static extraction engine.
-
 ---
 
-## 17. Environment Variables Reference
+## 18. Environment Variables Reference
 
 | Variable | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `OPENAI_API_KEY` | Optional* | None | OpenAI API key (*prompted in wizard if missing) |
-| `FLASK_SECRET_KEY` | Required in Prod | Ephemeral Dev Key | Secret key used to sign session cookies (fatal in production if missing) |
+| `PRIMARY_PROVIDER` | Required | `cloudflare` | Primary AI provider (`cloudflare` or `groq`) |
+| `CLOUDFLARE_ACCOUNT_ID` | Conditional | None | Cloudflare Account ID (required if primary/fallback is Cloudflare) |
+| `CLOUDFLARE_API_TOKEN` | Conditional | None | Cloudflare API Token with Workers AI permissions |
+| `CLOUDFLARE_DEFAULT_MODEL`| Optional | `@cf/meta/llama-3.1-8b-instruct` | Default Cloudflare model identifier |
+| `GROQ_API_KEY` | Conditional | None | Groq API Key (required if primary/fallback is Groq) |
+| `GROQ_DEFAULT_MODEL` | Optional | `llama-3.3-70b-versatile` | Default Groq model identifier |
+| `FALLBACK_ENABLED` | Optional | `false` | Enable automatic failover routing (`true` or `false`) |
+| `FALLBACK_PROVIDER` | Conditional | None | Fallback provider (`cloudflare` or `groq`) |
+| `FALLBACK_MODEL` | Conditional | None | Fallback model identifier |
+| `NOTION_API_KEY` | Optional | None | Notion Internal Integration Secret for exporting briefs |
+| `FLASK_SECRET_KEY` | Required in Prod | Ephemeral Dev Key | 32-byte secret key used to sign session cookies |
 | `FLASK_DEBUG` | Optional | `0` | Set `1` to enable Flask debugger (development only) |
 | `PORT` | Optional | `5000` | Local web server listening port |
 | `HOST` | Optional | `127.0.0.1` | Local web server binding host |
@@ -451,23 +454,24 @@ vercel
 
 ---
 
-## 18. Troubleshooting
+## 19. Troubleshooting
 
-### Issue: "OpenAI API key not configured"
-- **Solution**: Visit `/setup` and submit a valid OpenAI API key, or check that your `.env` contains `OPENAI_API_KEY=sk-...`.
+### Issue: "Provider authentication failed"
+- **Cloudflare**: Verify that your Account ID is correct and that your API Token has the `Workers AI: Read/Edit` permission enabled.
+- **Groq**: Verify your API key at https://console.groq.com/keys and ensure it begins with `gsk_`.
+
+### Issue: "Primary provider rate limited (HTTP 429)"
+- Enable automatic fallback to Groq or Cloudflare in `/settings` to seamlessly switch models during traffic spikes.
 
 ### Issue: "Access to internal, loopback, or private addresses is restricted"
-- **Solution**: WebBrief AI blocks requests to `localhost`, `127.0.0.1`, and private IP ranges to prevent SSRF vulnerabilities. Ensure you supply public internet URLs.
+- WebBrief AI blocks requests to `localhost`, `127.0.0.1`, and private IP ranges to prevent SSRF vulnerabilities. Ensure you supply public internet URLs.
 
 ### Issue: "Dynamic browser rendering is not available on this server"
-- **Solution**: Run `playwright install chromium` in your virtual environment to download the required headless browser binaries.
-
-### Issue: "Website returned an error (HTTP 403 / 401)"
-- **Solution**: Some websites restrict automated web scrapers. WebBrief AI automatically attempts browser emulation, but sites with aggressive anti-bot captchas (Cloudflare Under Attack mode) may block scraping.
+- Run `playwright install chromium` in your virtual environment to download headless browser binaries.
 
 ---
 
-## 19. Known Limitations
+## 20. Known Limitations
 
 - **Aggressive Cloudflare / CAPTCHA Walls**: Websites that require solving interactive CAPTCHAs cannot be scraped automatically.
 - **Paywalled Content**: WebBrief AI extracts only publicly visible content and does not bypass paywalls or logins.
@@ -475,37 +479,36 @@ vercel
 
 ---
 
-## 20. Completed Roadmap & Feature Milestones
+## 21. Completed Roadmap & Feature Milestones
 
-All planned features and roadmap milestones across the WebBrief AI development lifecycle are completely fulfilled and covered:
-
-- [x] **v1.0 — Core Foundation**: Dual-engine scraping (Requests + Playwright headless fallback), 4 summarization modes (Quick, Detailed, Bullet-point, Technical), hierarchical Map-Reduce chunking, BYOK security architecture, SSRF defense, and dark/light UI.
-- [x] **v1.1 — Personalization & Export**: High-fidelity ReportLab PDF export with custom branding and numbered pagination; user-defined custom prompt directives in Settings persisted locally.
-- [x] **v1.2 — Multi-URL Batch Summarization**: Tabbed batch input with dynamic rows, independent validation, duplicate detection, resilient concurrent worker execution, real-time progress tracking, expandable result cards, and combined batch PDF export.
-- [x] **v1.3 — Comparative Research & Notion Integration**: Side-by-side dual-article comparison with consensus points, contradictions/disagreements, differing perspectives, structured fact claims, and comparative PDF export; official Notion REST API export for single and comparative research briefs.
-- [x] **v1.4 — Local Knowledge Retrieval & Semantic Search**: Natural-language vector embedding retrieval across saved summaries using OpenAI `text-embedding-3-small`, embedded binary SQLite float vector storage, deterministic SHA-256 caching (zero redundant billing), exact cosine similarity ranking, and excerpt matching.
-- [x] **v1.5 — Hosted BYOK & Deployment-Aware Storage**: Public Vercel serverless deployment support, strictly in-memory active tab visitor keys (never persisted on client disk or server environment), zero developer credit drainage, complete multi-user isolation via browser IndexedDB (`WebBriefDB`), anonymous visitor experience, and automated credential redaction.
-- [x] **v1.5.1 — Security & Reliability Hardening**: Comprehensive audit and remediation across 10 security vectors (SEC-01 through SEC-10): mandatory production secret key enforcement, session cookie hardening (`HttpOnly`, `SameSite=Lax`, `Secure`), defensive security headers (`CSP`, `nosniff`, `SAMEORIGIN`), anti-CSRF token & Origin verification, iterative redirect-hopping SSRF guard with cloud metadata & IPv4-mapped IPv6 defenses, complete warm serverless multi-tenant SQLite isolation, DOM-based XSS sanitization, 2MB payload limits, and PDF path traversal neutralization.
+- [x] **v1.0 — Core Foundation**: Dual-engine scraping, 4 summarization modes, hierarchical Map-Reduce chunking, BYOK security architecture, SSRF defense, and dark/light UI.
+- [x] **v1.1 — Personalization & Export**: High-fidelity ReportLab PDF export with custom branding and numbered pagination; user-defined custom prompt directives in Settings.
+- [x] **v1.2 — Multi-URL Batch Summarization**: Tabbed batch input with dynamic rows, independent validation, duplicate detection, resilient concurrent worker execution, and combined batch PDF export.
+- [x] **v1.3 — Comparative Research & Notion Integration**: Side-by-side dual-article comparison with consensus points, contradictions/disagreements, differing perspectives; official Notion REST API export.
+- [x] **v1.4 — Local Knowledge Retrieval & Semantic Search**: Natural-language vector embedding retrieval across saved summaries, embedded binary SQLite float vector storage, deterministic SHA-256 caching.
+- [x] **v1.5 — Hosted BYOK & Deployment-Aware Storage**: Public Vercel serverless deployment support, strictly in-memory active tab visitor keys, zero developer credit drainage, complete multi-user isolation via browser IndexedDB (`WebBriefDB`).
+- [x] **v1.5.1 — Security & Reliability Hardening**: Comprehensive audit and remediation across 10 security vectors (SEC-01 through SEC-10).
+- [x] **v1.6.0 — Multi-Provider AI Integration**: Complete removal of OpenAI dependencies; modular provider architecture (`services/providers/`); primary provider Cloudflare Workers AI; optional fallback provider GroqCloud; automatic provider routing (`AIRouter`) with bounded failover; model catalogue & selection UI; provider transparency badging; updated vector embeddings.
 
 ---
 
-## 21. Contributing Guidelines
+## 22. Contributing Guidelines
 
 Contributions are welcome! Please follow these steps:
 
 1. **Fork the Repository**.
 2. **Create a Feature Branch**: `git checkout -b feature/amazing-feature`.
-3. **Write Tests**: Ensure any changes include accompanying tests in `tests/`.
+3. **Write Tests**: Ensure any changes include accompanying tests in `scratch/test_v160_providers.py`.
 4. **Run Test Suites**:
    ```bash
-   python -m unittest discover -s scratch -p "test_*.py"
+   .\venv\Scripts\python.exe scratch/test_v160_providers.py
    ```
 5. **Commit Your Changes**: Follow conventional commits (e.g., `feat: ...`, `fix: ...`).
 6. **Open a Pull Request**.
 
 ---
 
-## 22. License
+## 23. License
 
 Distributed under the **MIT License**. See `LICENSE` for more information.
 

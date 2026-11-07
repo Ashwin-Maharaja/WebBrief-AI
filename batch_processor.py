@@ -101,6 +101,7 @@ def process_single_item(
     custom_directive_enabled: Optional[bool] = None,
     record_history: bool = True,
     batch_id: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Executes scraping and structured summarization for a single URL within a batch.
@@ -137,6 +138,7 @@ def process_single_item(
             mode=active_mode,
             custom_directive=custom_directive,
             custom_directive_enabled=custom_directive_enabled,
+            provider_config=provider_config,
         )
 
         result_item["status"] = "completed"
@@ -190,6 +192,7 @@ def execute_batch(
     max_workers: int = DEFAULT_CONCURRENCY,
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     batch_id: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Executes batch summarization across multiple URLs.
@@ -249,6 +252,7 @@ def execute_batch(
             custom_directive_enabled=custom_directive_enabled,
             record_history=True,
             batch_id=batch_id,
+            provider_config=provider_config,
         )
 
     # Process unique valid URLs with ThreadPoolExecutor

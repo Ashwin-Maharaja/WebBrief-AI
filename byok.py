@@ -1,19 +1,41 @@
+"""
+WebBrief AI — Multi-Provider BYOK & Credential Security Manager (v1.6.0).
+Manages BYOK credentials for Cloudflare Workers AI and GroqCloud across
+local self-hosted and hosted serverless environments.
+"""
+
 import os
 import re
 import tempfile
-from typing import Tuple, Optional
+from typing import Dict, Any, Tuple, Optional
 from dotenv import load_dotenv
-from openai import OpenAI
 
-# Standard environment variable name for OpenAI API key
-ENV_KEY_NAME = "OPENAI_API_KEY"
+from services.providers.cloudflare import CloudflareProvider
+from services.providers.groq import GroqProvider
+from services.providers.router import AIRouter
+from services.providers.catalogue import get_default_model
 
-# Standard placeholders that should NOT be considered valid configured keys
+# Standard configuration keys
+ENV_PRIMARY_PROVIDER = "PRIMARY_PROVIDER"
+ENV_CF_ACCOUNT_ID = "CLOUDFLARE_ACCOUNT_ID"
+ENV_CF_API_TOKEN = "CLOUDFLARE_API_TOKEN"
+ENV_CF_MODEL = "CLOUDFLARE_DEFAULT_MODEL"
+
+ENV_GROQ_API_KEY = "GROQ_API_KEY"
+ENV_GROQ_MODEL = "GROQ_DEFAULT_MODEL"
+
+ENV_FALLBACK_ENABLED = "FALLBACK_ENABLED"
+ENV_FALLBACK_PROVIDER = "FALLBACK_PROVIDER"
+ENV_FALLBACK_MODEL = "FALLBACK_MODEL"
+
+# Placeholder values that must not be treated as valid credentials
 PLACEHOLDER_KEYS = {
     "",
     "your_openai_api_key_here",
+    "your_cloudflare_account_id_here",
+    "your_cloudflare_api_token_here",
+    "your_groq_api_key_here",
     "your_api_key_here",
-    "sk-your_api_key_here",
     "placeholder",
     "none",
 }
@@ -35,232 +57,306 @@ def is_serverless_env() -> bool:
     )
 
 
-def is_valid_key_format(api_key: Optional[str]) -> bool:
-    """
-    Checks whether the given API key string has a valid format.
-    OpenAI API keys typically start with 'sk-' and are at least 20 characters long without whitespace.
-    """
-    if not api_key or not isinstance(api_key, str):
-        return False
-    key = api_key.strip()
-    if key.lower() in PLACEHOLDER_KEYS:
-        return False
-    # OpenAI keys start with sk- (or sk-proj-, etc.) and contain alphanumeric characters, underscores, and dashes
-    if not key.startswith("sk-"):
-        return False
-    if len(key) < 20 or any(c.isspace() for c in key):
-        return False
-    return True
-
-
 def redact_credentials(text: str) -> str:
     """
-    Redacts any OpenAI API keys matching standard patterns (sk-...)
-    from error strings, log messages, or exception traces.
+    Redacts any sensitive provider credentials from logs, error messages, and exception traces.
+    Masks Groq API keys (gsk_...), Cloudflare tokens, and legacy tokens.
     """
     if not text or not isinstance(text, str):
         return ""
-    return re.sub(r"sk-[a-zA-Z0-9_\-]{16,}", "sk-...", text)
+    # Redact Groq keys (gsk_...)
+    sanitized = re.sub(r"gsk_[a-zA-Z0-9_\-]{20,}", "gsk_...", text)
+    # Redact legacy sk- tokens
+    sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{16,}", "sk-...", sanitized)
+    # Redact Cloudflare Account IDs (32 hex characters) if exposed in error messages
+    sanitized = re.sub(r"\b[0-9a-f]{32}\b", "[account_id_masked]", sanitized, flags=re.IGNORECASE)
+    return sanitized
 
 
-def get_configured_api_key(session_dict: Optional[dict] = None) -> Optional[str]:
+def validate_cloudflare_credentials(account_id: str, api_token: str) -> Tuple[bool, str]:
+    """Validates Cloudflare credentials using a zero-token catalogue query."""
+    clean_id = (account_id or "").strip()
+    clean_token = (api_token or "").strip()
+
+    if not clean_id or clean_id.lower() in PLACEHOLDER_KEYS:
+        return False, "Please enter your Cloudflare Account ID."
+    if not clean_token or clean_token.lower() in PLACEHOLDER_KEYS:
+        return False, "Please enter your Cloudflare API token."
+
+    provider = CloudflareProvider(account_id=clean_id, api_token=clean_token)
+    return provider.test_connection()
+
+
+def validate_groq_credentials(api_key: str) -> Tuple[bool, str]:
+    """Validates Groq credentials using the zero-token GET /models endpoint."""
+    clean_key = (api_key or "").strip()
+    if not clean_key or clean_key.lower() in PLACEHOLDER_KEYS:
+        return False, "Please enter your Groq API key."
+    if not clean_key.startswith("gsk_") and len(clean_key) < 20:
+        return False, "Invalid Groq API key format. Groq keys typically start with 'gsk_'."
+
+    provider = GroqProvider(api_key=clean_key)
+    return provider.test_connection()
+
+
+def get_active_provider_config(
+    session_dict: Optional[dict] = None,
+    request_data: Optional[dict] = None
+) -> Dict[str, Any]:
     """
-    Retrieves the currently active OpenAI API key.
-    In hosted/serverless mode, returns None to strictly prevent using any developer API key for visitors.
-    In local self-hosted mode, reads exclusively from process environment (.env).
-    Never reads or exposes credentials from client session cookies.
+    Resolves the active provider configuration.
+    In hosted serverless mode: exclusively resolves from request_data (per-request memory).
+    In local self-hosted mode: reads from process environment (.env), with optional overrides from request_data.
     """
-    # In serverless/hosted mode, NEVER fall back to developer's server environment variable
+    req = request_data or {}
+
     if is_serverless_env():
-        return None
+        # Hosted mode: strictly isolated to per-request payload
+        primary_provider = req.get("primary_provider") or "cloudflare"
+        cf_account_id = req.get("cloudflare_account_id") or ""
+        cf_api_token = req.get("cloudflare_api_token") or ""
+        cf_model = req.get("cloudflare_model") or get_default_model("cloudflare")
 
-    # Check process environment variables (local self-hosted mode only)
-    env_key = os.getenv(ENV_KEY_NAME)
-    if env_key and isinstance(env_key, str):
-        clean_env_key = env_key.strip()
-        if clean_env_key.lower() not in PLACEHOLDER_KEYS:
-            return clean_env_key
+        groq_api_key = req.get("groq_api_key") or req.get("api_key") or ""
+        groq_model = req.get("groq_model") or get_default_model("groq")
 
-    return None
+        fallback_enabled = req.get("fallback_enabled") in (True, "true", "1", 1)
+        fallback_provider = req.get("fallback_provider") or ("groq" if primary_provider == "cloudflare" else "cloudflare")
+        fallback_model = req.get("fallback_model")
+    else:
+        # Local self-hosted mode: environment variables with optional request payload overrides
+        primary_provider = req.get("primary_provider") or os.getenv(ENV_PRIMARY_PROVIDER, "cloudflare").strip().lower()
+        cf_account_id = req.get("cloudflare_account_id") or os.getenv(ENV_CF_ACCOUNT_ID, "").strip()
+        cf_api_token = req.get("cloudflare_api_token") or os.getenv(ENV_CF_API_TOKEN, "").strip()
+        cf_model = req.get("cloudflare_model") or os.getenv(ENV_CF_MODEL, "").strip() or get_default_model("cloudflare")
+
+        groq_api_key = req.get("groq_api_key") or req.get("api_key") or os.getenv(ENV_GROQ_API_KEY, "").strip()
+        groq_model = req.get("groq_model") or os.getenv(ENV_GROQ_MODEL, "").strip() or get_default_model("groq")
+
+        fb_env = os.getenv(ENV_FALLBACK_ENABLED, "false").strip().lower() in ("true", "1", "yes")
+        fallback_enabled = req.get("fallback_enabled") in (True, "true", "1", 1) if "fallback_enabled" in req else fb_env
+        fallback_provider = req.get("fallback_provider") or os.getenv(ENV_FALLBACK_PROVIDER, "groq" if primary_provider == "cloudflare" else "cloudflare").strip().lower()
+        fallback_model = req.get("fallback_model") or os.getenv(ENV_FALLBACK_MODEL, "").strip() or None
+
+    # Sanitize placeholders
+    if cf_account_id.lower() in PLACEHOLDER_KEYS:
+        cf_account_id = ""
+    if cf_api_token.lower() in PLACEHOLDER_KEYS:
+        cf_api_token = ""
+    if groq_api_key.lower() in PLACEHOLDER_KEYS:
+        groq_api_key = ""
+
+    return {
+        "primary_provider": primary_provider,
+        "cloudflare_account_id": cf_account_id,
+        "cloudflare_api_token": cf_api_token,
+        "cloudflare_model": cf_model,
+        "groq_api_key": groq_api_key,
+        "groq_model": groq_model,
+        "fallback_enabled": fallback_enabled,
+        "fallback_provider": fallback_provider,
+        "fallback_model": fallback_model,
+    }
 
 
-def has_valid_config(session_dict: Optional[dict] = None) -> bool:
+def has_valid_config(session_dict: Optional[dict] = None, request_data: Optional[dict] = None) -> bool:
     """
-    Returns True if a valid non-placeholder OpenAI API key is configured.
+    Returns True if the primary provider has valid non-placeholder credentials configured.
     """
-    key = get_configured_api_key(session_dict=session_dict)
-    return bool(key and len(key.strip()) > 0)
+    config = get_active_provider_config(session_dict=session_dict, request_data=request_data)
+    primary = config.get("primary_provider", "cloudflare")
+
+    if primary == "cloudflare":
+        return bool(config.get("cloudflare_account_id") and config.get("cloudflare_api_token"))
+    elif primary == "groq":
+        return bool(config.get("groq_api_key"))
+
+    return False
 
 
-def validate_openai_api_key(api_key: str) -> Tuple[bool, str]:
+def get_router(session_dict: Optional[dict] = None, request_data: Optional[dict] = None) -> AIRouter:
     """
-    Validates the provided OpenAI API key by making a minimal API call.
-    Uses client.models.list() to verify key authentication and active account status
-    without generating text or consuming completion tokens.
-
-    CRITICAL SECURITY RULE:
-    Never echoes or exposes the submitted API key in returned error messages.
-
-    Returns:
-        (is_valid, message): Tuple containing validation boolean and sanitized user feedback.
+    Builds and returns an AIRouter configured with current active credentials.
     """
-    if not api_key or not isinstance(api_key, str):
-        return False, "Please provide an OpenAI API key."
+    config = get_active_provider_config(session_dict=session_dict, request_data=request_data)
+    primary_id = config.get("primary_provider", "cloudflare")
 
-    clean_key = api_key.strip()
+    primary_creds = {}
+    primary_model = None
 
-    if clean_key.lower() in PLACEHOLDER_KEYS:
-        return False, "Please enter your real OpenAI API key, not a placeholder."
+    if primary_id == "cloudflare":
+        primary_creds = {
+            "account_id": config.get("cloudflare_account_id"),
+            "api_token": config.get("cloudflare_api_token"),
+        }
+        primary_model = config.get("cloudflare_model")
+    else:
+        primary_creds = {
+            "api_key": config.get("groq_api_key"),
+        }
+        primary_model = config.get("groq_model")
 
-    if not is_valid_key_format(clean_key):
-        return False, "Invalid API key format. OpenAI API keys typically start with 'sk-'."
+    fallback_enabled = config.get("fallback_enabled", False)
+    fallback_id = config.get("fallback_provider")
+    fallback_creds = {}
+    fallback_model = config.get("fallback_model")
 
-    try:
-        # Minimal verification request with strict 10s timeout
-        client = OpenAI(api_key=clean_key, timeout=10.0)
-        # models.list() checks credentials against OpenAI's authentication server
-        client.models.list()
-        return True, "API key successfully verified with OpenAI."
+    if fallback_enabled and fallback_id:
+        if fallback_id == "cloudflare":
+            fallback_creds = {
+                "account_id": config.get("cloudflare_account_id"),
+                "api_token": config.get("cloudflare_api_token"),
+            }
+            if not fallback_model:
+                fallback_model = config.get("cloudflare_model")
+        elif fallback_id == "groq":
+            fallback_creds = {
+                "api_key": config.get("groq_api_key"),
+            }
+            if not fallback_model:
+                fallback_model = config.get("groq_model")
 
-    except Exception as e:
-        err_name = type(e).__name__
-        err_msg = str(e).lower()
-
-        # Handle specific API error conditions with sanitized messages
-        if "authenticationerror" in err_name.lower() or "invalid_api_key" in err_msg or "401" in err_msg:
-            return False, "The provided API key is invalid or unauthorized. Please check your key on the OpenAI dashboard."
-        elif "ratelimiterror" in err_name.lower() or "insufficient_quota" in err_msg or "quota" in err_msg:
-            return False, "OpenAI account quota exceeded or billing is not active. Please check your OpenAI account balance."
-        elif "permissiondeniederror" in err_name.lower() or "403" in err_msg:
-            return False, "Access denied by OpenAI for this API key. Verify project permissions."
-        elif "apiconnectionerror" in err_name.lower() or "timeout" in err_msg or "connection" in err_msg:
-            return False, "Connection to OpenAI API failed or timed out. Please check your internet connection."
-        else:
-            return False, "OpenAI API returned an error during key validation. Please verify your credentials."
+    return AIRouter(
+        primary_provider=primary_id,
+        primary_credentials=primary_creds,
+        primary_model=primary_model,
+        fallback_enabled=fallback_enabled,
+        fallback_provider=fallback_id,
+        fallback_credentials=fallback_creds,
+        fallback_model=fallback_model,
+    )
 
 
-def save_api_key_to_env(
-    api_key: str,
+def save_provider_config_to_env(
+    config_dict: Dict[str, Any],
     env_path: Optional[str] = None,
     confirm_overwrite: bool = False,
-    session_dict: Optional[dict] = None
 ) -> Tuple[bool, str]:
     """
-    Saves the validated API key locally into the .env file.
-    Ensures safe writing with restricted file permissions where supported.
-    
-    If the environment is serverless or the filesystem is read-only, falls back to session storage.
-    If an existing .env already exists, requires confirm_overwrite=True before modifying.
-
-    Returns:
-        (success, message): Tuple indicating success status and informative message.
+    Persists validated provider configuration safely into the local .env file.
+    Only runs in local self-hosted mode.
     """
-    if not api_key or not isinstance(api_key, str):
-        return False, "Cannot save an empty API key."
+    if is_serverless_env():
+        return True, "Configuration active for current browser session."
 
-    clean_key = api_key.strip()
-
-    if not is_valid_key_format(clean_key):
-        return False, "Cannot save an invalid API key format."
-
-    # Determine default path to workspace .env if not specified
     if not env_path:
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_path = os.path.join(workspace_dir, ".env")
 
-    # If running in serverless environment (e.g. Vercel), do not write to filesystem or cookies
-    if is_serverless_env():
-        return True, "API key verified for active browser session."
-
-    # Check if .env file already exists
     file_exists = os.path.isfile(env_path)
     if file_exists and not confirm_overwrite:
-        return False, "An existing configuration file (.env) was detected. Please confirm key replacement."
+        return False, "An existing configuration file (.env) was detected. Please confirm settings replacement."
 
-    # Prepare .env contents safely
+    updates = {}
+    if "primary_provider" in config_dict:
+        updates[ENV_PRIMARY_PROVIDER] = str(config_dict["primary_provider"]).strip().lower()
+    if "cloudflare_account_id" in config_dict:
+        updates[ENV_CF_ACCOUNT_ID] = str(config_dict["cloudflare_account_id"]).strip()
+    if "cloudflare_api_token" in config_dict:
+        updates[ENV_CF_API_TOKEN] = str(config_dict["cloudflare_api_token"]).strip()
+    if "cloudflare_model" in config_dict:
+        updates[ENV_CF_MODEL] = str(config_dict["cloudflare_model"]).strip()
+
+    if "groq_api_key" in config_dict:
+        updates[ENV_GROQ_API_KEY] = str(config_dict["groq_api_key"]).strip()
+    if "groq_model" in config_dict:
+        updates[ENV_GROQ_MODEL] = str(config_dict["groq_model"]).strip()
+
+    if "fallback_enabled" in config_dict:
+        updates[ENV_FALLBACK_ENABLED] = "true" if config_dict["fallback_enabled"] else "false"
+    if "fallback_provider" in config_dict:
+        updates[ENV_FALLBACK_PROVIDER] = str(config_dict["fallback_provider"]).strip().lower()
+    if "fallback_model" in config_dict:
+        updates[ENV_FALLBACK_MODEL] = str(config_dict["fallback_model"]).strip()
+
+    # Read existing lines if .env exists
     env_lines = []
-    found_key = False
+    keys_handled = set()
 
     if file_exists:
         try:
             with open(env_path, "r", encoding="utf-8") as f:
                 for line in f:
                     stripped = line.strip()
-                    if stripped.startswith(f"{ENV_KEY_NAME}=") or stripped.startswith(f"export {ENV_KEY_NAME}="):
-                        env_lines.append(f"{ENV_KEY_NAME}={clean_key}\n")
-                        found_key = True
+                    matched_key = None
+                    for key in updates.keys():
+                        if stripped.startswith(f"{key}=") or stripped.startswith(f"export {key}="):
+                            matched_key = key
+                            break
+                    if matched_key:
+                        env_lines.append(f"{matched_key}={updates[matched_key]}\n")
+                        keys_handled.add(matched_key)
                     else:
                         env_lines.append(line)
-        except Exception as e:
-            # If reading failed due to permissions or OS lock
+        except Exception:
             pass
 
-    if not found_key:
-        env_lines.append(f"{ENV_KEY_NAME}={clean_key}\n")
+    # Add remaining new keys
+    for k, v in updates.items():
+        if k not in keys_handled:
+            env_lines.append(f"{k}={v}\n")
 
-    # Write safely using atomic write or temporary file
     target_dir = os.path.dirname(env_path) or "."
     try:
-        # Create temp file in the same directory to allow atomic replace
         with tempfile.NamedTemporaryFile("w", dir=target_dir, delete=False, encoding="utf-8") as tf:
             tf.writelines(env_lines)
             temp_name = tf.name
 
-        # Restrict permissions on POSIX systems (chmod 600 - owner read/write only)
         try:
             if hasattr(os, "chmod"):
                 os.chmod(temp_name, 0o600)
         except Exception:
             pass
 
-        # Atomic replacement
         if os.path.exists(env_path):
             os.replace(temp_name, env_path)
         else:
             os.rename(temp_name, env_path)
 
-        # Update running process environment and dotenv
-        os.environ[ENV_KEY_NAME] = clean_key
+        for k, v in updates.items():
+            os.environ[k] = v
         load_dotenv(env_path, override=True)
 
-        return True, "API key successfully saved and active."
+        return True, "Provider configuration successfully saved and active."
 
-    except (OSError, PermissionError) as e:
-        # If filesystem write is restricted on local machine
-        os.environ[ENV_KEY_NAME] = clean_key
-        return True, "API key active for current process (filesystem write restricted)."
     except Exception as e:
-        return False, f"Failed to save configuration file: {str(e)}"
+        return False, f"Failed to save configuration: {str(e)}"
 
 
-def clear_saved_api_key(
-    env_path: Optional[str] = None,
-    session_dict: Optional[dict] = None
-) -> Tuple[bool, str]:
-    """
-    Clears the configured OpenAI API key from .env, environment, and session.
-    """
+def clear_saved_provider_config(env_path: Optional[str] = None) -> Tuple[bool, str]:
+    """Clears all stored provider credentials and routing configurations."""
+    managed_keys = [
+        ENV_PRIMARY_PROVIDER,
+        ENV_CF_ACCOUNT_ID,
+        ENV_CF_API_TOKEN,
+        ENV_CF_MODEL,
+        ENV_GROQ_API_KEY,
+        ENV_GROQ_MODEL,
+        ENV_FALLBACK_ENABLED,
+        ENV_FALLBACK_PROVIDER,
+        ENV_FALLBACK_MODEL,
+        "OPENAI_API_KEY",  # Clean legacy key as well
+    ]
+
+    for k in managed_keys:
+        if k in os.environ:
+            del os.environ[k]
+
     if not env_path:
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_path = os.path.join(workspace_dir, ".env")
 
-    # Clear from process memory
-    if ENV_KEY_NAME in os.environ:
-        del os.environ[ENV_KEY_NAME]
-
-    # Clear from session
-    if session_dict is not None and isinstance(session_dict, dict):
-        session_dict.pop(ENV_KEY_NAME, None)
-
-    # Remove or update .env
     if os.path.isfile(env_path):
         try:
             with open(env_path, "r", encoding="utf-8") as f:
                 lines = f.readlines()
-            new_lines = [l for l in lines if not l.strip().startswith(f"{ENV_KEY_NAME}=")]
+            new_lines = [
+                l for l in lines
+                if not any(l.strip().startswith(f"{k}=") or l.strip().startswith(f"export {k}=") for k in managed_keys)
+            ]
             with open(env_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
-            return True, "Configuration cleared successfully."
+            return True, "All provider configurations cleared successfully."
         except Exception as e:
             return False, f"Failed to update configuration file: {str(e)}"
 

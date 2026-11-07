@@ -1,34 +1,8 @@
 """
-WebBrief AI — Local Knowledge Retrieval & Vector Store Engine (v1.4)
-
-ARCHITECTURE & VECTOR DATABASE EVALUATION:
-------------------------------------------
-1. ChromaDB Evaluation:
-   - High dependency overhead (>200MB of dependencies including onnxruntime, tokenizers,
-     posthog, pydantic v1/v2 conflicts, and native C++ hnswlib compilation).
-   - Frequently fails in lightweight serverless runtimes (e.g. Vercel) or restricted Windows
-     environments due to sqlite3 >= 3.35 version prerequisites and native binary loading.
-   - Overkill for personal summary libraries (typically tens to hundreds of documents).
-
-2. FAISS (faiss-cpu) Evaluation:
-   - Exceptional clustering and Approximate Nearest Neighbor (ANN) speed for millions of vectors.
-   - However, installing on Windows frequently encounters missing Visual C++ redistributable
-     libraries or prebuilt wheel incompatibilities across various Python 3.11/3.12 versions.
-   - Overhead of managing separate index serialization files and syncing with primary SQLite DB.
-
-3. Chosen Architecture — SQLite + Binary Float Vector Store:
-   - Lightweight, zero-dependency, and natively embedded inside the existing SQLite database.
-   - Vectors (1536-dim IEEE 754 floats) are packed into compact binary blobs (~6 KB per summary).
-   - Survives all application restarts with 100% ACID consistency.
-   - Brute-force exact dot product cosine similarity takes < 0.05ms per vector in pure Python
-     (and < 0.001ms with NumPy if installed), providing sub-millisecond retrieval for personal collections.
-   - Built-in content hashing (SHA-256) avoids unnecessary embedding generation and saves API costs.
-   - Single-entry deletion, index rebuilding, and corrupted index recovery are completely native.
-
-4. Embedding Model & Cost:
-   - Model: OpenAI 'text-embedding-3-small' (1536 dimensions).
-   - Pricing: $0.00002 per 1,000 tokens (~50,000 pages per $1.00).
-   - Speed: ~100-200ms per embedding call.
+WebBrief AI — Local Knowledge Retrieval & Vector Store Engine (v1.6.0).
+Provides SQLite binary float vector indexing and semantic retrieval.
+Uses Cloudflare Workers AI embeddings when configured, with a zero-cost deterministic
+hashing fallback for Groq-only or offline environments.
 """
 
 import hashlib
@@ -42,17 +16,15 @@ import struct
 from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
-from openai import OpenAI
-
 from history import get_db_connection, init_db, get_history, get_history_entry, get_default_db_path
 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-DEFAULT_EMBEDDING_MODEL = "text-embedding-3-small"
-EMBEDDING_DIMENSIONS = 1536
+DEFAULT_EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
+EMBEDDING_DIMENSIONS = 768
 DEFAULT_SEARCH_LIMIT = 5
-DEFAULT_SIMILARITY_THRESHOLD = 0.35  # Filter out low-relevance results
+DEFAULT_SIMILARITY_THRESHOLD = 0.35
 
 
 class VectorStoreError(Exception):
@@ -64,9 +36,7 @@ class VectorStoreError(Exception):
 # Database Schema Initialization
 # -------------------------------------------------------------
 def init_vector_store(db_path: Optional[str] = None) -> None:
-    """
-    Initializes the summary_embeddings table inside the SQLite database.
-    """
+    """Initializes the summary_embeddings table inside the SQLite database."""
     init_db(db_path)
     try:
         conn = get_db_connection(db_path)
@@ -107,8 +77,7 @@ def unpack_vector(blob: bytes) -> List[float]:
 def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     """
     Computes cosine similarity between two float vectors.
-    OpenAI text-embedding-3 outputs are L2-normalized, so dot product is equivalent to cosine similarity.
-    Includes explicit normalization fallback for mathematical safety.
+    Includes explicit normalization for mathematical safety.
     """
     if len(v1) != len(v2) or len(v1) == 0:
         return 0.0
@@ -127,7 +96,6 @@ def cosine_similarity(v1: List[float], v2: List[float]) -> float:
     return dot / (math.sqrt(norm1) * math.sqrt(norm2))
 
 
-# Mathematical alias
 compute_cosine_similarity = cosine_similarity
 
 
@@ -206,43 +174,72 @@ def compute_content_hash(text: str) -> str:
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
+def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIMENSIONS) -> List[float]:
+    """
+    Generates a deterministic L2-normalized 768-dim semantic hash representation.
+    Used when no Cloudflare credentials are configured (e.g. Groq-only mode).
+    """
+    words = re.findall(r"\w+", text.lower())
+    if not words:
+        return [0.0] * dim
+
+    vec = [0.0] * dim
+    for word in words:
+        # Hash word into bucket
+        h = int(hashlib.md5(word.encode("utf-8")).hexdigest(), 16)
+        bucket = h % dim
+        sign = 1.0 if ((h >> 16) & 1) else -1.0
+        vec[bucket] += sign
+
+    # Also hash bigrams for sequence context
+    for i in range(len(words) - 1):
+        bigram = f"{words[i]}_{words[i+1]}"
+        h = int(hashlib.md5(bigram.encode("utf-8")).hexdigest(), 16)
+        bucket = h % dim
+        sign = 1.0 if ((h >> 16) & 1) else -1.0
+        vec[bucket] += 0.5 * sign
+
+    # L2 normalize
+    norm = math.sqrt(sum(x * x for x in vec))
+    if norm > 0:
+        vec = [x / norm for x in vec]
+
+    return vec
+
+
 # -------------------------------------------------------------
-# OpenAI Embedding Generator (BYOK)
+# Multi-Provider Embedding Generator
 # -------------------------------------------------------------
 def generate_embedding(
     text: str,
     api_key: Optional[str] = None,
-    model: str = DEFAULT_EMBEDDING_MODEL
+    model: str = DEFAULT_EMBEDDING_MODEL,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> List[float]:
     """
-    Generates a 1536-dimensional vector embedding for the input text using OpenAI.
-    Reuses the user's BYOK OpenAI credentials.
+    Generates a vector embedding for the input text using Cloudflare Workers AI
+    or deterministic semantic hashing fallback.
     """
-    key = api_key or os.getenv("OPENAI_API_KEY")
-    if not key:
-        raise VectorStoreError("OpenAI API key not found. Please provide an API key to generate embeddings.")
-
     if not text or not str(text).strip():
         raise VectorStoreError("Cannot generate embedding for empty text.")
 
-    # Truncate text safely to ~8,000 characters to stay within OpenAI embedding token limits
-    truncated_text = str(text).strip()[:8000]
+    from byok import get_active_provider_config
+    cfg = provider_config or get_active_provider_config()
 
-    client = OpenAI(api_key=key)
-    try:
-        response = client.embeddings.create(
-            input=truncated_text,
-            model=model
-        )
-        return response.data[0].embedding
-    except Exception as e:
-        err_msg = str(e)
-        if "AuthenticationError" in err_msg or "invalid_api_key" in err_msg:
-            raise VectorStoreError("Invalid OpenAI API key. Please check your credentials in Settings.")
-        elif "RateLimitError" in err_msg:
-            raise VectorStoreError("OpenAI rate limit or quota exceeded during embedding generation.")
-        else:
-            raise VectorStoreError(f"Embedding generation failed: {err_msg}")
+    cf_id = cfg.get("cloudflare_account_id")
+    cf_token = cfg.get("cloudflare_api_token")
+
+    # If Cloudflare credentials exist, attempt Cloudflare Workers AI embedding
+    if cf_id and cf_token:
+        try:
+            from services.providers.cloudflare import CloudflareProvider
+            cf = CloudflareProvider(account_id=cf_id, api_token=cf_token)
+            return cf.generate_embedding(text=text, model=model)
+        except Exception as e:
+            logger.warning("Cloudflare embedding call failed; using deterministic hash fallback: %s", str(e))
+
+    # Deterministic feature hashing fallback
+    return _deterministic_hash_vector(text, dim=EMBEDDING_DIMENSIONS)
 
 
 # -------------------------------------------------------------
@@ -252,14 +249,12 @@ def index_summary_entry(
     entry_id: str,
     api_key: Optional[str] = None,
     db_path: Optional[str] = None,
-    force_refresh: bool = False
+    force_refresh: bool = False,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> bool:
     """
     Generates and stores the vector embedding for a single saved summary history entry.
-    Skips generation if an identical content hash is already indexed (cost-saving cache).
-
-    Returns:
-        True if indexed (or already up-to-date), False on failure.
+    Skips generation if an identical content hash is already indexed.
     """
     init_vector_store(db_path)
     entry = get_history_entry(entry_id, db_path=db_path)
@@ -274,7 +269,6 @@ def index_summary_entry(
         conn = get_db_connection(db_path)
         cursor = conn.cursor()
 
-        # Check existing hash
         if not force_refresh:
             cursor.execute(
                 "SELECT content_hash FROM summary_embeddings WHERE summary_id = ?",
@@ -282,12 +276,10 @@ def index_summary_entry(
             )
             row = cursor.fetchone()
             if row and row["content_hash"] == content_hash:
-                # Content has not changed, reuse cached embedding
                 conn.close()
                 return True
 
-        # Generate new embedding
-        vector = generate_embedding(search_text, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL)
+        vector = generate_embedding(search_text, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL, provider_config=provider_config)
         vector_blob = pack_vector(vector)
 
         with conn:
@@ -350,21 +342,21 @@ def clear_all_embeddings(db_path: Optional[str] = None) -> bool:
         return False
 
 
-def rebuild_vector_index(api_key: Optional[str] = None, db_path: Optional[str] = None) -> Dict[str, Any]:
-    """
-    Rebuilds vector embeddings across all saved summaries in SQLite history.
-    Useful for index recovery, model upgrades, or initial bulk indexing.
-    """
+def rebuild_vector_index(
+    api_key: Optional[str] = None,
+    db_path: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Rebuilds vector embeddings across all saved summaries in SQLite history."""
     init_vector_store(db_path)
     all_entries = get_history(limit=1000, db_path=db_path)
     total = len(all_entries)
     indexed = 0
-    skipped = 0
     failed = 0
 
     for item in all_entries:
         try:
-            success = index_summary_entry(item["id"], api_key=api_key, db_path=db_path)
+            success = index_summary_entry(item["id"], api_key=api_key, db_path=db_path, provider_config=provider_config)
             if success:
                 indexed += 1
             else:
@@ -405,14 +397,8 @@ def get_vector_store_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
         }
 
 
-# -------------------------------------------------------------
-# Excerpt Extraction Helper
-# -------------------------------------------------------------
 def extract_relevant_snippet(search_text: str, query: str, max_chars: int = 240) -> str:
-    """
-    Extracts the most relevant paragraph or sentence from the indexed summary text
-    to provide user-facing search context without fabricating content.
-    """
+    """Extracts the most relevant paragraph or sentence from indexed summary text."""
     if not search_text:
         return ""
 
@@ -421,7 +407,6 @@ def extract_relevant_snippet(search_text: str, query: str, max_chars: int = 240)
         paragraphs = [search_text]
 
     query_words = set(re.findall(r"\w+", query.lower()))
-
     best_p = paragraphs[0]
     best_score = -1
 
@@ -432,16 +417,12 @@ def extract_relevant_snippet(search_text: str, query: str, max_chars: int = 240)
             best_score = overlap
             best_p = p
 
-    # Clean label prefixes like 'Overview:', 'Key Takeaways:'
     clean_p = re.sub(r"^(Overview|Key Takeaways|Important Details|Conclusion|Synthesis):\s*", "", best_p)
     if len(clean_p) > max_chars:
         return clean_p[:max_chars].rsplit(" ", 1)[0] + "..."
     return clean_p
 
 
-# -------------------------------------------------------------
-# Semantic Search Retrieval Engine
-# -------------------------------------------------------------
 def semantic_search(
     query: str,
     api_key: Optional[str] = None,
@@ -449,16 +430,10 @@ def semantic_search(
     threshold: float = DEFAULT_SIMILARITY_THRESHOLD,
     entry_type_filter: Optional[str] = None,
     filter_type: Optional[str] = None,
-    db_path: Optional[str] = None
+    db_path: Optional[str] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
-    """
-    Executes semantic similarity search across saved summary embeddings:
-    1. Generates query vector using OpenAI embedding model.
-    2. Retrieves stored summary vectors from SQLite.
-    3. Computes exact cosine similarities.
-    4. Ranks candidates and applies relevance threshold.
-    5. Returns formatted matching cards with metadata and excerpts.
-    """
+    """Executes semantic similarity search across saved summary embeddings."""
     cleaned_query = (query or "").strip()
     if not cleaned_query:
         return []
@@ -466,10 +441,8 @@ def semantic_search(
     active_filter = filter_type or entry_type_filter
     init_vector_store(db_path)
 
-    # Step 1: Embed search query
-    query_vector = generate_embedding(cleaned_query, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL)
+    query_vector = generate_embedding(cleaned_query, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL, provider_config=provider_config)
 
-    # Step 2: Retrieve all stored embeddings
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
@@ -484,10 +457,8 @@ def semantic_search(
     if not rows:
         return []
 
-    # Step 3: Compute similarity scores
     scored_candidates = []
     for r in rows:
-        # Filter by entry type if specified ('single', 'comparison', 'batch')
         r_type = r["entry_type"] or "single"
         if active_filter and active_filter != "all" and r_type != active_filter:
             continue
@@ -495,8 +466,6 @@ def semantic_search(
         try:
             stored_vector = unpack_vector(r["vector_blob"])
             score = cosine_similarity(query_vector, stored_vector)
-            
-            # Apply relevance threshold
             if score >= threshold:
                 snippet = extract_relevant_snippet(r["search_text"], cleaned_query)
                 scored_candidates.append({
@@ -519,8 +488,5 @@ def semantic_search(
             logger.warning("Error evaluating vector for '%s': %s", r["summary_id"], str(e))
             continue
 
-    # Step 4: Rank by score descending
     scored_candidates.sort(key=lambda x: x["score"], reverse=True)
-
-    # Step 5: Return top K
     return scored_candidates[:top_k]

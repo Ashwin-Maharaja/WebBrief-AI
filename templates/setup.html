@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>WebBrief AI — API Key Setup & Configuration</title>
+    <title>WebBrief AI — Multi-Provider AI Setup & Configuration</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -16,7 +16,7 @@
     </script>
     <style>
         .setup-card {
-            max-width: 620px;
+            max-width: 680px;
             margin: 2rem auto;
         }
         .setup-header {
@@ -45,6 +45,44 @@
             color: #94a3b8;
             font-size: 0.95rem;
             line-height: 1.5;
+        }
+        .provider-choice-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .provider-choice-btn {
+            background: var(--card-bg);
+            border: 2px solid var(--border-color);
+            border-radius: 12px;
+            padding: 14px;
+            cursor: pointer;
+            text-align: left;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .provider-choice-btn:hover {
+            border-color: var(--primary);
+        }
+        .provider-choice-btn.selected {
+            border-color: var(--primary);
+            background: var(--primary-light);
+        }
+        .provider-choice-title {
+            font-weight: 700;
+            font-size: 0.95rem;
+            color: var(--text-primary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .provider-choice-desc {
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            line-height: 1.4;
         }
         .key-input-wrapper {
             position: relative;
@@ -98,63 +136,18 @@
             margin-bottom: 1.5rem;
             display: flex;
             align-items: flex-start;
-            gap: 0.75rem;
+            gap: 10px;
         }
         .confirmation-group input[type="checkbox"] {
-            margin-top: 0.25rem;
-            accent-color: #f59e0b;
-            width: 18px;
-            height: 18px;
-            cursor: pointer;
+            margin-top: 3px;
         }
-        .confirmation-group label {
-            font-size: 0.88rem;
-            color: #fde68a;
-            line-height: 1.4;
-            cursor: pointer;
-        }
-        .btn-secondary {
-            background: rgba(148, 163, 184, 0.1);
-            color: #cbd5e1;
-            border: 1px solid rgba(148, 163, 184, 0.2);
-            padding: 0.75rem 1.25rem;
+        .fallback-box {
+            background: var(--section-bg);
+            border: 1px dashed var(--border-color);
             border-radius: 10px;
-            font-weight: 600;
-            cursor: pointer;
-            text-decoration: none;
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            transition: all 0.2s;
-        }
-        .btn-secondary:hover {
-            background: rgba(148, 163, 184, 0.2);
-            color: #fff;
-        }
-        .form-actions {
-            display: flex;
-            gap: 1rem;
-            margin-top: 1.5rem;
-        }
-        .status-badge {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.4rem;
-            padding: 0.25rem 0.75rem;
-            border-radius: 9999px;
-            font-size: 0.8rem;
-            font-weight: 600;
-            margin-bottom: 1rem;
-        }
-        .status-configured {
-            background: rgba(16, 185, 129, 0.15);
-            color: #34d399;
-            border: 1px solid rgba(16, 185, 129, 0.3);
-        }
-        .status-missing {
-            background: rgba(239, 68, 68, 0.15);
-            color: #f87171;
-            border: 1px solid rgba(239, 68, 68, 0.3);
+            padding: 14px;
+            margin-top: 16px;
+            margin-bottom: 16px;
         }
     </style>
 </head>
@@ -174,10 +167,10 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.5.1</span>
+                    <span class="badge">v1.6.0</span>
                 </div>
             </div>
-            <p class="tagline">Bring Your Own Key (BYOK) Configuration & Security Onboarding</p>
+            <p class="tagline">Modular Multi-Provider BYOK Architecture (Cloudflare Workers AI & GroqCloud)</p>
         </header>
 
         <!-- Setup Card -->
@@ -193,17 +186,17 @@
                 </div>
 
                 {% if is_configured %}
-                    <div class="status-badge status-configured">
-                        <span>●</span> Key Configured Active
+                    <div class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; margin-bottom: 8px;">
+                        ● Active Configuration Detected
                     </div>
-                    <h2 class="setup-title">Change OpenAI API Key</h2>
-                    <p class="setup-desc">Update your existing credentials. The new key will be securely tested with OpenAI before updating your environment.</p>
+                    <h2 class="setup-title">Manage AI Provider Credentials</h2>
+                    <p class="setup-desc">Update your credentials or switch between Cloudflare Workers AI and GroqCloud.</p>
                 {% else %}
-                    <div class="status-badge status-missing">
-                        <span>●</span> Setup Required
+                    <div class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171; margin-bottom: 8px;">
+                        ● Setup Required
                     </div>
                     <h2 class="setup-title">First-Run Configuration</h2>
-                    <p class="setup-desc">Welcome to WebBrief AI. To summarize webpages, please configure your personal OpenAI API key below.</p>
+                    <p class="setup-desc">Welcome to WebBrief AI. You only need <strong>one</strong> provider to get started. Choose either Cloudflare Workers AI or GroqCloud below.</p>
                 {% endif %}
             </div>
 
@@ -219,60 +212,162 @@
 
             <form id="setup-form" action="{{ url_for('save_key') }}" method="POST" novalidate>
                 <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
-                
+                <input type="hidden" id="primary-provider-hidden" name="primary_provider" value="{{ provider_config.primary_provider or 'cloudflare' }}">
+
+                <!-- Provider Choice Grid -->
                 <div class="form-group">
-                    <label for="api-key-input" class="form-label">
-                        OpenAI API Key <span class="required">*</span>
-                    </label>
-                    <div class="key-input-wrapper">
-                        <input
-                            type="password"
-                            id="api-key-input"
-                            name="api_key"
-                            class="form-control"
-                            placeholder="sk-proj-..."
-                            required
-                            autocomplete="off"
-                            spellcheck="false"
-                        >
-                        <button type="button" id="toggle-password-btn" class="toggle-password-btn" aria-label="Toggle password visibility">
-                            <svg id="eye-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                                <circle cx="12" cy="12" r="3"/>
-                            </svg>
-                        </button>
+                    <label class="form-label">Select Primary Provider <span class="required">*</span></label>
+                    <div class="provider-choice-grid">
+                        <div class="provider-choice-btn {% if (provider_config.primary_provider or 'cloudflare') == 'cloudflare' %}selected{% endif %}" id="choose-cf-btn" onclick="selectPrimaryProvider('cloudflare')">
+                            <div class="provider-choice-title">
+                                <span>⚡ Cloudflare Workers AI</span>
+                            </div>
+                            <div class="provider-choice-desc">
+                                Primary recommended provider. Generous free tier (10k neurons/day).
+                            </div>
+                        </div>
+
+                        <div class="provider-choice-btn {% if provider_config.primary_provider == 'groq' %}selected{% endif %}" id="choose-groq-btn" onclick="selectPrimaryProvider('groq')">
+                            <div class="provider-choice-title">
+                                <span>🚀 GroqCloud</span>
+                            </div>
+                            <div class="provider-choice-desc">
+                                Blazing fast LPUs, 128k context window, free tier available.
+                            </div>
+                        </div>
                     </div>
-                    <p class="form-help">
-                        Get your key from the <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: underline;">OpenAI Dashboard</a>.
+                </div>
+
+                <!-- Cloudflare Fields Section -->
+                <div id="cf-fields-section" style="display: {% if (provider_config.primary_provider or 'cloudflare') == 'cloudflare' %}block{% else %}none{% endif %};">
+                    <div class="form-group">
+                        <label for="cf-account-id" class="form-label">Cloudflare Account ID <span class="required">*</span></label>
+                        <input
+                            type="text"
+                            id="cf-account-id"
+                            name="cloudflare_account_id"
+                            class="form-control"
+                            placeholder="e.g. 0123456789abcdef0123456789abcdef"
+                            value="{{ provider_config.cloudflare_account_id or '' }}"
+                            autocomplete="off"
+                        >
+                        <p class="form-help">
+                            Found in the right sidebar of your <a href="https://dash.cloudflare.com" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: underline;">Cloudflare Dashboard</a> under "Account ID".
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cf-api-token" class="form-label">Cloudflare API Token <span class="required">*</span></label>
+                        <div class="key-input-wrapper">
+                            <input
+                                type="password"
+                                id="cf-api-token"
+                                name="cloudflare_api_token"
+                                class="form-control"
+                                placeholder="Workers AI Read/Edit API Token"
+                                value="{{ provider_config.cloudflare_api_token or '' }}"
+                                autocomplete="off"
+                            >
+                            <button type="button" class="toggle-password-btn" onclick="toggleInputVisibility('cf-api-token')">👁️</button>
+                        </div>
+                        <p class="form-help">
+                            Create a token with <strong>Workers AI (Read/Edit)</strong> template at <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: underline;">Cloudflare API Tokens</a>.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="cf-model-select" class="form-label">Cloudflare Model</label>
+                        <select id="cf-model-select" name="cloudflare_model" class="form-control">
+                            {% for m in provider_catalogue.cloudflare.models %}
+                                <option value="{{ m.id }}" {% if provider_config.cloudflare_model == m.id or (not provider_config.cloudflare_model and m.recommended) %}selected{% endif %}>
+                                    {{ m.name }} {% if m.free_tier %}(Free-tier eligible){% endif %}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Groq Fields Section -->
+                <div id="groq-fields-section" style="display: {% if provider_config.primary_provider == 'groq' %}block{% else %}none{% endif %};">
+                    <div class="form-group">
+                        <label for="groq-api-key" class="form-label">Groq API Key <span class="required">*</span></label>
+                        <div class="key-input-wrapper">
+                            <input
+                                type="password"
+                                id="groq-api-key"
+                                name="groq_api_key"
+                                class="form-control"
+                                placeholder="gsk_..."
+                                value="{{ provider_config.groq_api_key or '' }}"
+                                autocomplete="off"
+                            >
+                            <button type="button" class="toggle-password-btn" onclick="toggleInputVisibility('groq-api-key')">👁️</button>
+                        </div>
+                        <p class="form-help">
+                            Get your free API key at <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" style="color: #818cf8; text-decoration: underline;">GroqCloud Console</a>.
+                        </p>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="groq-model-select" class="form-label">Groq Model</label>
+                        <select id="groq-model-select" name="groq_model" class="form-control">
+                            {% for m in provider_catalogue.groq.models %}
+                                <option value="{{ m.id }}" {% if provider_config.groq_model == m.id or (not provider_config.groq_model and m.recommended) %}selected{% endif %}>
+                                    {{ m.name }} {% if m.free_tier %}(Free-tier eligible){% endif %}
+                                </option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Optional Fallback Provider Section -->
+                <div class="fallback-box">
+                    <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px;">
+                        <strong style="color: var(--text-primary); font-size: 0.95rem;">Optional Fallback Provider</strong>
+                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.88rem;">
+                            <input type="checkbox" id="fallback-toggle" name="fallback_enabled" value="true" {% if provider_config.fallback_enabled %}checked{% endif %} onchange="toggleFallbackSection()">
+                            Enable Automatic Fallback
+                        </label>
+                    </div>
+                    <p style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 12px;">
+                        If your primary provider encounters rate limits (HTTP 429), quota exhaustion, or server outages, WebBrief AI will automatically route requests to your fallback provider.
                     </p>
+
+                    <div id="fallback-controls" style="display: {% if provider_config.fallback_enabled %}block{% else %}none{% endif %};">
+                        <div class="form-group">
+                            <label for="fallback-provider-select" class="form-label">Fallback Provider</label>
+                            <select id="fallback-provider-select" name="fallback_provider" class="form-control" onchange="updateFallbackModelChoices()">
+                                <option value="groq" {% if provider_config.fallback_provider == 'groq' %}selected{% endif %}>GroqCloud</option>
+                                <option value="cloudflare" {% if provider_config.fallback_provider == 'cloudflare' %}selected{% endif %}>Cloudflare Workers AI</option>
+                            </select>
+                        </div>
+                    </div>
                 </div>
 
                 {% if env_exists or is_configured %}
                 <div class="confirmation-group">
                     <input type="checkbox" id="confirm-overwrite" name="confirm_overwrite" value="true" required>
                     <label for="confirm-overwrite">
-                        <strong>Confirm Key Replacement:</strong> I understand that saving this validated key will update my active local <code>.env</code> configuration.
+                        <strong>Confirm Configuration Update:</strong> I confirm saving these validated settings into my local <code>.env</code> file.
                     </label>
                 </div>
                 {% endif %}
 
                 <div class="security-notes">
-                    <strong style="color: #f1f5f9;">🔒 BYOK Security & Privacy:</strong>
+                    <strong style="color: #f1f5f9;">🔒 BYOK Security & Reliability:</strong>
                     <ul>
-                        <li>Your key is saved locally in your own <code>.env</code> file (git-ignored).</li>
-                        <li>Credentials are verified with a 0-token authentication check before saving.</li>
-                        <li>Keys are never stored in browser cookies, localStorage, or sent to client-side scripts.</li>
-                        <li>No Google Authentication or third-party OAuth account is required.</li>
+                        <li>Your credentials are stored locally in your git-ignored <code>.env</code> file (or memory-only during hosted sessions).</li>
+                        <li>Zero developer key sharing. Credentials are validated with a 0-token ping before saving.</li>
+                        <li>Tokens are never exposed in cookies, client storage, or application error logs.</li>
                     </ul>
                 </div>
 
-                <div class="form-actions">
+                <div class="form-actions" style="display: flex; gap: 10px;">
                     <button type="submit" id="save-btn" class="btn btn-primary" style="flex: 1;">
                         <span id="save-btn-text">Validate & Save Configuration</span>
                     </button>
-
                     {% if is_configured %}
-                    <a href="{{ url_for('home') }}" class="btn-secondary">Cancel</a>
+                    <a href="{{ url_for('home') }}" class="btn btn-secondary">Cancel</a>
                     {% endif %}
                 </div>
             </form>
@@ -281,10 +376,54 @@
     </main>
 
     <script>
+        function toggleInputVisibility(inputId) {
+            const input = document.getElementById(inputId);
+            if (input) {
+                input.type = input.type === "password" ? "text" : "password";
+            }
+        }
+
+        function selectPrimaryProvider(providerId) {
+            document.getElementById("primary-provider-hidden").value = providerId;
+            const cfBtn = document.getElementById("choose-cf-btn");
+            const groqBtn = document.getElementById("choose-groq-btn");
+            const cfSection = document.getElementById("cf-fields-section");
+            const groqSection = document.getElementById("groq-fields-section");
+            const fbSelect = document.getElementById("fallback-provider-select");
+
+            if (providerId === "cloudflare") {
+                cfBtn.classList.add("selected");
+                groqBtn.classList.remove("selected");
+                cfSection.style.display = "block";
+                groqSection.style.display = "none";
+                if (fbSelect) fbSelect.value = "groq";
+            } else {
+                groqBtn.classList.add("selected");
+                cfBtn.classList.remove("selected");
+                groqSection.style.display = "block";
+                cfSection.style.display = "none";
+                if (fbSelect) fbSelect.value = "cloudflare";
+            }
+        }
+
+        function toggleFallbackSection() {
+            const toggle = document.getElementById("fallback-toggle");
+            const controls = document.getElementById("fallback-controls");
+            if (controls) {
+                controls.style.display = toggle.checked ? "block" : "none";
+            }
+        }
+
+        function updateFallbackModelChoices() {
+            const primary = document.getElementById("primary-provider-hidden").value;
+            const fbSelect = document.getElementById("fallback-provider-select");
+            if (fbSelect && fbSelect.value === primary) {
+                alert("Primary and fallback providers cannot be identical.");
+                fbSelect.value = primary === "cloudflare" ? "groq" : "cloudflare";
+            }
+        }
+
         document.addEventListener("DOMContentLoaded", () => {
-            const apiKeyInput = document.getElementById("api-key-input");
-            const togglePasswordBtn = document.getElementById("toggle-password-btn");
-            const eyeIcon = document.getElementById("eye-icon");
             const setupForm = document.getElementById("setup-form");
             const saveBtn = document.getElementById("save-btn");
             const saveBtnText = document.getElementById("save-btn-text");
@@ -293,25 +432,6 @@
             const setupSuccess = document.getElementById("setup-success");
             const setupSuccessText = document.getElementById("setup-success-text");
             const confirmOverwrite = document.getElementById("confirm-overwrite");
-
-            // Toggle password mask
-            togglePasswordBtn.addEventListener("click", () => {
-                if (apiKeyInput.type === "password") {
-                    apiKeyInput.type = "text";
-                    eyeIcon.innerHTML = `
-                        <path d="M9.88 9.88a3 3 0 1 0 4.24 4.24"/>
-                        <path d="M10.73 5.08A10.43 10.43 0 0 1 12 5c7 0 10 7 10 7a13.16 13.16 0 0 1-1.67 2.68"/>
-                        <path d="M6.61 6.61A13.526 13.526 0 0 0 2 12s3 7 10 7a9.74 9.74 0 0 0 5.39-1.61"/>
-                        <line x1="2" y1="2" x2="22" y2="22"/>
-                    `;
-                } else {
-                    apiKeyInput.type = "password";
-                    eyeIcon.innerHTML = `
-                        <path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/>
-                        <circle cx="12" cy="12" r="3"/>
-                    `;
-                }
-            });
 
             function showError(msg) {
                 setupSuccess.style.display = "none";
@@ -325,29 +445,47 @@
                 setupSuccess.style.display = "block";
             }
 
-            // AJAX form submission with validation feedback
             setupForm.addEventListener("submit", async (e) => {
                 e.preventDefault();
                 setupError.style.display = "none";
                 setupSuccess.style.display = "none";
 
-                const rawKey = apiKeyInput.value.trim();
+                const primaryProvider = document.getElementById("primary-provider-hidden").value;
+                const payload = {
+                    primary_provider: primaryProvider,
+                    cloudflare_account_id: document.getElementById("cf-account-id").value.trim(),
+                    cloudflare_api_token: document.getElementById("cf-api-token").value.trim(),
+                    cloudflare_model: document.getElementById("cf-model-select").value,
+                    groq_api_key: document.getElementById("groq-api-key").value.trim(),
+                    groq_model: document.getElementById("groq-model-select").value,
+                    fallback_enabled: document.getElementById("fallback-toggle").checked,
+                    fallback_provider: document.getElementById("fallback-provider-select") ? document.getElementById("fallback-provider-select").value : null,
+                    confirm_overwrite: confirmOverwrite ? confirmOverwrite.checked : false,
+                };
 
-                if (!rawKey) {
-                    showError("Please enter your OpenAI API key.");
-                    apiKeyInput.focus();
-                    return;
+                if (primaryProvider === "cloudflare") {
+                    if (!payload.cloudflare_account_id) {
+                        showError("Please enter your Cloudflare Account ID.");
+                        return;
+                    }
+                    if (!payload.cloudflare_api_token) {
+                        showError("Please enter your Cloudflare API Token.");
+                        return;
+                    }
+                } else if (primaryProvider === "groq") {
+                    if (!payload.groq_api_key) {
+                        showError("Please enter your Groq API Key.");
+                        return;
+                    }
                 }
 
                 if (confirmOverwrite && !confirmOverwrite.checked) {
-                    showError("Please check the confirmation box to replace your existing key.");
-                    confirmOverwrite.focus();
+                    showError("Please check the confirmation box to replace your existing settings.");
                     return;
                 }
 
-                // Loading state
                 saveBtn.disabled = true;
-                saveBtnText.textContent = "Verifying with OpenAI...";
+                saveBtnText.textContent = "Verifying credentials with provider...";
 
                 try {
                     const response = await fetch("{{ url_for('save_key') }}", {
@@ -356,20 +494,14 @@
                             "Content-Type": "application/json",
                             "X-Requested-With": "XMLHttpRequest"
                         },
-                        body: JSON.stringify({
-                            api_key: rawKey,
-                            confirm_overwrite: confirmOverwrite ? confirmOverwrite.checked : false
-                        })
+                        body: JSON.stringify(payload)
                     });
 
                     const data = await response.json();
-
                     if (!response.ok || !data.success) {
-                        showError(data.error || "Failed to validate API key. Please try again.");
+                        showError(data.error || "Failed to validate credentials. Please check your tokens.");
                     } else {
-                        showSuccess(data.message || "Key verified and saved successfully! Redirecting...");
-                        // Clear password field from DOM memory immediately
-                        apiKeyInput.value = "";
+                        showSuccess(data.message || "Configuration successfully saved! Redirecting...");
                         setTimeout(() => {
                             window.location.href = "{{ url_for('home') }}";
                         }, 1200);

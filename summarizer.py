@@ -1,11 +1,16 @@
 import json
+import logging
 import os
 import re
+from typing import Optional, Dict, Any
+
 from dotenv import load_dotenv
-from openai import OpenAI
 from chunker import chunk_text, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
+from services.providers.router import AIRouter, RouterResult
+from services.providers.exceptions import ProviderError
 
 load_dotenv()
+logger = logging.getLogger(__name__)
 
 
 class SummarizerError(Exception):
@@ -187,48 +192,50 @@ def build_reduce_prompt(combined_summaries, total_chunks, mode=DEFAULT_MODE, cus
     return instructions, user_input
 
 
-def parse_and_validate_summary(raw_text):
+def parse_and_validate_summary(raw_text_or_dict):
     """
     Parses and validates the structured summary output from the AI model.
     Handles markdown code fences, malformed formatting, and missing keys gracefully.
     """
-    if not raw_text or not isinstance(raw_text, str):
+    if not raw_text_or_dict:
         raise SummarizerError("Received empty response from the AI model.")
 
-    cleaned = raw_text.strip()
+    if isinstance(raw_text_or_dict, dict):
+        parsed = raw_text_or_dict
+    elif isinstance(raw_text_or_dict, str):
+        cleaned = raw_text_or_dict.strip()
+        if cleaned.startswith("```"):
+            cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
+            cleaned = re.sub(r"\s*```$", "", cleaned)
+            cleaned = cleaned.strip()
 
-    # Strip markdown code blocks if the model enclosed the JSON
-    if cleaned.startswith("```"):
-        cleaned = re.sub(r"^```(?:json)?\s*", "", cleaned, flags=re.IGNORECASE)
-        cleaned = re.sub(r"\s*```$", "", cleaned)
-        cleaned = cleaned.strip()
+        parsed = None
+        try:
+            parsed = json.loads(cleaned)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+            if match:
+                try:
+                    parsed = json.loads(match.group(0))
+                except json.JSONDecodeError:
+                    pass
 
-    parsed = None
-    try:
-        parsed = json.loads(cleaned)
-    except json.JSONDecodeError:
-        # Fallback: attempt to extract JSON object using regex
-        match = re.search(r"\{.*\}", cleaned, re.DOTALL)
-        if match:
-            try:
-                parsed = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                pass
+        # If JSON parsing completely failed, build a graceful structured fallback from raw text
+        if not isinstance(parsed, dict):
+            paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
+            title = paragraphs[0][:100] if paragraphs else "Webpage Summary"
+            overview = paragraphs[1] if len(paragraphs) > 1 else (paragraphs[0] if paragraphs else "No overview available.")
+            remaining = paragraphs[2:] if len(paragraphs) > 2 else []
 
-    # If JSON parsing completely failed, build a graceful structured fallback from raw text
-    if not isinstance(parsed, dict):
-        paragraphs = [p.strip() for p in cleaned.split("\n\n") if p.strip()]
-        title = paragraphs[0][:100] if paragraphs else "Webpage Summary"
-        overview = paragraphs[1] if len(paragraphs) > 1 else (paragraphs[0] if paragraphs else "No overview available.")
-        remaining = paragraphs[2:] if len(paragraphs) > 2 else []
-
-        parsed = {
-            "title": title,
-            "overview": overview,
-            "key_points": remaining[:3] if remaining else [],
-            "important_details": remaining[3:6] if len(remaining) > 3 else [],
-            "conclusion": remaining[-1] if len(remaining) > 6 else ""
-        }
+            parsed = {
+                "title": title,
+                "overview": overview,
+                "key_points": remaining[:3] if remaining else [],
+                "important_details": remaining[3:6] if len(remaining) > 3 else [],
+                "conclusion": remaining[-1] if len(remaining) > 6 else ""
+            }
+    else:
+        parsed = {"overview": str(raw_text_or_dict)}
 
     # Validate and normalize keys
     title = str(parsed.get("title") or "Webpage Summary").strip()
@@ -282,59 +289,25 @@ def format_summary_as_text(structured):
     return "\n".join(parts).strip()
 
 
-def _call_openai_responses(client, instructions, user_input):
-    """
-    Helper to execute an OpenAI call and capture standardized errors.
-    """
-    try:
-        response = client.responses.create(
-            model="gpt-5.6-luna",
-            instructions=instructions,
-            input=user_input
-        )
-        return response.output_text
-    except Exception as e:
-        err_name = type(e).__name__
-        err_msg = str(e)
-
-        if "AuthenticationError" in err_name or "invalid_api_key" in err_msg.lower():
-            raise SummarizerError("Invalid OpenAI API key. Please check your credentials.")
-        elif "RateLimitError" in err_name or "insufficient_quota" in err_msg.lower():
-            raise SummarizerError("OpenAI rate limit or quota exceeded. Please check your OpenAI account.")
-        elif "APIConnectionError" in err_name:
-            raise SummarizerError("Could not connect to OpenAI API. Please check your internet connection.")
-        elif "NotFoundError" in err_name:
-            raise SummarizerError(f"Specified OpenAI model was not found: {err_msg}")
-        elif "BadRequestError" in err_name:
-            raise SummarizerError(f"OpenAI request rejected: {err_msg}")
-        elif isinstance(e, SummarizerError):
-            raise
-        else:
-            raise SummarizerError(f"Summarization failed: {err_msg}")
-
-
 def summarize_text(
-    article_text,
-    api_key=None,
-    chunk_size=DEFAULT_CHUNK_SIZE,
-    chunk_overlap=DEFAULT_CHUNK_OVERLAP,
-    mode=DEFAULT_MODE,
-    custom_directive=None,
-    custom_directive_enabled=None,
+    article_text: str,
+    api_key: Optional[str] = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    mode: str = DEFAULT_MODE,
+    custom_directive: Optional[str] = None,
+    custom_directive_enabled: Optional[bool] = None,
+    router: Optional[AIRouter] = None,
+    provider_config: Optional[Dict[str, Any]] = None,
 ):
     """
-    Summarizes webpage text using OpenAI across configurable summarization modes.
+    Summarizes webpage text using modular multi-provider AI (Cloudflare Workers AI or GroqCloud).
     Supports single-pass for short content, or chunking & map-reduce for long webpages.
     Supports user-defined custom prompt directives combined harmoniously with the selected mode.
-    
-    Modes:
-    - quick: Concise overview with highest-impact takeaways.
-    - detailed: In-depth explanation with background and nuance.
-    - bullet: Scannable bullet points with minimal prose.
-    - technical: Preserves technical terminology and specifications.
-    
+
     Returns:
-        dict: Validated structured summary with title, overview, key_points, important_details, conclusion, mode, and stats.
+        dict: Validated structured summary with title, overview, key_points, important_details, conclusion,
+              mode, stats, and provider transparency metadata.
     """
     if not article_text or not article_text.strip():
         raise SummarizerError("Cannot summarize empty content.")
@@ -344,7 +317,7 @@ def summarize_text(
     if active_mode not in MODES:
         active_mode = DEFAULT_MODE
 
-    # Resolve custom prompt directives (from argument or local storage preferences)
+    # Resolve custom prompt directives
     active_directive = ""
     active_enabled = False
 
@@ -364,27 +337,26 @@ def summarize_text(
             active_directive = ""
             active_enabled = False
 
-    try:
-        from byok import get_configured_api_key
-        configured = get_configured_api_key()
-    except ImportError:
-        configured = os.getenv("OPENAI_API_KEY")
+    # Instantiate or retrieve AIRouter
+    if router is None:
+        from byok import get_router, has_valid_config
+        req_payload = provider_config or {}
+        if api_key:
+            # If a single key was passed, handle Groq key or token
+            if api_key.startswith("gsk_"):
+                req_payload["groq_api_key"] = api_key
+                req_payload["primary_provider"] = "groq"
+            else:
+                req_payload["api_key"] = api_key
 
-    resolved_key = (api_key or "").strip() or configured
-
-    if not resolved_key:
-        raise SummarizerError(
-            "OpenAI API key not found. Please configure OPENAI_API_KEY in the environment or provide a key."
-        )
-
-    try:
-        client = OpenAI(api_key=resolved_key)
-    except Exception as e:
-        raise SummarizerError(f"Failed to initialize OpenAI client: {str(e)}")
+        if not has_valid_config(request_data=req_payload):
+            raise SummarizerError(
+                "No AI provider configured. Please configure Cloudflare Workers AI or GroqCloud in Settings or Setup."
+            )
+        router = get_router(request_data=req_payload)
 
     # Step 1 & 2: Divide content into manageable chunks
     chunks = chunk_text(article_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-
     if not chunks:
         raise SummarizerError("Webpage does not contain sufficient text content to chunk.")
 
@@ -398,13 +370,32 @@ def summarize_text(
             custom_directive=active_directive,
             custom_directive_enabled=active_enabled,
         )
-        raw_output = _call_openai_responses(client, instructions, user_input)
-        result = parse_and_validate_summary(raw_output)
+        messages = [
+            {"role": "system", "content": instructions},
+            {"role": "user", "content": user_input},
+        ]
+        try:
+            router_res = router.generate_structured_json(messages=messages)
+        except ProviderError as pe:
+            raise SummarizerError(str(pe))
+        except Exception as e:
+            raise SummarizerError(f"Summarization failed: {str(e)}")
+
+        result = parse_and_validate_summary(router_res.content)
         result["mode"] = active_mode
         result["mode_name"] = MODES[active_mode]["name"]
         if active_directive and active_enabled:
             result["custom_directive_applied"] = True
             result["custom_directive"] = active_directive
+
+        # Provider transparency metadata (Phase 9)
+        result["provider"] = router_res.provider_id
+        result["provider_name"] = router_res.provider_name
+        result["model"] = router_res.model
+        result["switched_to_fallback"] = router_res.switched_to_fallback
+        if router_res.switched_to_fallback:
+            result["fallback_reason"] = router_res.fallback_reason
+
         result["stats"] = {
             "total_chunks": 1,
             "is_map_reduce": False
@@ -414,18 +405,26 @@ def summarize_text(
     # Long-form / Multi-chunk path: Map-Reduce Summarization
     intermediate_summaries = []
     chunk_errors = []
+    routing_metadata: Optional[RouterResult] = None
 
     # Map Phase: Summarize each chunk independently
     for idx, chunk in enumerate(chunks, 1):
         try:
             map_inst, map_input = build_chunk_map_prompt(chunk, idx, total_chunks, mode=active_mode)
-            chunk_summary = _call_openai_responses(client, map_inst, map_input)
-            if chunk_summary and chunk_summary.strip():
-                intermediate_summaries.append((idx, chunk_summary.strip()))
-        except SummarizerError as e:
-            err_text = str(e).lower()
-            if "invalid openai api key" in err_text or "rate limit or quota" in err_text:
-                raise
+            messages = [
+                {"role": "system", "content": map_inst},
+                {"role": "user", "content": map_input},
+            ]
+            map_res = router.generate_completion(messages=messages)
+            if map_res.content and map_res.content.strip():
+                intermediate_summaries.append((idx, map_res.content.strip()))
+                routing_metadata = map_res
+        except ProviderError as pe:
+            # Fatal authentication errors or model errors terminate map immediately
+            if "invalid" in str(pe).lower() or "unauthorized" in str(pe).lower():
+                raise SummarizerError(str(pe))
+            chunk_errors.append((idx, str(pe)))
+        except Exception as e:
             chunk_errors.append((idx, str(e)))
 
     if not intermediate_summaries:
@@ -445,8 +444,11 @@ def summarize_text(
         sub_summaries = []
         for s_idx, s_chunk in enumerate(sub_chunks, 1):
             s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks), mode=active_mode)
-            sub_res = _call_openai_responses(client, s_inst, s_input)
-            sub_summaries.append(sub_res.strip())
+            sub_res = router.generate_completion(messages=[
+                {"role": "system", "content": s_inst},
+                {"role": "user", "content": s_input},
+            ])
+            sub_summaries.append(sub_res.content.strip())
         combined_text = "\n\n".join(sub_summaries)
 
     # Reduce Phase: Generate final structured summary from combined intermediate summaries
@@ -457,14 +459,33 @@ def summarize_text(
         custom_directive=active_directive,
         custom_directive_enabled=active_enabled,
     )
-    final_raw_output = _call_openai_responses(client, reduce_inst, reduce_input)
-    result = parse_and_validate_summary(final_raw_output)
+    reduce_messages = [
+        {"role": "system", "content": reduce_inst},
+        {"role": "user", "content": reduce_input},
+    ]
 
+    try:
+        final_res = router.generate_structured_json(messages=reduce_messages)
+    except ProviderError as pe:
+        raise SummarizerError(str(pe))
+    except Exception as e:
+        raise SummarizerError(f"Failed to synthesize final summary: {str(e)}")
+
+    result = parse_and_validate_summary(final_res.content)
     result["mode"] = active_mode
     result["mode_name"] = MODES[active_mode]["name"]
     if active_directive and active_enabled:
         result["custom_directive_applied"] = True
         result["custom_directive"] = active_directive
+
+    # Provider transparency metadata (Phase 9)
+    result["provider"] = final_res.provider_id
+    result["provider_name"] = final_res.provider_name
+    result["model"] = final_res.model
+    result["switched_to_fallback"] = final_res.switched_to_fallback
+    if final_res.switched_to_fallback:
+        result["fallback_reason"] = final_res.fallback_reason
+
     result["stats"] = {
         "total_chunks": total_chunks,
         "processed_chunks": len(intermediate_summaries),
