@@ -32,8 +32,10 @@
 
     // Database configuration for Hosted IndexedDB mode
     const DB_NAME = 'WebBriefDB';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2;
     const STORE_NAME = 'summaries';
+    const JOBS_STORE = 'jobs';
+    const CHUNKS_STORE = 'job_chunks';
 
     let _dbPromise = null;
 
@@ -62,6 +64,16 @@
                         store.createIndex('mode', 'mode', { unique: false });
                         store.createIndex('entry_type', 'entry_type', { unique: false });
                         store.createIndex('url', 'url', { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains(JOBS_STORE)) {
+                        const jobStore = db.createObjectStore(JOBS_STORE, { keyPath: 'id' });
+                        jobStore.createIndex('updated_at', 'updated_at', { unique: false });
+                        jobStore.createIndex('status', 'status', { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains(CHUNKS_STORE)) {
+                        const chunkStore = db.createObjectStore(CHUNKS_STORE, { keyPath: 'id' });
+                        chunkStore.createIndex('job_id', 'job_id', { unique: false });
+                        chunkStore.createIndex('job_and_index', ['job_id', 'chunk_index'], { unique: true });
                     }
                 };
 
@@ -531,6 +543,310 @@
             a.click();
             a.remove();
             URL.revokeObjectURL(url);
+        },
+
+        // -------------------------------------------------------------
+        // Resumable Jobs & Checkpoint Recovery (v1.7.0)
+        // -------------------------------------------------------------
+
+        /**
+         * Saves or updates a summarization job record in IndexedDB.
+         * Enforces credential exclusion: never stores API keys or tokens.
+         */
+        saveJob: async function(job) {
+            if (!job || !job.id) return false;
+            // Defensive sanitization: ensure no credentials leak into client DB
+            const safeJob = Object.assign({}, job);
+            delete safeJob.api_key;
+            delete safeJob.cloudflare_api_token;
+            delete safeJob.groq_api_key;
+
+            const db = await getIndexedDB();
+            if (!db) return false;
+
+            return new Promise((resolve) => {
+                try {
+                    const tx = db.transaction([JOBS_STORE], 'readwrite');
+                    const store = tx.objectStore(JOBS_STORE);
+                    safeJob.updated_at = new Date().toISOString();
+                    const req = store.put(safeJob);
+                    req.onsuccess = () => resolve(true);
+                    req.onerror = () => resolve(false);
+                } catch (e) {
+                    console.warn('[WebBrief AI] Failed to save job to IndexedDB:', e);
+                    resolve(false);
+                }
+            });
+        },
+
+        /**
+         * Fetches a job record from IndexedDB by ID.
+         */
+        getJob: async function(jobId) {
+            const db = await getIndexedDB();
+            if (!db) return null;
+
+            return new Promise((resolve) => {
+                try {
+                    const tx = db.transaction([JOBS_STORE], 'readonly');
+                    const store = tx.objectStore(JOBS_STORE);
+                    const req = store.get(jobId);
+                    req.onsuccess = () => resolve(req.result || null);
+                    req.onerror = () => resolve(null);
+                } catch (e) {
+                    resolve(null);
+                }
+            });
+        },
+
+        /**
+         * Lists all saved jobs from IndexedDB ordered by updated_at descending.
+         */
+        listJobs: async function() {
+            const db = await getIndexedDB();
+            if (!db) return [];
+
+            return new Promise((resolve) => {
+                try {
+                    const tx = db.transaction([JOBS_STORE], 'readonly');
+                    const store = tx.objectStore(JOBS_STORE);
+                    const req = store.getAll();
+                    req.onsuccess = () => {
+                        const jobs = req.result || [];
+                        jobs.sort((a, b) => new Date(b.updated_at || 0) - new Date(a.updated_at || 0));
+                        resolve(jobs);
+                    };
+                    req.onerror = () => resolve([]);
+                } catch (e) {
+                    resolve([]);
+                }
+            });
+        },
+
+        /**
+         * Deletes a job and its associated chunk checkpoints from IndexedDB.
+         */
+        deleteJob: async function(jobId) {
+            const db = await getIndexedDB();
+            if (!db) return false;
+
+            return new Promise((resolve) => {
+                try {
+                    const tx = db.transaction([JOBS_STORE, CHUNKS_STORE], 'readwrite');
+                    tx.objectStore(JOBS_STORE).delete(jobId);
+
+                    // Delete associated chunks
+                    const chunkStore = tx.objectStore(CHUNKS_STORE);
+                    const index = chunkStore.index('job_id');
+                    const cursorReq = index.openCursor(IDBKeyRange.only(jobId));
+                    cursorReq.onsuccess = function(e) {
+                        const cursor = e.target.result;
+                        if (cursor) {
+                            cursor.delete();
+                            cursor.continue();
+                        }
+                    };
+                    tx.oncomplete = () => resolve(true);
+                    tx.onerror = () => resolve(false);
+                } catch (e) {
+                    resolve(false);
+                }
+            });
+        },
+
+        /**
+         * Saves an individual chunk checkpoint immediately upon completion.
+         * CORE RULE: Persist every successful chunk before moving to the next.
+         */
+        saveJobChunk: async function(chunk) {
+            if (!chunk || !chunk.job_id) return false;
+            const db = await getIndexedDB();
+            if (!db) return false;
+
+            chunk.id = chunk.id || `${chunk.job_id}_chunk_${chunk.chunk_index}`;
+            chunk.updated_at = new Date().toISOString();
+
+            return new Promise((resolve) => {
+                try {
+                    const tx = db.transaction([CHUNKS_STORE], 'readwrite');
+                    const store = tx.objectStore(CHUNKS_STORE);
+                    const req = store.put(chunk);
+                    req.onsuccess = () => resolve(true);
+                    req.onerror = () => resolve(false);
+                } catch (e) {
+                    resolve(false);
+                }
+            });
+        },
+
+        /**
+         * Retrieves all saved chunk checkpoints for a job, sorted by chunk_index.
+         */
+        getJobChunks: async function(jobId) {
+            const db = await getIndexedDB();
+            if (!db) return [];
+
+            return new Promise((resolve) => {
+                try {
+                    const tx = db.transaction([CHUNKS_STORE], 'readonly');
+                    const store = tx.objectStore(CHUNKS_STORE);
+                    const index = store.index('job_id');
+                    const req = index.getAll(IDBKeyRange.only(jobId));
+                    req.onsuccess = () => {
+                        const chunks = req.result || [];
+                        chunks.sort((a, b) => (a.chunk_index || 0) - (b.chunk_index || 0));
+                        resolve(chunks);
+                    };
+                    req.onerror = () => resolve([]);
+                } catch (e) {
+                    resolve([]);
+                }
+            });
+        },
+
+        /**
+         * Bounded chunk-by-chunk client orchestrator (v1.7.0).
+         * Processes each chunk individually with intermediate checkpointing,
+         * keeping execution bounded within serverless timeout limits.
+         */
+        orchestrateJob: async function(jobData, options) {
+            options = options || {};
+            const onProgress = options.onProgress || function() {};
+            const jobId = jobData.id;
+
+            // 1. Retrieve existing chunk checkpoints
+            const existingChunks = await this.getJobChunks(jobId);
+            const completedMap = {};
+            existingChunks.forEach(c => {
+                if (c.status === 'completed' && c.summary_output) {
+                    completedMap[c.chunk_index] = c.summary_output;
+                }
+            });
+
+            const totalChunks = jobData.total_chunks || (jobData.chunks ? jobData.chunks.length : 1);
+            const intermediateSummaries = [];
+
+            // 2. Process each chunk
+            for (let idx = 1; idx <= totalChunks; idx++) {
+                if (completedMap[idx]) {
+                    intermediateSummaries.push([idx, completedMap[idx]]);
+                    onProgress({
+                        event: 'chunk_completed',
+                        chunk_index: idx,
+                        total_chunks: totalChunks,
+                        resumed_from_cache: true
+                    });
+                    continue;
+                }
+
+                // Check for pause/cancellation
+                const latestJob = await this.getJob(jobId);
+                if (latestJob && (latestJob.status === 'Paused' || latestJob.status === 'Cancelled')) {
+                    throw new Error(`Job execution ${latestJob.status.toLowerCase()} by user.`);
+                }
+
+                // Call bounded server endpoint for this single chunk
+                const chunkDef = (jobData.chunks && jobData.chunks[idx - 1]) ? jobData.chunks[idx - 1] : {};
+                const chunkPayload = {
+                    chunk_text: chunkDef.chunk_text || '',
+                    total_chunks: totalChunks,
+                    mode: jobData.mode || 'detailed'
+                };
+
+                const res = await this.fetchWithCredentials(`/api/jobs/${jobId}/chunk/${idx}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(chunkPayload)
+                });
+
+                const data = await res.json();
+                if (!res.ok || !data.success) {
+                    const errMsg = data.error || `Chunk ${idx} processing failed.`;
+                    await this.saveJob(Object.assign({}, jobData, {
+                        status: 'Interrupted',
+                        recovery_message: `${errMsg} Completed chunks preserved.`
+                    }));
+                    throw new Error(errMsg);
+                }
+
+                // Immediately checkpoint completed chunk to IndexedDB
+                const chunkRecord = {
+                    id: `${jobId}_chunk_${idx}`,
+                    job_id: jobId,
+                    chunk_index: idx,
+                    status: 'completed',
+                    summary_output: data.summary_output,
+                    provider: data.provider,
+                    model: data.model
+                };
+                await this.saveJobChunk(chunkRecord);
+                intermediateSummaries.push([idx, data.summary_output]);
+
+                // Update job progress
+                await this.saveJob(Object.assign({}, jobData, {
+                    completed_chunks: intermediateSummaries.length,
+                    current_position: idx,
+                    status: 'Processing'
+                }));
+
+                onProgress({
+                    event: 'chunk_completed',
+                    chunk_index: idx,
+                    total_chunks: totalChunks,
+                    provider: data.provider,
+                    model: data.model,
+                    resumed_from_cache: false
+                });
+            }
+
+            // 3. Synthesize final summary
+            await this.saveJob(Object.assign({}, jobData, { status: 'Synthesizing' }));
+            onProgress({ event: 'synthesizing', total_chunks: totalChunks });
+
+            const synthRes = await this.fetchWithCredentials(`/api/jobs/${jobId}/synthesize`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    intermediate_summaries: intermediateSummaries,
+                    total_chunks: totalChunks,
+                    mode: jobData.mode || 'detailed',
+                    title: jobData.title,
+                    url: jobData.source_url
+                })
+            });
+
+            const synthData = await synthRes.json();
+            if (!synthRes.ok || !synthData.success) {
+                const synthErr = synthData.error || 'Final synthesis failed.';
+                await this.saveJob(Object.assign({}, jobData, {
+                    status: 'Interrupted',
+                    recovery_message: `Synthesis failed: ${synthErr}. All chunks preserved.`
+                }));
+                throw new Error(synthErr);
+            }
+
+            // 4. Mark completed and store in history
+            const finalSummary = synthData.summary;
+            await this.saveJob(Object.assign({}, jobData, {
+                status: 'Completed',
+                completed_chunks: totalChunks,
+                final_summary: finalSummary,
+                history_id: synthData.history_id,
+                recovery_message: 'Summarization completed successfully.'
+            }));
+
+            if (this.isHosted() && finalSummary) {
+                await this.saveSummary({
+                    title: finalSummary.title || jobData.title,
+                    url: jobData.source_url,
+                    mode: jobData.mode || 'detailed',
+                    mode_name: finalSummary.mode_name || 'Detailed',
+                    summary: finalSummary,
+                    entry_type: 'single'
+                });
+            }
+
+            return finalSummary;
         }
     };
 

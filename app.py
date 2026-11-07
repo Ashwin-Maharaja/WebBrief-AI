@@ -23,7 +23,44 @@ from flask import (
 )
 
 from scraper import scrape_article, ScraperError
-from summarizer import summarize_text, SummarizerError, MODES, DEFAULT_MODE
+from chunker import chunk_text
+from summarizer import (
+    summarize_text,
+    summarize_single_chunk,
+    synthesize_reduce_summary,
+    SummarizerError,
+    MODES,
+    DEFAULT_MODE,
+)
+from job_manager import (
+    init_job_tables,
+    create_job,
+    initialize_job_chunks,
+    update_job_status,
+    save_chunk_checkpoint,
+    record_chunk_failure,
+    get_job,
+    get_job_chunks,
+    get_job_events,
+    list_jobs,
+    delete_job,
+    pause_job,
+    cancel_job,
+    recover_job,
+    complete_job,
+    check_config_consistency,
+    STATUS_QUEUED,
+    STATUS_EXTRACTING,
+    STATUS_CHUNKING,
+    STATUS_PROCESSING,
+    STATUS_RECOVERING,
+    STATUS_PAUSED,
+    STATUS_INTERRUPTED,
+    STATUS_SYNTHESIZING,
+    STATUS_COMPLETED,
+    STATUS_FAILED,
+    STATUS_CANCELLED,
+)
 from byok import (
     has_valid_config,
     validate_cloudflare_credentials,
@@ -80,9 +117,15 @@ from vector_store import (
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.7.0"
 
 app = Flask(__name__)
+
+# Initialize resumable jobs database tables & recover stale runs (v1.7.0)
+try:
+    init_job_tables()
+except Exception as e:
+    logger.debug("Job tables initialization deferred: %s", str(e))
 
 # Request payload limit: enforce 2MB maximum
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", 2 * 1024 * 1024))
@@ -210,6 +253,12 @@ def enforce_byok_onboarding():
         "api_search_rebuild_index",
         "api_search_embed",
         "api_environment",
+        "view_jobs",
+        "api_list_jobs",
+        "api_get_job_details",
+        "api_delete_job",
+        "api_pause_job",
+        "api_cancel_job",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -222,7 +271,16 @@ def enforce_byok_onboarding():
         return None
 
     # Handle per-request credentials in hosted mode
-    if request.endpoint in ("summarize", "batch_summarize", "compare_articles_route"):
+    if request.endpoint in (
+        "summarize",
+        "batch_summarize",
+        "compare_articles_route",
+        "api_create_job",
+        "api_process_job_chunk",
+        "api_synthesize_job",
+        "api_run_job",
+        "api_resume_job",
+    ):
         payload = request.get_json() if request.is_json else request.form.to_dict()
         if has_valid_config(session_dict=session, request_data=payload):
             return None
@@ -298,6 +356,331 @@ def settings():
         custom_directive_enabled=directives.get("custom_directive_enabled", False),
         max_directive_length=MAX_DIRECTIVE_LENGTH,
     )
+
+
+@app.route("/jobs")
+def view_jobs():
+    """Dedicated Summarization Jobs and Checkpoint Recovery view (v1.7.0)."""
+    recent_jobs = [] if is_serverless_env() else list_jobs(limit=50)
+    return render_template(
+        "jobs.html",
+        jobs=recent_jobs,
+        is_hosted=is_serverless_env(),
+        is_configured=has_valid_config(session),
+        app_version=APP_VERSION,
+    )
+
+
+# -------------------------------------------------------------
+# Resumable Jobs API Endpoints (v1.7.0)
+# -------------------------------------------------------------
+@app.route("/api/jobs", methods=["GET"])
+def api_list_jobs():
+    if is_serverless_env():
+        return jsonify({"jobs": [], "is_hosted": True})
+    jobs = list_jobs(limit=50)
+    return jsonify({"jobs": jobs, "is_hosted": False})
+
+
+@app.route("/api/jobs/<job_id>", methods=["GET"])
+def api_get_job_details(job_id):
+    if is_serverless_env():
+        return jsonify({"error": "Job storage is client-side in hosted mode."}), 404
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+    chunks = get_job_chunks(job_id)
+    events = get_job_events(job_id)
+    return jsonify({"job": job, "chunks": chunks, "events": events})
+
+
+@app.route("/api/jobs/create", methods=["POST"])
+def api_create_job():
+    data = request.get_json() or {} if request.is_json else request.form.to_dict()
+    url = data.get("url", "").strip()
+    if not url:
+        return jsonify({"error": "Please provide a valid URL."}), 400
+
+    mode = data.get("mode", DEFAULT_MODE).strip().lower()
+    if mode not in MODES:
+        mode = DEFAULT_MODE
+
+    try:
+        article_text = scrape_article(url)
+        chunks = chunk_text(article_text)
+        total_chunks = len(chunks)
+        title = url
+
+        if is_serverless_env():
+            job_id = str(uuid.uuid4())
+            chunk_items = [
+                {"chunk_index": idx, "chunk_text": ch, "status": "pending"}
+                for idx, ch in enumerate(chunks, 1)
+            ]
+            return jsonify({
+                "success": True,
+                "job_id": job_id,
+                "source_url": url,
+                "title": title,
+                "mode": mode,
+                "total_chunks": total_chunks,
+                "chunks": chunk_items,
+                "article_text": article_text,
+            })
+
+        job_id = create_job(source_url=url, mode=mode, provider_config=data, title=title, article_text=article_text)
+        initialize_job_chunks(job_id, chunks, title=title, article_text=article_text)
+        chunks_meta = [
+            {"chunk_index": idx, "chunk_text": ch, "status": "pending"}
+            for idx, ch in enumerate(chunks, 1)
+        ]
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "source_url": url,
+            "title": title,
+            "mode": mode,
+            "total_chunks": total_chunks,
+            "chunks": chunks_meta,
+        })
+    except Exception as e:
+        return jsonify({"error": redact_credentials(f"Failed to create job: {str(e)}")}), 500
+
+
+@app.route("/api/jobs/<job_id>/chunk/<int:chunk_index>", methods=["POST"])
+def api_process_job_chunk(job_id, chunk_index):
+    data = request.get_json() or {}
+    chunk_text_input = data.get("chunk_text")
+    total_chunks = int(data.get("total_chunks", 1))
+    mode = data.get("mode", DEFAULT_MODE)
+
+    if not is_serverless_env():
+        chunks = get_job_chunks(job_id)
+        target_chunk = next((c for c in chunks if c["chunk_index"] == chunk_index), None)
+        if target_chunk:
+            chunk_text_input = target_chunk["chunk_text"]
+            total_chunks = len(chunks)
+
+    if not chunk_text_input:
+        return jsonify({"error": f"Chunk {chunk_index} content not found."}), 400
+
+    try:
+        content, map_res = summarize_single_chunk(
+            chunk_content=chunk_text_input,
+            chunk_index=chunk_index,
+            total_chunks=total_chunks,
+            mode=mode,
+            provider_config=data,
+        )
+
+        if not is_serverless_env():
+            save_chunk_checkpoint(
+                job_id=job_id,
+                chunk_index=chunk_index,
+                summary_output=content,
+                provider=map_res.provider_id,
+                model=map_res.model,
+            )
+
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "chunk_index": chunk_index,
+            "summary_output": content,
+            "provider": map_res.provider_id,
+            "provider_name": map_res.provider_name,
+            "model": map_res.model,
+            "switched_to_fallback": map_res.switched_to_fallback,
+        })
+    except Exception as e:
+        if not is_serverless_env():
+            record_chunk_failure(job_id, chunk_index, str(e))
+        return jsonify({"error": redact_credentials(str(e))}), 500
+
+
+@app.route("/api/jobs/<job_id>/synthesize", methods=["POST"])
+def api_synthesize_job(job_id):
+    data = request.get_json() or {}
+    intermediate_summaries = data.get("intermediate_summaries")
+    total_chunks = data.get("total_chunks")
+    mode = data.get("mode", DEFAULT_MODE)
+    title = data.get("title", "Webpage Summary")
+    url = data.get("url", "")
+
+    if not is_serverless_env():
+        job = get_job(job_id)
+        if not job:
+            return jsonify({"error": "Job not found."}), 404
+        mode = job.get("mode", mode)
+        title = job.get("title", title)
+        url = job.get("source_url", url)
+
+        chunks = get_job_chunks(job_id)
+        total_chunks = len(chunks)
+        completed = [c for c in chunks if c["status"] == "completed" and c.get("summary_output")]
+        intermediate_summaries = [(c["chunk_index"], c["summary_output"]) for c in completed]
+
+    if not intermediate_summaries:
+        return jsonify({"error": "No intermediate summaries available to synthesize."}), 400
+
+    try:
+        if not is_serverless_env():
+            update_job_status(job_id, STATUS_SYNTHESIZING)
+
+        final_summary = synthesize_reduce_summary(
+            intermediate_summaries=intermediate_summaries,
+            total_chunks=total_chunks or len(intermediate_summaries),
+            mode=mode,
+            provider_config=data,
+        )
+
+        history_id = None
+        if is_serverless_env():
+            history_id = str(uuid.uuid4())
+        else:
+            hist_entry = add_history_entry(
+                title=final_summary.get("title") or title,
+                url=url,
+                mode=mode,
+                mode_name=final_summary.get("mode_name", mode.capitalize()),
+                summary=final_summary,
+            )
+            if hist_entry:
+                history_id = hist_entry.get("id")
+            complete_job(job_id, final_summary, history_id)
+
+        return jsonify({
+            "success": True,
+            "job_id": job_id,
+            "summary": final_summary,
+            "history_id": history_id,
+        })
+    except Exception as e:
+        return jsonify({"error": redact_credentials(f"Final synthesis failed: {str(e)}")}), 500
+
+
+@app.route("/api/jobs/<job_id>/resume", methods=["POST"])
+def api_resume_job(job_id):
+    if is_serverless_env():
+        return jsonify({"error": "Use client-side orchestration in hosted mode."}), 400
+
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+
+    data = request.get_json() or {}
+    consistency = check_config_consistency(job_id, current_config=data, current_mode=data.get("mode"))
+    force_override = data.get("force_override")
+
+    if not consistency["consistent"] and not force_override:
+        return jsonify({
+            "success": False,
+            "requires_confirmation": True,
+            "differences": consistency["differences"],
+            "original_config": consistency["original_config"],
+            "message": "Configuration differs from when the job started. Choose to resume with original settings or apply current settings."
+        }), 409
+
+    rec_info = recover_job(job_id)
+    return jsonify({
+        "success": True,
+        "recovery_info": rec_info,
+    })
+
+
+@app.route("/api/jobs/<job_id>/run", methods=["POST"])
+def api_run_job(job_id):
+    if is_serverless_env():
+        return jsonify({"error": "Server-side run loop disabled in hosted mode."}), 400
+
+    job = get_job(job_id)
+    if not job:
+        return jsonify({"error": "Job not found."}), 404
+
+    if job["status"] == STATUS_CANCELLED:
+        return jsonify({"error": "Cancelled jobs cannot be resumed."}), 400
+
+    data = request.get_json() or {}
+    recover_job(job_id)
+    chunks = get_job_chunks(job_id)
+    total_chunks = len(chunks)
+
+    try:
+        for c in chunks:
+            if c["status"] == "completed" and c.get("summary_output"):
+                continue
+
+            latest = get_job(job_id)
+            if latest and latest["status"] in (STATUS_PAUSED, STATUS_CANCELLED):
+                return jsonify({"success": False, "status": latest["status"], "message": f"Job {latest['status'].lower()}."})
+
+            idx = c["chunk_index"]
+            content, map_res = summarize_single_chunk(
+                chunk_content=c["chunk_text"],
+                chunk_index=idx,
+                total_chunks=total_chunks,
+                mode=job["mode"],
+                provider_config=data,
+            )
+            save_chunk_checkpoint(
+                job_id=job_id,
+                chunk_index=idx,
+                summary_output=content,
+                provider=map_res.provider_id,
+                model=map_res.model,
+            )
+
+        completed_chunks = get_job_chunks(job_id)
+        intermediates = [(c["chunk_index"], c["summary_output"]) for c in completed_chunks if c["status"] == "completed"]
+        update_job_status(job_id, STATUS_SYNTHESIZING)
+        final_summary = synthesize_reduce_summary(
+            intermediate_summaries=intermediates,
+            total_chunks=total_chunks,
+            mode=job["mode"],
+            provider_config=data,
+        )
+        hist_entry = add_history_entry(
+            title=final_summary.get("title") or job.get("title"),
+            url=job.get("source_url"),
+            mode=job["mode"],
+            mode_name=final_summary.get("mode_name", job["mode"].capitalize()),
+            summary=final_summary,
+        )
+        history_id = hist_entry.get("id") if hist_entry else None
+        complete_job(job_id, final_summary, history_id)
+
+        return jsonify({
+            "success": True,
+            "status": STATUS_COMPLETED,
+            "summary": final_summary,
+            "history_id": history_id,
+        })
+    except Exception as e:
+        return jsonify({"error": redact_credentials(str(e))}), 500
+
+
+@app.route("/api/jobs/<job_id>/pause", methods=["POST"])
+def api_pause_job(job_id):
+    if is_serverless_env():
+        return jsonify({"success": True})
+    success = pause_job(job_id)
+    return jsonify({"success": success})
+
+
+@app.route("/api/jobs/<job_id>/cancel", methods=["POST"])
+def api_cancel_job(job_id):
+    if is_serverless_env():
+        return jsonify({"success": True})
+    success = cancel_job(job_id)
+    return jsonify({"success": success})
+
+
+@app.route("/api/jobs/<job_id>", methods=["DELETE"])
+def api_delete_job(job_id):
+    if is_serverless_env():
+        return jsonify({"success": True})
+    success = delete_job(job_id)
+    return jsonify({"success": success})
 
 
 @app.route("/history")
@@ -1127,10 +1510,24 @@ def summarize():
         # Step 1: Scrape article text from webpage
         article_text = scrape_article(url)
 
-        # Step 2: Generate AI summary with multi-provider routing
+        # Step 2: Initialize resumable job tracking (v1.7.0)
+        job_id = data.get("job_id")
+        if not job_id and not is_serverless_env():
+            try:
+                job_id = create_job(
+                    source_url=url,
+                    mode=mode,
+                    provider_config=data,
+                    article_text=article_text
+                )
+            except Exception as e:
+                logger.debug("Automatic job tracking initialization deferred: %s", str(e))
+
+        # Step 3: Generate AI summary with multi-provider routing & checkpoint persistence
         summarize_kwargs = {
             "mode": mode,
             "provider_config": data,
+            "job_id": job_id,
         }
         if custom_directive is not None:
             summarize_kwargs["custom_directive"] = custom_directive
@@ -1139,7 +1536,7 @@ def summarize():
 
         summary = summarize_text(article_text, **summarize_kwargs)
 
-        # Step 3: Record into persistent summary history
+        # Step 4: Record into persistent summary history
         if is_serverless_env():
             summary["history_id"] = str(uuid.uuid4())
         else:
@@ -1153,6 +1550,8 @@ def summarize():
                 )
                 if entry:
                     summary["history_id"] = entry["id"]
+                    if job_id:
+                        complete_job(job_id, summary, entry["id"])
                     try:
                         index_summary_entry(entry["id"], provider_config=data)
                     except Exception:

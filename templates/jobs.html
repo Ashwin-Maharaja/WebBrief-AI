@@ -1,0 +1,507 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebBrief AI — Summarization Jobs & Recovery</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        (function() {
+            const savedTheme = localStorage.getItem("webbrief_theme") || "dark";
+            document.documentElement.setAttribute("data-theme", savedTheme);
+        })();
+        window.__WEBBRIEF_IS_HOSTED = {{ 'true' if is_hosted else 'false' }};
+    </script>
+    <script src="{{ url_for('static', filename='storage_adapter.js') }}"></script>
+    <style>
+        .jobs-container {
+            max-width: 900px;
+            margin: 1.5rem auto;
+        }
+        .jobs-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 1.5rem;
+            flex-wrap: wrap;
+            gap: 1rem;
+        }
+        .jobs-list {
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+        }
+        .job-card {
+            background: var(--card-bg);
+            border: 1px solid var(--border-color);
+            border-radius: var(--radius-md);
+            padding: 18px 22px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            transition: all 0.2s;
+        }
+        .job-card:hover {
+            border-color: var(--primary);
+            box-shadow: var(--shadow-md);
+        }
+        .job-top-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .job-title-group {
+            flex: 1;
+            min-width: 250px;
+        }
+        .job-title {
+            font-size: 1.05rem;
+            font-weight: 600;
+            color: var(--text-primary);
+            margin-bottom: 4px;
+            word-break: break-word;
+        }
+        .job-url {
+            font-size: 0.8rem;
+            color: var(--primary);
+            text-decoration: none;
+            word-break: break-all;
+        }
+        .job-url:hover {
+            text-decoration: underline;
+        }
+        .job-badges {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .status-pill {
+            font-size: 0.75rem;
+            font-weight: 600;
+            padding: 3px 10px;
+            border-radius: 999px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .status-processing { background: rgba(59, 130, 246, 0.15); color: #3b82f6; border: 1px solid rgba(59, 130, 246, 0.3); }
+        .status-recovering { background: rgba(245, 158, 11, 0.15); color: #f59e0b; border: 1px solid rgba(245, 158, 11, 0.3); }
+        .status-interrupted { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .status-completed { background: rgba(16, 185, 129, 0.15); color: #10b981; border: 1px solid rgba(16, 185, 129, 0.3); }
+        .status-paused { background: rgba(107, 114, 128, 0.15); color: #9ca3af; border: 1px solid rgba(107, 114, 128, 0.3); }
+        .status-cancelled { background: rgba(107, 114, 128, 0.15); color: #6b7280; border: 1px solid rgba(107, 114, 128, 0.3); }
+        .status-failed { background: rgba(239, 68, 68, 0.15); color: #ef4444; border: 1px solid rgba(239, 68, 68, 0.3); }
+        .status-synthesizing { background: rgba(139, 92, 246, 0.15); color: #8b5cf6; border: 1px solid rgba(139, 92, 246, 0.3); }
+
+        .job-progress-wrapper {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .job-progress-bar-bg {
+            background: var(--input-bg);
+            border-radius: 999px;
+            height: 8px;
+            width: 100%;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+        }
+        .job-progress-fill {
+            background: linear-gradient(90deg, var(--primary), #8b5cf6);
+            height: 100%;
+            border-radius: 999px;
+            transition: width 0.3s ease;
+        }
+        .job-progress-text {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        .recovery-alert {
+            background: rgba(245, 158, 11, 0.08);
+            border: 1px solid rgba(245, 158, 11, 0.25);
+            border-radius: var(--radius-sm);
+            padding: 10px 14px;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .job-actions {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+            flex-wrap: wrap;
+            margin-top: 4px;
+        }
+        .btn-action {
+            padding: 6px 14px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            border-radius: var(--radius-sm);
+            cursor: pointer;
+            border: 1px solid var(--border-color);
+            background: var(--card-bg);
+            color: var(--text-primary);
+            transition: all 0.2s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+        }
+        .btn-action:hover {
+            border-color: var(--primary);
+            color: var(--primary);
+        }
+        .btn-action-primary {
+            background: var(--primary);
+            color: #ffffff;
+            border-color: var(--primary);
+        }
+        .btn-action-primary:hover {
+            opacity: 0.9;
+            color: #ffffff;
+        }
+        .btn-action-danger:hover {
+            border-color: #ef4444;
+            color: #ef4444;
+        }
+        .empty-jobs {
+            text-align: center;
+            padding: 4rem 1rem;
+            color: var(--text-muted);
+        }
+        .empty-icon {
+            font-size: 3rem;
+            margin-bottom: 1rem;
+        }
+    </style>
+</head>
+<body>
+
+    <main class="app-container">
+
+        <!-- App Header -->
+        <header class="app-header">
+            <div class="logo-wrapper">
+                <a href="{{ url_for('home') }}" style="text-decoration: none; display: flex; align-items: center; gap: 12px; color: inherit;">
+                    <div class="logo-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                            <path d="M8 7h6"/>
+                            <path d="M8 11h8"/>
+                        </svg>
+                    </div>
+                    <div class="brand-info">
+                        <h1>WebBrief <span class="accent-text">AI</span></h1>
+                        <span class="badge">v{{ app_version or '1.7.0' }}</span>
+                    </div>
+                </a>
+            </div>
+            
+            <div class="header-nav">
+                <a href="{{ url_for('home') }}" class="nav-btn" title="Dashboard">
+                    <span>🏠 Home</span>
+                </a>
+                <a href="{{ url_for('view_jobs') }}" class="nav-btn active" title="Summarization Jobs">
+                    <span>⚡ Jobs</span>
+                </a>
+                <a href="{{ url_for('view_history') }}" class="nav-btn" title="View Summary History">
+                    <span>📚 History</span>
+                </a>
+                <a href="{{ url_for('settings') }}" class="nav-btn" title="BYOK Settings">
+                    <span>⚙️ Settings</span>
+                </a>
+                <button id="theme-toggle-btn" class="theme-toggle-btn" aria-label="Toggle Theme" title="Toggle Light/Dark Theme">
+                    <span id="theme-icon">🌙</span>
+                </button>
+            </div>
+        </header>
+
+        <section class="jobs-container">
+            <div class="jobs-header">
+                <div>
+                    <h2>⚡ Summarization Jobs</h2>
+                    <p style="color: var(--text-muted); font-size: 0.88rem; margin-top: 4px;">
+                        Resumable summarization engine with atomic chunk checkpoint recovery.
+                    </p>
+                </div>
+                <div>
+                    <button id="refresh-jobs-btn" class="btn-action">
+                        🔄 Refresh Jobs
+                    </button>
+                </div>
+            </div>
+
+            <div id="jobs-list" class="jobs-list">
+                {% if jobs %}
+                    {% for job in jobs %}
+                    <div class="job-card" id="job-card-{{ job.id }}" data-job-id="{{ job.id }}">
+                        <div class="job-top-row">
+                            <div class="job-title-group">
+                                <div class="job-title">{{ job.title or 'Webpage Summarization' }}</div>
+                                <a href="{{ job.source_url }}" target="_blank" rel="noopener noreferrer" class="job-url">
+                                    {{ job.source_url }}
+                                </a>
+                            </div>
+                            <div class="job-badges">
+                                <span class="badge">{{ job.mode | capitalize }}</span>
+                                <span class="status-pill status-{{ job.status | lower }}">{{ job.status }}</span>
+                            </div>
+                        </div>
+
+                        <div class="job-progress-wrapper">
+                            <div class="job-progress-bar-bg">
+                                <div class="job-progress-fill" style="width: {{ job.progress_pct or 0 }}%;"></div>
+                            </div>
+                            <div class="job-progress-text">
+                                <span>{{ job.completed_chunks }} / {{ job.total_chunks }} Chunks Completed</span>
+                                <span>{{ job.progress_pct or 0 }}%</span>
+                            </div>
+                        </div>
+
+                        {% if job.recovery_message %}
+                        <div class="recovery-alert">
+                            <span>🛡️</span>
+                            <span>{{ job.recovery_message }}</span>
+                        </div>
+                        {% endif %}
+
+                        <div class="job-actions">
+                            {% if job.status in ['Interrupted', 'Paused', 'Failed', 'Recovering'] %}
+                            <button class="btn-action btn-action-primary" onclick="resumeJob('{{ job.id }}')">
+                                ▶️ Resume
+                            </button>
+                            {% endif %}
+
+                            {% if job.status == 'Processing' %}
+                            <button class="btn-action" onclick="pauseJob('{{ job.id }}')">
+                                ⏸️ Pause
+                            </button>
+                            {% endif %}
+
+                            {% if job.status not in ['Completed', 'Cancelled'] %}
+                            <button class="btn-action" onclick="cancelJob('{{ job.id }}')">
+                                ⏹️ Cancel
+                            </button>
+                            {% endif %}
+
+                            {% if job.status == 'Completed' %}
+                            <button class="btn-action btn-action-primary" onclick="viewJobSummary('{{ job.id }}')">
+                                📄 View Summary
+                            </button>
+                            {% endif %}
+
+                            <button class="btn-action btn-action-danger" onclick="deleteJob('{{ job.id }}')">
+                                🗑️ Delete
+                            </button>
+                        </div>
+                    </div>
+                    {% endfor %}
+                {% else %}
+                    <div class="empty-jobs" id="empty-jobs-state">
+                        <div class="empty-icon">📂</div>
+                        <h3>No summarization jobs found</h3>
+                        <p>When long webpages are summarized, active chunks and checkpoints appear here for inspection and recovery.</p>
+                        <a href="{{ url_for('home') }}" class="btn-action btn-action-primary" style="margin-top: 1rem; text-decoration: none;">
+                            Summarize a Webpage
+                        </a>
+                    </div>
+                {% endif %}
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // Theme toggle logic
+        const themeBtn = document.getElementById("theme-toggle-btn");
+        const themeIcon = document.getElementById("theme-icon");
+        function updateThemeIcon(theme) {
+            themeIcon.textContent = theme === "light" ? "☀️" : "🌙";
+        }
+        updateThemeIcon(document.documentElement.getAttribute("data-theme") || "dark");
+        themeBtn.addEventListener("click", () => {
+            const current = document.documentElement.getAttribute("data-theme") || "dark";
+            const next = current === "light" ? "dark" : "light";
+            document.documentElement.setAttribute("data-theme", next);
+            localStorage.setItem("webbrief_theme", next);
+            updateThemeIcon(next);
+        });
+
+        // Resume Job Action
+        async function resumeJob(jobId) {
+            const card = document.getElementById(`job-card-${jobId}`);
+            if (card) {
+                const btn = card.querySelector(".btn-action-primary");
+                if (btn) btn.textContent = "⏳ Resuming...";
+            }
+
+            try {
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    // Hosted IndexedDB orchestration
+                    const job = await window.StorageAdapter.getJob(jobId);
+                    if (!job) throw new Error("Job not found in browser storage.");
+                    await window.StorageAdapter.orchestrateJob(job, {
+                        onProgress: function(evt) {
+                            console.log("Hosted job progress:", evt);
+                        }
+                    });
+                    location.reload();
+                    return;
+                }
+
+                // Local Flask backend execution
+                const res = await fetch(`/api/jobs/${jobId}/run`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                const data = await res.json();
+                if (!res.ok) {
+                    alert(data.error || "Failed to resume job.");
+                }
+                location.reload();
+            } catch (err) {
+                alert(`Error resuming job: ${err.message}`);
+                location.reload();
+            }
+        }
+
+        // Pause Job Action
+        async function pauseJob(jobId) {
+            try {
+                const res = await fetch(`/api/jobs/${jobId}/pause`, { method: 'POST' });
+                location.reload();
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        // Cancel Job Action
+        async function cancelJob(jobId) {
+            if (!confirm("Are you sure you want to cancel this job? Cancelled jobs cannot be resumed.")) return;
+            try {
+                const res = await fetch(`/api/jobs/${jobId}/cancel`, { method: 'POST' });
+                location.reload();
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        // Delete Job Action
+        async function deleteJob(jobId) {
+            if (!confirm("Permanently delete this job and all its checkpoints?")) return;
+            try {
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    await window.StorageAdapter.deleteJob(jobId);
+                } else {
+                    await fetch(`/api/jobs/${jobId}`, { method: 'DELETE' });
+                }
+                const card = document.getElementById(`job-card-${jobId}`);
+                if (card) card.remove();
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        // View Summary Action
+        async function viewJobSummary(jobId) {
+            try {
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    const job = await window.StorageAdapter.getJob(jobId);
+                    if (job && job.final_summary) {
+                        sessionStorage.setItem("view_summary_data", JSON.stringify(job.final_summary));
+                        window.location.href = "/";
+                        return;
+                    }
+                }
+                const res = await fetch(`/api/jobs/${jobId}`);
+                const data = await res.json();
+                if (data.job && data.job.final_summary) {
+                    sessionStorage.setItem("view_summary_data", JSON.stringify(data.job.final_summary));
+                    window.location.href = "/";
+                } else {
+                    alert("Summary data not available.");
+                }
+            } catch (err) {
+                alert(err.message);
+            }
+        }
+
+        document.getElementById("refresh-jobs-btn").addEventListener("click", () => location.reload());
+
+        // Hosted browser mode: load jobs from IndexedDB if in hosted environment
+        window.addEventListener("DOMContentLoaded", async () => {
+            if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                const hostedJobs = await window.StorageAdapter.listJobs();
+                const container = document.getElementById("jobs-list");
+                if (hostedJobs && hostedJobs.length > 0) {
+                    container.innerHTML = "";
+                    hostedJobs.forEach(job => {
+                        const tot = job.total_chunks || 1;
+                        const comp = job.completed_chunks || 0;
+                        const pct = Math.round((comp / tot) * 100);
+                        const statusClass = (job.status || 'queued').toLowerCase();
+
+                        const card = document.createElement("div");
+                        card.className = "job-card";
+                        card.id = `job-card-${job.id}`;
+                        card.innerHTML = `
+                            <div class="job-top-row">
+                                <div class="job-title-group">
+                                    <div class="job-title">${job.title || 'Webpage Summarization'}</div>
+                                    <a href="${job.source_url}" target="_blank" rel="noopener noreferrer" class="job-url">
+                                        ${job.source_url}
+                                    </a>
+                                </div>
+                                <div class="job-badges">
+                                    <span class="badge">${job.mode || 'Detailed'}</span>
+                                    <span class="status-pill status-${statusClass}">${job.status || 'Queued'}</span>
+                                </div>
+                            </div>
+                            <div class="job-progress-wrapper">
+                                <div class="job-progress-bar-bg">
+                                    <div class="job-progress-fill" style="width: ${pct}%;"></div>
+                                </div>
+                                <div class="job-progress-text">
+                                    <span>${comp} / ${tot} Chunks Completed</span>
+                                    <span>${pct}%</span>
+                                </div>
+                            </div>
+                            ${job.recovery_message ? `
+                                <div class="recovery-alert">
+                                    <span>🛡️</span>
+                                    <span>${job.recovery_message}</span>
+                                </div>
+                            ` : ''}
+                            <div class="job-actions">
+                                ${['Interrupted', 'Paused', 'Failed', 'Recovering'].includes(job.status) ? `
+                                    <button class="btn-action btn-action-primary" onclick="resumeJob('${job.id}')">
+                                        ▶️ Resume
+                                    </button>
+                                ` : ''}
+                                ${job.status === 'Completed' ? `
+                                    <button class="btn-action btn-action-primary" onclick="viewJobSummary('${job.id}')">
+                                        📄 View Summary
+                                    </button>
+                                ` : ''}
+                                <button class="btn-action btn-action-danger" onclick="deleteJob('${job.id}')">
+                                    🗑️ Delete
+                                </button>
+                            </div>
+                        `;
+                        container.appendChild(card);
+                    });
+                }
+            }
+        });
+    </script>
+</body>
+</html>

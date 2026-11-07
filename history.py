@@ -81,6 +81,13 @@ def init_db(db_path: Optional[str] = None) -> None:
         except Exception as e:
             logger.debug("Vector store table init deferred: %s", str(e))
 
+        # Initialize resumable jobs and checkpoint tables (v1.7.0)
+        try:
+            from job_manager import init_job_tables
+            init_job_tables(db_path)
+        except Exception as e:
+            logger.debug("Job tables init deferred: %s", str(e))
+
     except Exception as e:
         logger.warning("Failed to initialize SQLite history database: %s", str(e))
 

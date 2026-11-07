@@ -289,6 +289,138 @@ def format_summary_as_text(structured):
     return "\n".join(parts).strip()
 
 
+def summarize_single_chunk(
+    chunk_content: str,
+    chunk_index: int,
+    total_chunks: int,
+    mode: str = DEFAULT_MODE,
+    provider_config: Optional[Dict[str, Any]] = None,
+    router: Optional[AIRouter] = None,
+) -> Tuple[str, RouterResult]:
+    """
+    Summarizes an individual content chunk in the Map phase (v1.7.0).
+    Returns the generated summary text and the provider routing metadata.
+    """
+    if router is None:
+        from byok import get_router, has_valid_config
+        req_payload = provider_config or {}
+        if not has_valid_config(request_data=req_payload):
+            raise SummarizerError("No AI provider configured.")
+        router = get_router(request_data=req_payload)
+
+    active_mode = mode if mode in MODES else DEFAULT_MODE
+    map_inst, map_input = build_chunk_map_prompt(chunk_content, chunk_index, total_chunks, mode=active_mode)
+    messages = [
+        {"role": "system", "content": map_inst},
+        {"role": "user", "content": map_input},
+    ]
+    try:
+        map_res = router.generate_completion(messages=messages)
+    except ProviderError as pe:
+        raise SummarizerError(str(pe))
+    except Exception as e:
+        raise SummarizerError(f"Chunk {chunk_index} summarization failed: {str(e)}")
+
+    raw_content = map_res.content
+    if isinstance(raw_content, dict):
+        content = str(raw_content.get("content") or raw_content.get("text") or "").strip()
+    else:
+        content = str(raw_content or "").strip()
+    return content, map_res
+
+
+def synthesize_reduce_summary(
+    intermediate_summaries: List[Tuple[int, str]],
+    total_chunks: int,
+    mode: str = DEFAULT_MODE,
+    custom_directive: Optional[str] = None,
+    custom_directive_enabled: Optional[bool] = None,
+    chunk_size: int = DEFAULT_CHUNK_SIZE,
+    chunk_overlap: int = DEFAULT_CHUNK_OVERLAP,
+    provider_config: Optional[Dict[str, Any]] = None,
+    router: Optional[AIRouter] = None,
+) -> Dict[str, Any]:
+    """
+    Performs the Reduce synthesis phase from intermediate chunk summaries into
+    a unified, structured JSON summary according to mode (v1.7.0).
+    """
+    if not intermediate_summaries:
+        raise SummarizerError("Cannot synthesize summary: no intermediate chunk summaries provided.")
+
+    if router is None:
+        from byok import get_router, has_valid_config
+        req_payload = provider_config or {}
+        if not has_valid_config(request_data=req_payload):
+            raise SummarizerError("No AI provider configured.")
+        router = get_router(request_data=req_payload)
+
+    active_mode = mode if mode in MODES else DEFAULT_MODE
+    active_directive = str(custom_directive or "").strip()[:1000]
+    active_enabled = bool(custom_directive_enabled) if custom_directive_enabled is not None else bool(active_directive)
+
+    combined_parts = []
+    # Preserve original sequential order
+    sorted_intermediates = sorted(intermediate_summaries, key=lambda x: x[0])
+    for chunk_num, summary_text in sorted_intermediates:
+        combined_parts.append(f"--- Section {chunk_num} of {total_chunks} Summary ---\n{summary_text}")
+
+    combined_text = "\n\n".join(combined_parts)
+
+    # Hierarchical Reduce: if combined intermediate text is exceptionally long
+    if len(combined_text) > max(chunk_size * 4, 15000):
+        sub_chunks = chunk_text(combined_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
+        sub_summaries = []
+        for s_idx, s_chunk in enumerate(sub_chunks, 1):
+            s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks), mode=active_mode)
+            sub_res = router.generate_completion(messages=[
+                {"role": "system", "content": s_inst},
+                {"role": "user", "content": s_input},
+            ])
+            sub_summaries.append((sub_res.content or "").strip())
+        combined_text = "\n\n".join(sub_summaries)
+
+    reduce_inst, reduce_input = build_reduce_prompt(
+        combined_text,
+        total_chunks,
+        mode=active_mode,
+        custom_directive=active_directive,
+        custom_directive_enabled=active_enabled,
+    )
+    reduce_messages = [
+        {"role": "system", "content": reduce_inst},
+        {"role": "user", "content": reduce_input},
+    ]
+
+    try:
+        final_res = router.generate_structured_json(messages=reduce_messages)
+    except ProviderError as pe:
+        raise SummarizerError(str(pe))
+    except Exception as e:
+        raise SummarizerError(f"Failed to synthesize final summary: {str(e)}")
+
+    result = parse_and_validate_summary(final_res.content)
+    result["mode"] = active_mode
+    result["mode_name"] = MODES[active_mode]["name"]
+    if active_directive and active_enabled:
+        result["custom_directive_applied"] = True
+        result["custom_directive"] = active_directive
+
+    # Provider transparency metadata (Phase 9)
+    result["provider"] = final_res.provider_id
+    result["provider_name"] = final_res.provider_name
+    result["model"] = final_res.model
+    result["switched_to_fallback"] = final_res.switched_to_fallback
+    if final_res.switched_to_fallback:
+        result["fallback_reason"] = final_res.fallback_reason
+
+    result["stats"] = {
+        "total_chunks": total_chunks,
+        "processed_chunks": len(intermediate_summaries),
+        "is_map_reduce": True
+    }
+    return result
+
+
 def summarize_text(
     article_text: str,
     api_key: Optional[str] = None,
@@ -299,11 +431,14 @@ def summarize_text(
     custom_directive_enabled: Optional[bool] = None,
     router: Optional[AIRouter] = None,
     provider_config: Optional[Dict[str, Any]] = None,
+    job_id: Optional[str] = None,
+    progress_callback: Optional[Any] = None,
 ):
     """
     Summarizes webpage text using modular multi-provider AI (Cloudflare Workers AI or GroqCloud).
     Supports single-pass for short content, or chunking & map-reduce for long webpages.
     Supports user-defined custom prompt directives combined harmoniously with the selected mode.
+    Supports resumable checkpointing and recovery when job_id is provided (v1.7.0).
 
     Returns:
         dict: Validated structured summary with title, overview, key_points, important_details, conclusion,
@@ -400,97 +535,151 @@ def summarize_text(
             "total_chunks": 1,
             "is_map_reduce": False
         }
+
+        if job_id:
+            try:
+                import job_manager
+                job_manager.complete_job(job_id, result)
+            except Exception as e:
+                logger.debug("Job completion record deferred: %s", str(e))
+
         return result
 
-    # Long-form / Multi-chunk path: Map-Reduce Summarization
-    intermediate_summaries = []
-    chunk_errors = []
-    routing_metadata: Optional[RouterResult] = None
+    # Long-form / Multi-chunk path: Map-Reduce Summarization with Checkpoint Recovery
+    intermediate_summaries: List[Tuple[int, str]] = []
+    completed_indices: Dict[int, str] = {}
+
+    # Inspect persistent checkpoints if job_id provided
+    if job_id:
+        try:
+            import job_manager
+            existing_chunks = job_manager.get_job_chunks(job_id)
+            if not existing_chunks:
+                job_manager.initialize_job_chunks(job_id, chunks, article_text=article_text)
+            else:
+                for ec in existing_chunks:
+                    if ec["status"] == "completed" and ec.get("summary_output"):
+                        idx = ec["chunk_index"]
+                        completed_indices[idx] = ec["summary_output"]
+                        intermediate_summaries.append((idx, ec["summary_output"]))
+            job_manager.update_job_status(job_id, job_manager.STATUS_PROCESSING)
+        except Exception as e:
+            logger.warning("Checkpoint inspection failed for job %s: %s", job_id, str(e))
 
     # Map Phase: Summarize each chunk independently
+    chunk_errors = []
     for idx, chunk in enumerate(chunks, 1):
+        # Check if already completed and checkpointed
+        if idx in completed_indices:
+            if progress_callback:
+                progress_callback({
+                    "event": "chunk_completed",
+                    "chunk_index": idx,
+                    "total_chunks": total_chunks,
+                    "resumed_from_cache": True,
+                })
+            continue
+
+        # Check if job was paused or cancelled by user
+        if job_id:
+            try:
+                import job_manager
+                job_rec = job_manager.get_job(job_id)
+                if job_rec and job_rec.get("status") in (job_manager.STATUS_PAUSED, job_manager.STATUS_CANCELLED):
+                    status_name = job_rec.get("status")
+                    raise SummarizerError(f"Job execution was {status_name.lower()} by user.")
+            except SummarizerError:
+                raise
+            except Exception:
+                pass
+
         try:
-            map_inst, map_input = build_chunk_map_prompt(chunk, idx, total_chunks, mode=active_mode)
-            messages = [
-                {"role": "system", "content": map_inst},
-                {"role": "user", "content": map_input},
-            ]
-            map_res = router.generate_completion(messages=messages)
-            if map_res.content and map_res.content.strip():
-                intermediate_summaries.append((idx, map_res.content.strip()))
-                routing_metadata = map_res
+            content, map_res = summarize_single_chunk(
+                chunk_content=chunk,
+                chunk_index=idx,
+                total_chunks=total_chunks,
+                mode=active_mode,
+                provider_config=provider_config,
+                router=router,
+            )
+            if content:
+                intermediate_summaries.append((idx, content))
+
+                # Immediately save completed chunk checkpoint before proceeding!
+                if job_id:
+                    try:
+                        import job_manager
+                        job_manager.save_chunk_checkpoint(
+                            job_id=job_id,
+                            chunk_index=idx,
+                            summary_output=content,
+                            provider=map_res.provider_id,
+                            model=map_res.model,
+                        )
+                    except Exception as ce:
+                        logger.warning("Failed to persist chunk checkpoint: %s", str(ce))
+
+                if progress_callback:
+                    progress_callback({
+                        "event": "chunk_completed",
+                        "chunk_index": idx,
+                        "total_chunks": total_chunks,
+                        "provider": map_res.provider_id,
+                        "model": map_res.model,
+                        "resumed_from_cache": False,
+                    })
+
         except ProviderError as pe:
-            # Fatal authentication errors or model errors terminate map immediately
+            if job_id:
+                try:
+                    import job_manager
+                    job_manager.record_chunk_failure(job_id, idx, str(pe))
+                except Exception:
+                    pass
+            # Fatal authentication errors terminate map immediately
             if "invalid" in str(pe).lower() or "unauthorized" in str(pe).lower():
                 raise SummarizerError(str(pe))
             chunk_errors.append((idx, str(pe)))
+            raise SummarizerError(f"Chunk {idx} failed: {str(pe)}")
         except Exception as e:
+            if job_id:
+                try:
+                    import job_manager
+                    job_manager.record_chunk_failure(job_id, idx, str(e))
+                except Exception:
+                    pass
             chunk_errors.append((idx, str(e)))
+            raise SummarizerError(f"Chunk {idx} failed: {str(e)}")
 
     if not intermediate_summaries:
         error_detail = "; ".join(f"Chunk {i}: {err}" for i, err in chunk_errors[:3])
         raise SummarizerError(f"Failed to process content chunks. Errors encountered: {error_detail}")
 
-    # Combine intermediate summaries preserving original sequential order
-    combined_parts = []
-    for chunk_num, summary_text in intermediate_summaries:
-        combined_parts.append(f"--- Section {chunk_num} of {total_chunks} Summary ---\n{summary_text}")
+    # Reduce Phase: Generate final structured summary
+    if job_id:
+        try:
+            import job_manager
+            job_manager.update_job_status(job_id, job_manager.STATUS_SYNTHESIZING)
+        except Exception:
+            pass
 
-    combined_text = "\n\n".join(combined_parts)
-
-    # Hierarchical Reduce: if combined intermediate text is exceptionally long
-    if len(combined_text) > max(chunk_size * 4, 15000):
-        sub_chunks = chunk_text(combined_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
-        sub_summaries = []
-        for s_idx, s_chunk in enumerate(sub_chunks, 1):
-            s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks), mode=active_mode)
-            sub_res = router.generate_completion(messages=[
-                {"role": "system", "content": s_inst},
-                {"role": "user", "content": s_input},
-            ])
-            sub_summaries.append(sub_res.content.strip())
-        combined_text = "\n\n".join(sub_summaries)
-
-    # Reduce Phase: Generate final structured summary from combined intermediate summaries
-    reduce_inst, reduce_input = build_reduce_prompt(
-        combined_text,
-        total_chunks,
+    final_result = synthesize_reduce_summary(
+        intermediate_summaries=intermediate_summaries,
+        total_chunks=total_chunks,
         mode=active_mode,
         custom_directive=active_directive,
         custom_directive_enabled=active_enabled,
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        provider_config=provider_config,
+        router=router,
     )
-    reduce_messages = [
-        {"role": "system", "content": reduce_inst},
-        {"role": "user", "content": reduce_input},
-    ]
 
-    try:
-        final_res = router.generate_structured_json(messages=reduce_messages)
-    except ProviderError as pe:
-        raise SummarizerError(str(pe))
-    except Exception as e:
-        raise SummarizerError(f"Failed to synthesize final summary: {str(e)}")
+    if job_id:
+        try:
+            import job_manager
+            job_manager.complete_job(job_id, final_result)
+        except Exception as ce:
+            logger.warning("Failed to complete job record %s: %s", job_id, str(ce))
 
-    result = parse_and_validate_summary(final_res.content)
-    result["mode"] = active_mode
-    result["mode_name"] = MODES[active_mode]["name"]
-    if active_directive and active_enabled:
-        result["custom_directive_applied"] = True
-        result["custom_directive"] = active_directive
-
-    # Provider transparency metadata (Phase 9)
-    result["provider"] = final_res.provider_id
-    result["provider_name"] = final_res.provider_name
-    result["model"] = final_res.model
-    result["switched_to_fallback"] = final_res.switched_to_fallback
-    if final_res.switched_to_fallback:
-        result["fallback_reason"] = final_res.fallback_reason
-
-    result["stats"] = {
-        "total_chunks": total_chunks,
-        "processed_chunks": len(intermediate_summaries),
-        "failed_chunks": len(chunk_errors),
-        "is_map_reduce": True
-    }
-
-    return result
+    return final_result
