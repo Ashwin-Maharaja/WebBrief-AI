@@ -306,13 +306,17 @@ def generate_summary_pdf(
 
 def build_pdf_filename(title: Optional[str] = None) -> str:
     """
-    Creates a safe, clean filename for downloaded PDFs.
+    Creates a safe, clean filename for downloaded PDFs, strictly neutralizing
+    path traversal attempts (e.g. '../', null bytes) and non-alphanumeric characters.
     Example: 'WebBrief_Quantum_Breakthrough_20261106.pdf'
     """
     date_str = datetime.datetime.now().strftime("%Y%m%d")
     raw = (title or "Summary").strip()
-    slug = re.sub(r"[^\w\s-]", "", raw).strip()
-    slug = re.sub(r"[-\s]+", "_", slug)[:40].strip("_")
+    # Strip any control characters, directory separators, and traversal dots
+    cleaned = re.sub(r"[\x00-\x1f\.\\/\:]", "", raw)
+    # Retain strictly alphanumeric, underscores, and hyphens
+    slug = re.sub(r"[^\w-]", "_", cleaned).strip("_")
+    slug = re.sub(r"_+", "_", slug)[:40].strip("_")
     if not slug:
         slug = "Summary"
     return f"WebBrief_{slug}_{date_str}.pdf"

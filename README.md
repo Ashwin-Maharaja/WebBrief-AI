@@ -1,7 +1,7 @@
 # WebBrief AI
 
-> **Production Release — v1.5**  
-> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
+> **Production Release — v1.5.1**  
+> An intelligent, multi-mode website summarizer powered by OpenAI and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, and personalized prompt directives.
 
 ---
 
@@ -41,7 +41,16 @@ Built with enterprise-grade SSRF defense, deployment-aware storage, and a **Brin
 
 ## 2. Features
 
-- **Hosted BYOK & Deployment-Aware Storage (New in v1.5)**:
+- **Enterprise Security & Reliability Hardening (v1.5.1)**:
+  - **Zero Hardcoded Secrets & Production Verification**: Eliminates static fallbacks. In production environments, requires an explicit 32-byte `FLASK_SECRET_KEY`; in local development, generates an ephemeral, cryptographically secure 32-byte key (`secrets.token_hex(32)`).
+  - **Defensive HTTP Security Headers**: Injects `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`, and a strict Content Security Policy (`CSP`) into every response.
+  - **Origin & Anti-CSRF Protection**: Enforces Origin and Referer validation on all mutating HTTP methods (`POST`, `PUT`, `DELETE`, `PATCH`) to block cross-origin request forging, accompanied by session anti-CSRF token verification for form submissions.
+  - **Enhanced SSRF & Redirect-Hopping Guard**: Upgrades scraper SSRF defenses with an iterative redirect loop (`allow_redirects=False`, max 5 hops) where every hop destination IP is verified against private, loopback, cloud metadata (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`), and IPv4-mapped IPv6 ranges before connecting. Rejects embedded URL credentials and restricts requests to safe web ports (`80, 443, 8080, 8443`).
+  - **Warm Serverless Multi-Tenant Isolation**: Completely bypasses server-side SQLite writes and reads in hosted serverless mode (Vercel), assigning ephemeral in-memory UUIDs and ensuring zero data leakage between concurrent visitors sharing warm containers.
+  - **DOM-Based XSS Sanitization**: Rigorously escapes all dynamic values rendered in the browser DOM (titles, URLs, excerpts, claims, and error strings) across Single, Batch, Compare, and Search views.
+  - **PDF Export Path Traversal Neutralization**: Sanitizes downloaded PDF filenames to strictly alphanumeric characters, underscores, and hyphens, preventing path traversal attacks and Content-Disposition header manipulation.
+  - **Request Body Payload Limit**: Enforces a strict 2MB maximum content length (`MAX_CONTENT_LENGTH`) to protect backend memory from denial-of-service attempts.
+- **Hosted BYOK & Deployment-Aware Storage (v1.5)**:
   - **Public Vercel Hosting Ready**: Visitors can freely use the public deployment by supplying their own OpenAI API key.
   - **In-Memory Credential Security**: Visitor API keys reside exclusively in frontend JavaScript RAM during the active tab session. Keys are **never** stored in `localStorage`, `sessionStorage`, `IndexedDB`, or browser-readable cookies, and are never written to the server's ephemeral filesystem or process environment.
   - **Zero Developer Credit Drainage**: Hosted mode strictly disables fallback to server-side developer credentials, ensuring visitors never consume developer API credits.
@@ -433,11 +442,12 @@ vercel
 | Variable | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
 | `OPENAI_API_KEY` | Optional* | None | OpenAI API key (*prompted in wizard if missing) |
-| `FLASK_SECRET_KEY` | Recommended | Random Fallback | Secret key used to sign session cookies |
+| `FLASK_SECRET_KEY` | Required in Prod | Ephemeral Dev Key | Secret key used to sign session cookies (fatal in production if missing) |
 | `FLASK_DEBUG` | Optional | `0` | Set `1` to enable Flask debugger (development only) |
 | `PORT` | Optional | `5000` | Local web server listening port |
 | `HOST` | Optional | `127.0.0.1` | Local web server binding host |
-| `SESSION_COOKIE_SECURE` | Optional | `false` | Set `true` in production when serving over HTTPS |
+| `SESSION_COOKIE_SECURE` | Optional | `false` (local) / `true` (prod) | Sets Secure flag on session cookies for HTTPS |
+| `MAX_CONTENT_LENGTH` | Optional | `2097152` (2MB) | Maximum allowed incoming request body size in bytes |
 
 ---
 
@@ -475,6 +485,7 @@ All planned features and roadmap milestones across the WebBrief AI development l
 - [x] **v1.3 — Comparative Research & Notion Integration**: Side-by-side dual-article comparison with consensus points, contradictions/disagreements, differing perspectives, structured fact claims, and comparative PDF export; official Notion REST API export for single and comparative research briefs.
 - [x] **v1.4 — Local Knowledge Retrieval & Semantic Search**: Natural-language vector embedding retrieval across saved summaries using OpenAI `text-embedding-3-small`, embedded binary SQLite float vector storage, deterministic SHA-256 caching (zero redundant billing), exact cosine similarity ranking, and excerpt matching.
 - [x] **v1.5 — Hosted BYOK & Deployment-Aware Storage**: Public Vercel serverless deployment support, strictly in-memory active tab visitor keys (never persisted on client disk or server environment), zero developer credit drainage, complete multi-user isolation via browser IndexedDB (`WebBriefDB`), anonymous visitor experience, and automated credential redaction.
+- [x] **v1.5.1 — Security & Reliability Hardening**: Comprehensive audit and remediation across 10 security vectors (SEC-01 through SEC-10): mandatory production secret key enforcement, session cookie hardening (`HttpOnly`, `SameSite=Lax`, `Secure`), defensive security headers (`CSP`, `nosniff`, `SAMEORIGIN`), anti-CSRF token & Origin verification, iterative redirect-hopping SSRF guard with cloud metadata & IPv4-mapped IPv6 defenses, complete warm serverless multi-tenant SQLite isolation, DOM-based XSS sanitization, 2MB payload limits, and PDF path traversal neutralization.
 
 ---
 

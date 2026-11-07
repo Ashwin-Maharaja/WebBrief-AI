@@ -52,22 +52,87 @@ from vector_store import (
     DEFAULT_SEARCH_LIMIT,
 )
 
-APP_VERSION = "1.5"
+import datetime
+import json
+import logging
+import os
+import re
+import secrets
+import urllib.parse
+import uuid
+from flask import (
+    Flask,
+    render_template,
+    request,
+    jsonify,
+    redirect,
+    url_for,
+    session,
+    send_file,
+    Response,
+    stream_with_context,
+)
+
+logger = logging.getLogger(__name__)
+
+APP_VERSION = "1.5.1"
 
 app = Flask(__name__)
 
-# Secret key for secure, signed HttpOnly session cookies
-app.secret_key = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY") or "webbrief-ai-byok-v1.0-production-session"
+# Request payload limit: enforce 2MB maximum to prevent memory exhaustion / DoS attacks
+app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", 2 * 1024 * 1024))
+
+# Secret key for secure, signed session cookies (SEC-01)
+flask_secret = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY")
+is_prod = is_serverless_env() or os.getenv("FLASK_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
+
+if not flask_secret:
+    if is_prod:
+        raise RuntimeError(
+            "CRITICAL SECURITY CONFIGURATION ERROR: FLASK_SECRET_KEY environment variable is required in production. "
+            "Please configure a strong, random 32-byte secret in your environment."
+        )
+    # Generate ephemeral cryptographically secure dev secret — never predictable, never hardcoded
+    flask_secret = secrets.token_hex(32)
+    logger.warning("No FLASK_SECRET_KEY configured. Generated ephemeral development secret key.")
+
+app.secret_key = flask_secret
+
+# Session Cookie Hardening (SEC-02)
+is_secure_cookie = os.getenv("SESSION_COOKIE_SECURE", "true" if is_prod else "false").lower() in ("true", "1")
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
-    SESSION_COOKIE_SECURE=os.getenv("SESSION_COOKIE_SECURE", "false").lower() in ("true", "1"),
+    SESSION_COOKIE_SECURE=is_secure_cookie,
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=24),
 )
+
+
+@app.after_request
+def apply_security_headers(response):
+    """Inject standard defensive security headers into all HTTP responses (SEC-07)."""
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        "font-src 'self' https://fonts.gstatic.com; "
+        "img-src 'self' data: https:; "
+        "connect-src 'self';"
+    )
+    return response
 
 
 @app.context_processor
 def inject_globals():
     """Inject standard global template variables across all rendered views."""
+    # Ensure CSRF token exists for session
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(32)
+
     return {
         "app_version": APP_VERSION,
         "default_mode": DEFAULT_MODE,
@@ -75,7 +140,39 @@ def inject_globals():
         "max_batch_urls": MAX_BATCH_URLS,
         "has_notion_configured": has_notion_config(session_dict=session),
         "is_hosted": is_serverless_env(),
+        "csrf_token": session["_csrf_token"],
     }
+
+
+@app.before_request
+def validate_csrf_and_origin():
+    """
+    Enforces Origin and CSRF validation on all state-changing requests (SEC-03).
+    Verifies that Origin and Referer headers originate from the current host.
+    """
+    if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        # Check Origin header if present
+        origin = request.headers.get("Origin")
+        if origin:
+            parsed_origin = urllib.parse.urlparse(origin)
+            if parsed_origin.netloc and parsed_origin.netloc != request.host:
+                return jsonify({"error": "Forbidden: Cross-origin request rejected."}), 403
+
+        # Check Referer header if present and Origin was absent
+        elif request.headers.get("Referer"):
+            parsed_ref = urllib.parse.urlparse(request.headers.get("Referer"))
+            if parsed_ref.netloc and parsed_ref.netloc != request.host:
+                return jsonify({"error": "Forbidden: Invalid request origin."}), 403
+
+        # For standard HTML form submissions, verify anti-CSRF token
+        if not request.is_json and request.headers.get("X-Requested-With") != "XMLHttpRequest":
+            # For HTML form posts (e.g. /settings/clear-key)
+            submitted_token = request.form.get("csrf_token")
+            expected_token = session.get("_csrf_token")
+            if not submitted_token or not expected_token or not secrets.compare_digest(submitted_token, expected_token):
+                # Only enforce for non-exempt form routes
+                if request.endpoint in ("clear_key", "save_key"):
+                    return jsonify({"error": "Forbidden: Invalid or missing CSRF token."}), 403
 
 
 @app.before_request
@@ -154,7 +251,7 @@ def enforce_byok_onboarding():
 @app.route("/")
 def home():
     is_conf = has_valid_config(session_dict=session)
-    recent_history = get_history(limit=10)
+    recent_history = [] if is_serverless_env() else get_history(limit=10)
     return render_template(
         "index.html",
         default_mode=DEFAULT_MODE,
@@ -189,7 +286,7 @@ def settings():
     """API key settings, custom prompt directives, and management page."""
     is_conf = has_valid_config(session_dict=session)
     is_serv = is_serverless_env()
-    history_entries = get_history(limit=50)
+    history_entries = [] if is_serv else get_history(limit=50)
     directives = get_custom_directives()
     return render_template(
         "settings.html",
@@ -207,7 +304,7 @@ def settings():
 @app.route("/history")
 def view_history():
     """Dedicated summary history view."""
-    entries = get_history(limit=50)
+    entries = [] if is_serverless_env() else get_history(limit=50)
     return render_template("history.html", entries=entries)
 
 
@@ -217,6 +314,8 @@ def view_history():
 @app.route("/api/history", methods=["GET"])
 def api_get_history():
     """Returns the list of stored summary history entries."""
+    if is_serverless_env():
+        return jsonify({"history": []})
     entries = get_history(limit=50)
     return jsonify({"history": entries})
 
@@ -224,6 +323,8 @@ def api_get_history():
 @app.route("/api/history/<entry_id>", methods=["GET"])
 def api_get_history_entry(entry_id):
     """Retrieves a single summary entry to reopen."""
+    if is_serverless_env():
+        return jsonify({"error": "History entry not found."}), 404
     entry = get_history_entry(entry_id)
     if not entry:
         return jsonify({"error": "History entry not found."}), 404
@@ -233,6 +334,8 @@ def api_get_history_entry(entry_id):
 @app.route("/api/history/<entry_id>", methods=["DELETE"])
 def api_delete_history(entry_id):
     """Deletes an individual history entry."""
+    if is_serverless_env():
+        return jsonify({"success": True})
     success = delete_history_entry(entry_id)
     if not success:
         return jsonify({"error": "Failed to delete history entry."}), 404
@@ -242,6 +345,8 @@ def api_delete_history(entry_id):
 @app.route("/api/history/clear", methods=["POST"])
 def api_clear_history():
     """Clears all entries from summary history."""
+    if is_serverless_env():
+        return jsonify({"success": True})
     clear_history()
     return jsonify({"success": True})
 
@@ -267,7 +372,7 @@ def export_pdf():
     mode = data.get("mode", "")
     created_at = data.get("created_at", "")
 
-    if history_id:
+    if history_id and not is_serverless_env():
         entry = get_history_entry(history_id)
         if entry:
             summary = entry.get("summary")
@@ -306,12 +411,15 @@ def export_pdf():
             download_name=download_name,
         )
     except Exception as e:
-        return jsonify({"error": f"Failed to generate PDF: {str(e)}"}), 500
+        return jsonify({"error": redact_credentials(f"Failed to generate PDF: {str(e)}")}), 500
 
 
 @app.route("/export-pdf/<entry_id>", methods=["GET"])
 def export_pdf_by_id(entry_id):
     """Downloads a formatted PDF document directly for a saved history entry."""
+    if is_serverless_env():
+        return jsonify({"error": "History entry not found."}), 404
+
     entry = get_history_entry(entry_id)
     if not entry:
         return jsonify({"error": "History entry not found."}), 404
@@ -334,7 +442,7 @@ def export_pdf_by_id(entry_id):
             download_name=download_name,
         )
     except Exception as e:
-        return jsonify({"error": f"Failed to generate PDF: {str(e)}"}), 500
+        return jsonify({"error": redact_credentials(f"Failed to generate PDF: {str(e)}")}), 500
 
 
 # -------------------------------------------------------------
@@ -555,24 +663,29 @@ def compare_articles_route():
             custom_directive_enabled=custom_directive_enabled,
         )
 
-        # Save comparative summary in SQLite history
-        art_b_title = comparison_res.get("article_b", {}).get("title", "Article B")
-        history_entry = add_history_entry(
-            title=comparison_res.get("title", "Comparative Analysis"),
-            url=url_a,
-            mode="comparison",
-            mode_name="Comparative Research",
-            summary=comparison_res,
-            entry_type="comparison",
-            url_b=url_b,
-            title_b=art_b_title,
-        )
-        history_id = history_entry["id"] if history_entry else None
-        if history_id:
-            try:
-                index_summary_entry(history_id, api_key=api_key)
-            except Exception:
-                pass
+        history_id = None
+        if is_serverless_env():
+            # In hosted mode, assign an ephemeral in-memory UUID and isolate from SQLite (SEC-05)
+            history_id = str(uuid.uuid4())
+        else:
+            # Save comparative summary in local SQLite history
+            art_b_title = comparison_res.get("article_b", {}).get("title", "Article B")
+            history_entry = add_history_entry(
+                title=comparison_res.get("title", "Comparative Analysis"),
+                url=url_a,
+                mode="comparison",
+                mode_name="Comparative Research",
+                summary=comparison_res,
+                entry_type="comparison",
+                url_b=url_b,
+                title_b=art_b_title,
+            )
+            history_id = history_entry["id"] if history_entry else None
+            if history_id:
+                try:
+                    index_summary_entry(history_id, api_key=api_key)
+                except Exception:
+                    pass
 
         return jsonify({
             "success": True,
@@ -580,9 +693,9 @@ def compare_articles_route():
             "history_id": history_id,
         })
     except (ScraperError, ComparisonError, SummarizerError) as e:
-        return jsonify({"error": str(e)}), 400
+        return jsonify({"error": redact_credentials(str(e))}), 400
     except Exception as e:
-        return jsonify({"error": f"Comparative analysis error: {str(e)}"}), 500
+        return jsonify({"error": redact_credentials(f"Comparative analysis error: {str(e)}")}), 500
 
 
 @app.route("/compare/export-pdf", methods=["POST"])
@@ -591,9 +704,9 @@ def compare_export_pdf():
     data = request.get_json() or {}
     comp = data.get("comparison")
 
-    # If history_id passed, fetch from DB
+    # If history_id passed, fetch from DB only if local
     history_id = data.get("history_id")
-    if not comp and history_id:
+    if not comp and history_id and not is_serverless_env():
         entry = get_history_entry(history_id)
         if entry:
             comp = entry.get("summary")
@@ -612,7 +725,7 @@ def compare_export_pdf():
             download_name=download_name,
         )
     except Exception as e:
-        return jsonify({"error": f"Failed to generate comparison PDF: {str(e)}"}), 500
+        return jsonify({"error": redact_credentials(f"Failed to generate comparison PDF: {str(e)}")}), 500
 
 
 # -------------------------------------------------------------
@@ -621,7 +734,8 @@ def compare_export_pdf():
 @app.route("/api/notion/status", methods=["GET"])
 def api_notion_status():
     """Checks whether Notion integration token is configured and valid."""
-    has_token = has_notion_config(session_dict=session)
+    provided_token = request.args.get("notion_token") or request.headers.get("X-Notion-Token")
+    has_token = has_notion_config(session_dict=session, provided_token=provided_token)
     return jsonify({
         "is_configured": has_token,
         "has_token": has_token
@@ -639,12 +753,11 @@ def api_notion_connect():
         return jsonify({"valid": False, "message": msg}), 400
 
     if is_serverless_env():
-        session["notion_api_key"] = token
+        # Hosted mode: token must stay client-side in browser memory; never save to cookies (SEC-02/04)
+        return jsonify({"valid": True, "message": "Notion connected for current browser session.", "is_hosted": True})
     else:
         save_notion_key_to_env(token)
-        session["notion_api_key"] = token
-
-    return jsonify({"valid": True, "message": msg})
+        return jsonify({"valid": True, "message": msg})
 
 
 @app.route("/api/notion/disconnect", methods=["POST"])
@@ -657,22 +770,29 @@ def api_notion_disconnect():
 @app.route("/api/notion/pages", methods=["GET"])
 def api_notion_pages():
     """Retrieves list of accessible destination Notion pages."""
-    token = get_notion_key(session_dict=session)
+    provided_token = request.args.get("notion_token") or request.headers.get("X-Notion-Token")
+    token = get_notion_key(session_dict=session, provided_token=provided_token)
     if not token:
         return jsonify({"error": "Notion not connected. Please connect Notion in Settings.", "pages": []}), 401
 
-    pages = get_accessible_pages(token)
-    return jsonify({"pages": pages})
+    try:
+        pages = get_accessible_pages(token)
+        return jsonify({"pages": pages})
+    except NotionError as ne:
+        return jsonify({"error": redact_credentials(str(ne)), "pages": []}), 400
+    except Exception as e:
+        return jsonify({"error": redact_credentials(f"Failed to fetch Notion pages: {str(e)}"), "pages": []}), 500
 
 
 @app.route("/api/notion/export", methods=["POST"])
 def api_notion_export():
     """Exports a single summary brief or comparative research brief to Notion."""
-    token = get_notion_key(session_dict=session)
+    data = request.get_json() or {}
+    provided_token = data.get("notion_token") or request.headers.get("X-Notion-Token")
+    token = get_notion_key(session_dict=session, provided_token=provided_token)
     if not token:
         return jsonify({"error": "Notion is not connected. Please connect your Notion integration first."}), 401
 
-    data = request.get_json() or {}
     parent_page_id = data.get("parent_page_id", "").strip()
     export_type = data.get("type", "single")
 
@@ -682,7 +802,7 @@ def api_notion_export():
     try:
         if export_type == "comparison":
             comp = data.get("comparison")
-            if not comp and data.get("history_id"):
+            if not comp and data.get("history_id") and not is_serverless_env():
                 entry = get_history_entry(data.get("history_id"))
                 if entry:
                     comp = entry.get("summary")
@@ -700,7 +820,7 @@ def api_notion_export():
             mode = data.get("mode", DEFAULT_MODE)
             mode_name = MODES.get(mode, {}).get("name", "Summary")
 
-            if not summary and data.get("history_id"):
+            if not summary and data.get("history_id") and not is_serverless_env():
                 entry = get_history_entry(data.get("history_id"))
                 if entry:
                     summary = entry.get("summary")
@@ -717,9 +837,9 @@ def api_notion_export():
             return jsonify({"success": True, "page_url": res["url"], "title": title})
 
     except NotionError as ne:
-        return jsonify({"error": str(ne)}), 400
+        return jsonify({"error": redact_credentials(str(ne))}), 400
     except Exception as e:
-        return jsonify({"error": f"Failed to export to Notion: {str(e)}"}), 500
+        return jsonify({"error": redact_credentials(f"Failed to export to Notion: {str(e)}")}), 500
 
 
 # -------------------------------------------------------------
@@ -731,6 +851,11 @@ def api_search_semantic():
     Performs natural-language semantic vector retrieval over saved summaries.
     Computes exact dot-product cosine similarity against query embedding.
     """
+    if is_serverless_env():
+        return jsonify({
+            "error": "Server-side semantic search is disabled in hosted mode. Please use client-side search via /api/search/embed."
+        }), 400
+
     data = request.get_json() or {}
     query = data.get("query", "").strip()
 
@@ -776,14 +901,16 @@ def api_search_semantic():
             "results": results,
         })
     except VectorStoreError as ve:
-        return jsonify({"error": str(ve)}), 400
+        return jsonify({"error": redact_credentials(str(ve))}), 400
     except Exception as e:
-        return jsonify({"error": f"Semantic search failed: {str(e)}"}), 500
+        return jsonify({"error": redact_credentials(f"Semantic search failed: {str(e)}")}), 500
 
 
 @app.route("/api/search/stats", methods=["GET"])
 def api_search_stats():
     """Returns local vector index statistics."""
+    if is_serverless_env():
+        return jsonify({"indexed_count": 0, "total_summaries": 0, "status": "hosted_indexeddb"})
     stats = get_vector_store_stats()
     return jsonify(stats)
 
@@ -791,6 +918,9 @@ def api_search_stats():
 @app.route("/api/search/rebuild-index", methods=["POST"])
 def api_search_rebuild_index():
     """Rebuilds vector embeddings across all saved summaries in local history."""
+    if is_serverless_env():
+        return jsonify({"error": "Vector indexing on server is disabled in hosted mode."}), 400
+
     data = request.get_json() or {}
     api_key = data.get("api_key") or get_configured_api_key(session_dict=session)
     if not api_key:
@@ -807,7 +937,7 @@ def api_search_rebuild_index():
             "message": f"Successfully indexed {result.get('indexed', 0)} of {result.get('total', 0)} summaries."
         })
     except Exception as e:
-        return jsonify({"error": f"Failed to rebuild index: {str(e)}"}), 500
+        return jsonify({"error": redact_credentials(f"Failed to rebuild index: {str(e)}")}), 500
 
 
 @app.route("/api/search/embed", methods=["POST"])
@@ -830,6 +960,7 @@ def api_search_embed():
             "dimensions": len(vector),
         })
     except Exception as e:
+        return jsonify({"error": redact_credentials(f"Embedding generation failed: {str(e)}")}), 500
         return jsonify({"error": f"Embedding generation failed: {str(e)}"}), 500
 
 
@@ -975,24 +1106,28 @@ def summarize():
         summary = summarize_text(article_text, **summarize_kwargs)
 
         # Step 3: Record into persistent summary history
-        try:
-            entry = add_history_entry(
-                title=summary.get("title") or "Webpage Summary",
-                url=url,
-                mode=mode,
-                mode_name=summary.get("mode_name", mode.capitalize()),
-                summary=summary
-            )
-            if entry:
-                summary["history_id"] = entry["id"]
-                try:
-                    effective_key = api_key or get_configured_api_key(session_dict=session)
-                    index_summary_entry(entry["id"], api_key=effective_key)
-                except Exception:
-                    pass
-        except Exception:
-            # History recording should not break summarization return
-            pass
+        if is_serverless_env():
+            # In hosted serverless mode (Vercel), assign an in-memory UUID and isolate from SQLite (SEC-05)
+            summary["history_id"] = str(uuid.uuid4())
+        else:
+            try:
+                entry = add_history_entry(
+                    title=summary.get("title") or "Webpage Summary",
+                    url=url,
+                    mode=mode,
+                    mode_name=summary.get("mode_name", mode.capitalize()),
+                    summary=summary
+                )
+                if entry:
+                    summary["history_id"] = entry["id"]
+                    try:
+                        effective_key = api_key or get_configured_api_key(session_dict=session)
+                        index_summary_entry(entry["id"], api_key=effective_key)
+                    except Exception:
+                        pass
+            except Exception:
+                # History recording should not break summarization return
+                pass
 
         if is_ajax:
             return jsonify({

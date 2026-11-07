@@ -65,23 +65,16 @@ def redact_credentials(text: str) -> str:
 
 def get_configured_api_key(session_dict: Optional[dict] = None) -> Optional[str]:
     """
-    Retrieves the currently active OpenAI API key from the environment or Flask session.
-    In hosted/serverless mode, returns None if checking environment variables to prevent
-    using any developer API key for visitors (PART A Requirement 7 & 8).
+    Retrieves the currently active OpenAI API key.
+    In hosted/serverless mode, returns None to strictly prevent using any developer API key for visitors.
+    In local self-hosted mode, reads exclusively from process environment (.env).
+    Never reads or exposes credentials from client session cookies.
     """
-    # 1. Check Flask session if provided (useful for serverless/hosted BYOK)
-    if session_dict and isinstance(session_dict, dict):
-        session_key = session_dict.get(ENV_KEY_NAME)
-        if session_key and isinstance(session_key, str):
-            clean_session_key = session_key.strip()
-            if clean_session_key.lower() not in PLACEHOLDER_KEYS:
-                return clean_session_key
-
     # In serverless/hosted mode, NEVER fall back to developer's server environment variable
     if is_serverless_env():
         return None
 
-    # 2. Check process environment variables (local self-hosted mode only)
+    # Check process environment variables (local self-hosted mode only)
     env_key = os.getenv(ENV_KEY_NAME)
     if env_key and isinstance(env_key, str):
         clean_env_key = env_key.strip()
@@ -175,10 +168,8 @@ def save_api_key_to_env(
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_path = os.path.join(workspace_dir, ".env")
 
-    # If running in serverless environment (e.g. Vercel), do not write to filesystem
+    # If running in serverless environment (e.g. Vercel), do not write to filesystem or cookies
     if is_serverless_env():
-        if session_dict is not None and isinstance(session_dict, dict):
-            session_dict[ENV_KEY_NAME] = clean_key
         return True, "API key verified for active browser session."
 
     # Check if .env file already exists
@@ -232,17 +223,12 @@ def save_api_key_to_env(
         os.environ[ENV_KEY_NAME] = clean_key
         load_dotenv(env_path, override=True)
 
-        if session_dict is not None and isinstance(session_dict, dict):
-            session_dict[ENV_KEY_NAME] = clean_key
-
         return True, "API key successfully saved and active."
 
     except (OSError, PermissionError) as e:
-        # Fallback to session / memory if filesystem is read-only (e.g. serverless)
+        # If filesystem write is restricted on local machine
         os.environ[ENV_KEY_NAME] = clean_key
-        if session_dict is not None and isinstance(session_dict, dict):
-            session_dict[ENV_KEY_NAME] = clean_key
-        return True, "API key active for current session (filesystem write restricted)."
+        return True, "API key active for current process (filesystem write restricted)."
     except Exception as e:
         return False, f"Failed to save configuration file: {str(e)}"
 

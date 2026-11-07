@@ -33,7 +33,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.5</span>
+                    <span class="badge">v1.5.1</span>
                 </div>
             </div>
             
@@ -138,6 +138,7 @@
             </div>
 
             <form id="summarize-form" action="/summarize" method="POST" novalidate>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 
                 <!-- Single URL Input Container -->
                 <div id="single-url-container">
@@ -1382,22 +1383,22 @@
                 let bodyHtml = "";
                 if (isSuccess && item.summary) {
                     const sum = item.summary;
-                    const overviewHtml = sum.overview ? `<p style="font-size: 14px; line-height: 1.6; margin-bottom: 12px; color: var(--text-secondary);">${sum.overview}</p>` : "";
+                    const overviewHtml = sum.overview ? `<p style="font-size: 14px; line-height: 1.6; margin-bottom: 12px; color: var(--text-secondary);">${escapeHtml(sum.overview)}</p>` : "";
                     const keyPointsHtml = Array.isArray(sum.key_points) && sum.key_points.length > 0
                         ? `<h4 style="font-size: 13px; font-weight: 700; margin-bottom: 6px; color: var(--text-primary);">Key Takeaways:</h4>
                            <ul style="font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); padding-left: 20px; margin-bottom: 12px;">
-                           ${sum.key_points.map(pt => `<li>${pt}</li>`).join("")}
+                           ${sum.key_points.map(pt => `<li>${escapeHtml(pt)}</li>`).join("")}
                            </ul>`
                         : "";
                     const detailsHtml = Array.isArray(sum.important_details) && sum.important_details.length > 0
                         ? `<h4 style="font-size: 13px; font-weight: 700; margin-bottom: 6px; color: var(--text-primary);">Important Details:</h4>
                            <ul style="font-size: 13.5px; line-height: 1.6; color: var(--text-secondary); padding-left: 20px; margin-bottom: 12px;">
-                           ${sum.important_details.map(d => `<li>${d}</li>`).join("")}
+                           ${sum.important_details.map(d => `<li>${escapeHtml(d)}</li>`).join("")}
                            </ul>`
                         : "";
                     const conclusionHtml = sum.conclusion
                         ? `<div style="background: var(--bg-tertiary); padding: 10px 14px; border-radius: 8px; font-size: 13px; font-weight: 500; color: var(--text-primary);">
-                           🎯 <b>Conclusion:</b> ${sum.conclusion}
+                           🎯 <b>Conclusion:</b> ${escapeHtml(sum.conclusion)}
                            </div>`
                         : "";
 
@@ -1407,7 +1408,7 @@
                         ${detailsHtml}
                         ${conclusionHtml}
                         <div style="margin-top: 14px; display: flex; gap: 8px; justify-content: flex-end;">
-                            ${item.history_id ? `<a href="/export-pdf/${item.history_id}" class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px; text-decoration: none;">Download PDF</a>` : ''}
+                            ${item.history_id ? `<a href="/export-pdf/${encodeURIComponent(item.history_id)}" class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px; text-decoration: none;">Download PDF</a>` : ''}
                             <button type="button" class="btn btn-secondary" style="font-size: 12px; padding: 4px 10px;" onclick="reopenBatchItemDirect(${idx})">
                                 Open in Full View
                             </button>
@@ -1416,7 +1417,7 @@
                 } else {
                     bodyHtml = `
                         <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.2); border-radius: 8px; padding: 12px; color: #ef4444; font-size: 13px;">
-                            <strong>Error:</strong> ${item.error || "Unable to summarize this webpage."}
+                            <strong>Error:</strong> ${escapeHtml(item.error || "Unable to summarize this webpage.")}
                         </div>
                         <div style="margin-top: 12px; display: flex; justify-content: flex-end;">
                             <button type="button" class="btn-retry-item" onclick="retryBatchItem('${encodeURIComponent(item.url)}', ${idx})">
@@ -1429,11 +1430,11 @@
                 card.innerHTML = `
                     <div class="batch-item-header" onclick="toggleBatchItemBody(${idx})">
                         <div class="batch-item-title-group">
-                            <div class="batch-item-title">${titleText}</div>
-                            <div class="batch-item-url">${item.url}</div>
+                            <div class="batch-item-title">${escapeHtml(titleText)}</div>
+                            <div class="batch-item-url">${escapeHtml(item.url)}</div>
                         </div>
                         <div class="batch-item-status-group">
-                            <span class="badge" style="background: var(--bg-tertiary); font-size: 11px;">${item.mode_name || 'Quick'}</span>
+                            <span class="badge" style="background: var(--bg-tertiary); font-size: 11px;">${escapeHtml(item.mode_name || 'Quick')}</span>
                             ${statusBadge}
                             <span style="font-size: 14px; color: var(--text-muted); margin-left: 4px;">▼</span>
                         </div>
@@ -1781,7 +1782,7 @@
                         box.className = "compare-conflict-box";
                         box.innerHTML = `
                             <span class="conflict-icon">⚠️</span>
-                            <div class="conflict-text"><strong>CONFLICT / DISAGREEMENT:</strong> ${cd}</div>
+                            <div class="conflict-text"><strong>CONFLICT / DISAGREEMENT:</strong> ${escapeHtml(cd)}</div>
                         `;
                         conflictContainer.appendChild(box);
                     });
@@ -1818,9 +1819,9 @@
                     comp.key_facts_claims.forEach(c => {
                         const tr = document.createElement("tr");
                         tr.innerHTML = `
-                            <td><strong>${c.topic || 'Point'}</strong></td>
-                            <td>${c.article_a_claim || '—'}</td>
-                            <td>${c.article_b_claim || '—'}</td>
+                            <td><strong>${escapeHtml(c.topic || 'Point')}</strong></td>
+                            <td>${escapeHtml(c.article_a_claim || '—')}</td>
+                            <td>${escapeHtml(c.article_b_claim || '—')}</td>
                         `;
                         claimsTbody.appendChild(tr);
                     });
@@ -1859,12 +1860,12 @@
                 if (conc && (conc.article_a_conclusion || conc.article_b_conclusion || conc.comparison_note)) {
                     if (conc.article_a_conclusion) {
                         const d = document.createElement("div");
-                        d.innerHTML = `<strong>Source A Conclusion:</strong> <span style="color: var(--text-secondary);">${conc.article_a_conclusion}</span>`;
+                        d.innerHTML = `<strong>Source A Conclusion:</strong> <span style="color: var(--text-secondary);">${escapeHtml(conc.article_a_conclusion)}</span>`;
                         concContainer.appendChild(d);
                     }
                     if (conc.article_b_conclusion) {
                         const d = document.createElement("div");
-                        d.innerHTML = `<strong>Source B Conclusion:</strong> <span style="color: var(--text-secondary);">${conc.article_b_conclusion}</span>`;
+                        d.innerHTML = `<strong>Source B Conclusion:</strong> <span style="color: var(--text-secondary);">${escapeHtml(conc.article_b_conclusion)}</span>`;
                         concContainer.appendChild(d);
                     }
                     if (conc.comparison_note) {
@@ -1873,9 +1874,13 @@
                         d.style.padding = "10px 14px";
                         d.style.borderRadius = "8px";
                         d.style.marginTop = "6px";
-                        d.innerHTML = `🔍 <strong>Comparative Divergence / Alignment:</strong> ${conc.comparison_note}`;
+                        d.innerHTML = `🔍 <strong>Comparative Divergence / Alignment:</strong> ${escapeHtml(conc.comparison_note)}`;
                         concContainer.appendChild(d);
                     }
+                    concSec.style.display = "block";
+                } else {
+                    concSec.style.display = "none";
+                }
                     concSec.style.display = "block";
                 } else {
                     concSec.style.display = "none";

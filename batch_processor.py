@@ -13,6 +13,8 @@ from typing import List, Dict, Any, Tuple, Optional, Callable
 from scraper import scrape_article, validate_safe_url, ScraperError
 from summarizer import summarize_text, SummarizerError, MODES, DEFAULT_MODE
 from history import add_history_entry, get_custom_directives
+from byok import is_serverless_env
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -141,8 +143,8 @@ def process_single_item(
         result_item["title"] = summary.get("title") or "Webpage Summary"
         result_item["summary"] = summary
 
-        # Step 4: Record history entry individually
-        if record_history:
+        # Step 4: Record history entry individually (Local mode only — hosted mode relies on client IndexedDB)
+        if record_history and not is_serverless_env():
             try:
                 hist_entry = add_history_entry(
                     title=result_item["title"],
@@ -161,6 +163,10 @@ def process_single_item(
                         pass
             except Exception as e:
                 logger.warning("Could not record history for %s: %s", safe_url, str(e))
+        elif is_serverless_env():
+            generated_id = str(uuid.uuid4())
+            result_item["history_id"] = generated_id
+            summary["history_id"] = generated_id
 
     except ScraperError as se:
         result_item["status"] = "failed"

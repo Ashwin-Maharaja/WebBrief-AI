@@ -1,7 +1,36 @@
+# Environment files and secrets
 .env
-venv/
+.env.*
+!.env.example
+
+# Python runtime & caches
 __pycache__/
+*.py[cod]
+*$py.class
 *.swp
-*.pyc
+*.swo
+
+# Virtual environments
+venv/
+env/
+ENV/
+.venv/
+
+# Local databases and SQLite journals
 *.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
 data/
+
+# Testing & scratch artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+scratch/
+
+# OS-specific
+.DS_Store
+Thumbs.db
+

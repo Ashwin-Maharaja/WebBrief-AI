@@ -174,7 +174,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.5</span>
+                    <span class="badge">v1.5.1</span>
                 </div>
             </div>
             <p class="tagline">Bring Your Own Key (BYOK) Configuration & Security Onboarding</p>
@@ -218,6 +218,7 @@
             </div>
 
             <form id="setup-form" action="{{ url_for('save_key') }}" method="POST" novalidate>
+                <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
                 
                 <div class="form-group">
                     <label for="api-key-input" class="form-label">

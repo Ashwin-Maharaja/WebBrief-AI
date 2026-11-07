@@ -27,14 +27,16 @@ class NotionError(Exception):
 # -------------------------------------------------------------
 # Credential Management (BYOK)
 # -------------------------------------------------------------
-def get_notion_key(session_dict: Optional[Dict[str, Any]] = None) -> Optional[str]:
+def get_notion_key(provided_token: Optional[str] = None, session_dict: Optional[Dict[str, Any]] = None) -> Optional[str]:
     """
-    Retrieves the Notion integration token from the session or environment.
-    Never exposes credentials to logs or client scripts.
+    Retrieves the Notion integration token.
+    If provided directly in request parameters (e.g. hosted in-memory submission), uses it.
+    Otherwise in local self-hosted mode, reads strictly from process environment.
+    Never reads or exposes credentials in client session cookies.
     """
-    if session_dict and session_dict.get("notion_api_key"):
-        token = str(session_dict["notion_api_key"]).strip()
-        if token:
+    if provided_token and str(provided_token).strip():
+        token = str(provided_token).strip()
+        if token.startswith("secret_") or token.startswith("ntn_"):
             return token
 
     token = os.getenv("NOTION_API_KEY") or os.getenv("NOTION_TOKEN")
@@ -44,9 +46,9 @@ def get_notion_key(session_dict: Optional[Dict[str, Any]] = None) -> Optional[st
     return None
 
 
-def has_notion_config(session_dict: Optional[Dict[str, Any]] = None) -> bool:
+def has_notion_config(session_dict: Optional[Dict[str, Any]] = None, provided_token: Optional[str] = None) -> bool:
     """Returns True if a Notion integration token is configured."""
-    key = get_notion_key(session_dict)
+    key = get_notion_key(provided_token=provided_token)
     return bool(key and len(key) >= 10)
 
 
@@ -459,8 +461,8 @@ def create_notion_page(
         raise NotionError("Missing Notion integration token. Please connect Notion in Settings.")
 
     clean_parent = parent_page_id.strip().replace("-", "")
-    if not clean_parent:
-        raise NotionError("Please select an accessible destination Notion page.")
+    if not clean_parent or not re.match(r"^[0-9a-fA-F]{32}$", clean_parent):
+        raise NotionError("Invalid destination Notion Page ID format. Expected a 32-character hexadecimal page ID.")
 
     # Step 1: Initial page creation with first chunk of blocks (up to 95)
     first_chunk = blocks[:95]

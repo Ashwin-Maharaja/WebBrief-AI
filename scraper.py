@@ -22,9 +22,15 @@ def is_safe_ip(ip_str: str) -> bool:
     """
     Returns True if the IP address is a public, routable IP,
     and not private, loopback, link-local, reserved, multicast, or unspecified.
+    Explicitly handles IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) and cloud metadata services.
     """
     try:
         ip = ipaddress.ip_address(ip_str)
+
+        # Check IPv4-mapped IPv6 address (e.g. ::ffff:127.0.0.1)
+        if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
+            return is_safe_ip(str(ip.ipv4_mapped))
+
         if (
             ip.is_private
             or ip.is_loopback
@@ -34,6 +40,19 @@ def is_safe_ip(ip_str: str) -> bool:
             or ip.is_unspecified
         ):
             return False
+
+        # Explicit Cloud Metadata IP defense
+        # AWS/GCP/Azure link-local metadata 169.254.169.254
+        # Alibaba Cloud metadata 100.100.100.200
+        # AWS IMDSv2 IPv6 metadata fd00:ec2::254
+        metadata_ips = {
+            "169.254.169.254",
+            "100.100.100.200",
+            "fd00:ec2::254",
+        }
+        if str(ip).lower() in metadata_ips:
+            return False
+
         return True
     except ValueError:
         return False
@@ -43,6 +62,7 @@ def validate_safe_url(url: str) -> str:
     """
     Validates that a URL is well-formed, uses HTTP or HTTPS, and does not target
     localhost, internal private networks, cloud metadata services, or link-local addresses (SSRF prevention).
+    Rejects URLs with embedded user credentials or unauthorized ports.
 
     Returns:
         The normalized URL string if valid.
@@ -64,6 +84,16 @@ def validate_safe_url(url: str) -> str:
     if parsed.scheme.lower() not in ("http", "https"):
         raise ScraperError("Invalid URL scheme. Only HTTP and HTTPS URLs are supported.")
 
+    # Rejection of embedded credentials (user:pass@host)
+    if parsed.username or parsed.password:
+        raise ScraperError("URLs with embedded user credentials are not allowed for security.")
+
+    # Port restriction: only standard web ports allowed
+    if parsed.port:
+        allowed_ports = {80, 443, 8080, 8443}
+        if parsed.port not in allowed_ports:
+            raise ScraperError(f"Access to non-standard port {parsed.port} is restricted for security.")
+
     hostname = parsed.hostname
     if not hostname:
         raise ScraperError("Invalid URL format: missing host domain.")
@@ -76,6 +106,8 @@ def validate_safe_url(url: str) -> str:
         or lower_host.endswith(".local")
         or lower_host.endswith(".internal")
         or lower_host.endswith(".lan")
+        or lower_host.endswith(".corp")
+        or lower_host.endswith(".home")
     ):
         raise ScraperError(
             "Access to internal, loopback, or private addresses is restricted for security."
@@ -154,7 +186,8 @@ def extract_readable_content(html: str) -> tuple[str, str]:
 def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
     """
     Attempts to fetch webpage HTML statically using requests.
-    Enforces SSRF validation on redirects.
+    Enforces strict pre-flight SSRF validation on every redirect hop (max 5 hops)
+    with allow_redirects=False to prevent DNS rebinding and internal network pivot attacks.
     """
     headers = {
         "User-Agent": (
@@ -166,24 +199,40 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
         "Accept-Language": "en-US,en;q=0.9",
     }
 
+    current_url = url
+    max_redirects = 5
     response = None
+
     try:
-        response = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        with requests.Session() as session:
+            for _ in range(max_redirects):
+                # Validate every hop before connection
+                validated_url = validate_safe_url(current_url)
 
-        # Re-validate redirect history and final URL destination
-        history = getattr(response, "history", None)
-        if isinstance(history, (list, tuple)):
-            for resp in history:
-                redirect_url = getattr(resp, "url", None)
-                if isinstance(redirect_url, str):
-                    validate_safe_url(redirect_url)
+                response = session.get(
+                    validated_url,
+                    headers=headers,
+                    timeout=timeout,
+                    allow_redirects=False,
+                )
 
-        final_url = getattr(response, "url", None)
-        if isinstance(final_url, str):
-            validate_safe_url(final_url)
+                # Check if response is a redirect
+                if response.is_redirect or response.status_code in (301, 302, 303, 307, 308):
+                    location = response.headers.get("Location")
+                    if not location:
+                        break
+                    # Resolve relative redirect URLs safely
+                    next_url = urllib.parse.urljoin(current_url, location)
+                    current_url = validate_safe_url(next_url)
+                    continue
 
-        response.raise_for_status()
-        return response.text
+                # Final response reached
+                break
+            else:
+                raise ScraperError("Too many redirects (exceeded limit of 5).")
+
+            response.raise_for_status()
+            return response.text
 
     except requests.exceptions.MissingSchema:
         raise ScraperError("Invalid URL schema. Please include http:// or https://.")
@@ -203,6 +252,8 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
             raise ScraperError(f"Access denied by the website (HTTP {status_code}). Automated scraping may be restricted.")
         else:
             raise ScraperError(f"Website returned an error (HTTP {status_code}).")
+    except ScraperError:
+        raise
     except requests.exceptions.RequestException as e:
         raise ScraperError(f"Failed to fetch webpage: {str(e)}")
 
@@ -258,6 +309,12 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
                     try:
                         parsed_req = urllib.parse.urlparse(req_url)
                         if parsed_req.scheme.lower() not in ("http", "https"):
+                            route.abort()
+                            return
+                        if parsed_req.username or parsed_req.password:
+                            route.abort()
+                            return
+                        if parsed_req.port and parsed_req.port not in (80, 443, 8080, 8443):
                             route.abort()
                             return
                         validate_safe_url(req_url)
