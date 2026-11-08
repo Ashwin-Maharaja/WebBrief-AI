@@ -88,6 +88,10 @@ app = Flask(
     template_folder=os.path.join(BASE_DIR, "templates"),
     static_folder=os.path.join(BASE_DIR, "static"),
 )
+
+from werkzeug.middleware.proxy_fix import ProxyFix
+app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
 handler = app
 
 # Request payload limit: enforce 2MB maximum
@@ -258,9 +262,16 @@ def validate_csrf_and_origin():
 def enforce_byok_onboarding():
     """
     Enforces the multi-provider BYOK onboarding flow.
-    If no valid AI provider credentials exist, redirects users to the dedicated /setup wizard.
+    If no valid AI provider credentials exist in local self-hosted mode,
+    redirects users to the dedicated /setup wizard.
+    In hosted serverless mode (Vercel), credentials live in browser memory.
     """
+    if request.endpoint is None:
+        return None
+
     exempt_endpoints = {
+        "home",
+        "api_index",
         "setup",
         "settings",
         "save_key",
@@ -298,7 +309,8 @@ def enforce_byok_onboarding():
     if request.endpoint in exempt_endpoints:
         return None
 
-    if is_serverless_env() and request.endpoint in ("home",):
+    if is_serverless_env():
+        # Hosted mode: visitors supply BYOK credentials in browser memory, never redirect GET requests
         return None
 
     # Check local configuration
@@ -335,6 +347,7 @@ def health_check():
 
 
 @app.route("/")
+@app.route("/api/index")
 def home():
     is_conf = has_valid_config(session_dict=session)
     recent_history = [] if is_serverless_env() else get_history(limit=10)
