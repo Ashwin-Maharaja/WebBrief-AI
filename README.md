@@ -1,6 +1,8 @@
+> **v1.6.2 update:** Optional Redis-backed encrypted temporary BYOK vault is available. See [release notes](RELEASE_v1.6.2.md). The default hosted browser-memory flow remains supported.
+
 # WebBrief AI
 
-> **Production Release — v1.6.1**  
+> **Production Release — v1.6.2**  
 > An intelligent, multi-mode website summarizer powered by a modular multi-provider AI architecture (Cloudflare Workers AI & GroqCloud) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and automatic provider failover routing.
 
 ---
@@ -42,7 +44,7 @@ In **v1.6.0**, WebBrief AI upgrades its intelligence layer from a single vendor 
 
 ---
 
-## 2. What's New in v1.6.1 (Maintenance & Security Patch)
+## 2. What's New in v1.6.2 (Maintenance & Security Patch)
 
 - **Production Secret-Key Enforcement**: Strict enforcement requiring an explicit, cryptographically random FLASK_SECRET_KEY in production environments; development mode uses safe ephemeral 32-byte secret generation with explicit warnings.
 - **Universal Anti-CSRF Token Validation**: Universal CSRF token validation across all state-changing endpoints (POST, PUT, DELETE, PATCH) via X-CSRF-Token headers, form payloads, and automated frontend etch interceptors.

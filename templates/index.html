@@ -51,6 +51,7 @@
             document.documentElement.setAttribute("data-theme", savedTheme);
         })();
         window.__WEBBRIEF_IS_HOSTED = {{ 'true' if is_hosted else 'false' }};
+        window.__WEBBRIEF_VAULT_ENABLED = {{ 'true' if vault_enabled else 'false' }};
     </script>
     <script src="{{ url_for('static', filename='storage_adapter.js') }}"></script>
 </head>
@@ -140,7 +141,7 @@
                     <span style="color: var(--text-muted); font-size: 11.5px;">Free tier compatible</span>
                 </div>
                 <p style="font-size: 11.5px; color: var(--text-muted); margin-top: 8px; line-height: 1.45;">
-                    🛡️ <b>Hosted Privacy Guarantee:</b> Your credentials are held strictly in browser memory for this tab. They are transmitted over HTTPS to your chosen provider and never saved to cookies, localStorage, or server disks.
+                    🛡️ <b>BYOK Privacy:</b> {% if vault_enabled %}Your keys are encrypted in temporary server-side storage and expire after inactivity. No API keys are stored in browser cookies or localStorage.{% else %}Your keys remain in this tab's memory and are sent over HTTPS only for provider requests. No keys are saved to cookies, localStorage or server disks.{% endif %}
                 </p>
             </div>
             {% endif %}
@@ -1022,6 +1023,20 @@
                 });
                 const data = await res.json();
                 if (res.ok && data.valid) {
+                    if (window.__WEBBRIEF_VAULT_ENABLED) {
+                        const stored = await fetch("/api/credentials", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(Object.assign({ primary_provider: provider }, payload))
+                        });
+                        if (!stored.ok) throw new Error("Could not save temporary credentials");
+                    }
+                    if (window.__WEBBRIEF_VAULT_ENABLED) {
+                        const tokenInput = document.getElementById("hosted-cf-token");
+                        const groqInput = document.getElementById("hosted-api-key-input");
+                        if (tokenInput) tokenInput.value = "";
+                        if (groqInput) groqInput.value = "";
+                    }
                     if (provider === "cloudflare") {
                         StorageAdapter.setProviderConfig({
                             primary_provider: "cloudflare",
@@ -1036,11 +1051,14 @@
                     }
                     if (alertBox) {
                         alertBox.style.color = "#10b981";
-                        alertBox.textContent = "✓ Credentials verified & active in session memory!";
+                        alertBox.textContent = window.__WEBBRIEF_VAULT_ENABLED
+                            ? "✓ Credentials verified and encrypted for this temporary session!"
+                            : "✓ Credentials verified & active in session memory!";
                     }
                     if (clearBtn) clearBtn.style.display = "inline-flex";
                     if (statusLabel) {
-                        statusLabel.textContent = "● Credentials Active in Session Memory";
+                        statusLabel.textContent = window.__WEBBRIEF_VAULT_ENABLED
+                            ? "● Temporary Encrypted Session Active" : "● Credentials Active in Session Memory";
                         statusLabel.style.color = "#10b981";
                         statusLabel.style.fontWeight = "600";
                     }
@@ -1060,6 +1078,9 @@
         };
 
         window.clearHostedKey = function() {
+            if (window.__WEBBRIEF_VAULT_ENABLED) {
+                fetch("/api/credentials", {method: "DELETE"}).catch(() => {});
+            }
             StorageAdapter.clearCredentials();
             const cfId = document.getElementById("hosted-cf-id");
             const cfToken = document.getElementById("hosted-cf-token");

@@ -18,6 +18,7 @@
 
     // Private in-memory key storage (never written to web storage)
     let _inMemoryApiKey = '';
+    let _vaultActive = false;
     let _inMemoryProviderConfig = {
         primary_provider: 'cloudflare',
         cloudflare_account_id: '',
@@ -29,6 +30,24 @@
         fallback_provider: 'groq',
         fallback_model: 'llama-3.3-70b-versatile'
     };
+
+    // Restore the anonymous server-side vault session after a page reload.
+    if (window.__WEBBRIEF_VAULT_ENABLED) {
+        window.addEventListener('DOMContentLoaded', async () => {
+            try {
+                const res = await fetch('/api/credentials/status');
+                if (!res.ok) return;
+                const status = await res.json();
+                if (!status.configured) return;
+                _vaultActive = true;
+                _inMemoryProviderConfig.primary_provider = status.provider || 'cloudflare';
+                const label = document.getElementById('hosted-status-label');
+                if (label) label.textContent = '● Temporary Encrypted Session Active';
+                const clear = document.getElementById('hosted-clear-btn');
+                if (clear) clear.style.display = 'inline-flex';
+            } catch (_) { /* A vault outage must not leak credentials. */ }
+        });
+    }
 
     // Database configuration for Hosted IndexedDB mode
     const DB_NAME = 'WebBriefDB';
@@ -159,16 +178,27 @@
         setProviderConfig: function(cfg) {
             if (cfg && typeof cfg === 'object') {
                 _inMemoryProviderConfig = Object.assign({}, _inMemoryProviderConfig, cfg);
-                if (cfg.groq_api_key) _inMemoryApiKey = cfg.groq_api_key;
+                if (window.__WEBBRIEF_VAULT_ENABLED) {
+                    _vaultActive = true;
+                    _inMemoryProviderConfig.cloudflare_api_token = '';
+                    _inMemoryProviderConfig.groq_api_key = '';
+                    _inMemoryApiKey = '';
+                } else if (cfg.groq_api_key) _inMemoryApiKey = cfg.groq_api_key;
                 else if (cfg.cloudflare_api_token) _inMemoryApiKey = cfg.cloudflare_api_token;
             }
         },
 
         getProviderConfig: function() {
-            return Object.assign({}, _inMemoryProviderConfig);
+            const cfg = Object.assign({}, _inMemoryProviderConfig);
+            if (window.__WEBBRIEF_VAULT_ENABLED) {
+                delete cfg.cloudflare_api_token;
+                delete cfg.groq_api_key;
+            }
+            return cfg;
         },
 
         clearCredentials: function() {
+            _vaultActive = false;
             _inMemoryApiKey = '';
             _inMemoryProviderConfig.cloudflare_account_id = '';
             _inMemoryProviderConfig.cloudflare_api_token = '';
@@ -176,6 +206,7 @@
         },
 
         hasValidCredentials: function() {
+            if (window.__WEBBRIEF_VAULT_ENABLED) return _vaultActive;
             const p = _inMemoryProviderConfig.primary_provider || 'cloudflare';
             if (p === 'cloudflare') {
                 return Boolean(_inMemoryProviderConfig.cloudflare_account_id && _inMemoryProviderConfig.cloudflare_api_token);
@@ -191,6 +222,7 @@
          * In local mode: checks local override input or returns null (uses server .env).
          */
         getActiveApiKey: function(fallbackInputId = 'api-key-input') {
+            if (window.__WEBBRIEF_VAULT_ENABLED) return null;
             if (this.isHosted()) {
                 if (_inMemoryApiKey) return _inMemoryApiKey;
                 const hostedInput = document.getElementById('hosted-api-key-input');

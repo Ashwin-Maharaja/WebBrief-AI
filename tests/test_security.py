@@ -86,14 +86,14 @@ class TestHealthCheckEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.1")
+        self.assertEqual(data.get("version"), "1.6.2")
 
     def test_api_health_endpoint(self):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.1")
+        self.assertEqual(data.get("version"), "1.6.2")
 
 
 class TestCSRFProtection(unittest.TestCase):

@@ -80,7 +80,7 @@ from vector_store import (
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.6.1"
+APP_VERSION = "1.6.2"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(
@@ -122,8 +122,94 @@ app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
     SESSION_COOKIE_SECURE=is_secure_cookie,
-    PERMANENT_SESSION_LIFETIME=datetime.timedelta(hours=24),
+    PERMANENT_SESSION_LIFETIME=datetime.timedelta(minutes=30),
 )
+
+
+# Optional encrypted temporary BYOK vault. Redis-backed sessions are required
+# for vault mode; without these settings the existing browser-memory BYOK flow
+# remains intact (and no credentials enter Flask cookie sessions).
+from credential_vault import TemporaryCredentialVault
+
+_vault = None
+if os.getenv("REDIS_URL") and os.getenv("CREDENTIAL_ENCRYPTION_KEY"):
+    from redis import Redis
+    from flask_session import Session
+    _redis = Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=3, socket_timeout=3)
+    app.config.update(
+        SESSION_TYPE="redis", SESSION_REDIS=_redis,
+        SESSION_PERMANENT=True, SESSION_REFRESH_EACH_REQUEST=True,
+        SESSION_KEY_PREFIX="webbrief:session:",
+    )
+    Session(app)
+    _vault = TemporaryCredentialVault(_redis, os.environ["CREDENTIAL_ENCRYPTION_KEY"])
+elif is_prod and (os.getenv("REDIS_URL") or os.getenv("CREDENTIAL_ENCRYPTION_KEY")):
+    raise RuntimeError("Temporary BYOK vault requires both REDIS_URL and CREDENTIAL_ENCRYPTION_KEY")
+
+
+def _vault_sid():
+    if "_vault_sid" not in session:
+        session["_vault_sid"] = secrets.token_urlsafe(32)
+    return session["_vault_sid"]
+
+
+def _vault_config():
+    if _vault is None or "_vault_sid" not in session:
+        return {}
+    return _vault.load(session["_vault_sid"])
+
+
+@app.before_request
+def attach_vault_credentials():
+    """Merge credentials into request-scoped JSON only; never return them to client."""
+    if _vault is None or not request.is_json or request.method != "POST":
+        return
+    if request.endpoint not in {"summarize", "batch_summarize", "compare_articles_route", "api_search_embed"}:
+        return
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return
+    stored = _vault_config()
+    for key in ("cloudflare_account_id", "cloudflare_api_token", "groq_api_key"):
+        if not payload.get(key) and stored.get(key):
+            payload[key] = stored[key]
+    if stored and not payload.get("primary_provider"):
+        payload["primary_provider"] = stored.get("primary_provider", "cloudflare")
+
+
+@app.route("/api/credentials", methods=["POST"])
+def store_temporary_credentials():
+    if _vault is None:
+        return jsonify({"error": "Temporary credential vault is not configured."}), 503
+    payload = request.get_json(silent=True)
+    if not isinstance(payload, dict):
+        return jsonify({"error": "JSON object required."}), 400
+    provider = payload.get("primary_provider", "cloudflare")
+    if provider == "cloudflare":
+        valid, _ = validate_cloudflare_credentials(payload.get("cloudflare_account_id", ""), payload.get("cloudflare_api_token", ""))
+    elif provider == "groq":
+        valid, _ = validate_groq_credentials(payload.get("groq_api_key", ""))
+    else:
+        return jsonify({"error": "Unsupported provider."}), 400
+    if not valid:
+        return jsonify({"error": "Provider credentials failed validation."}), 400
+    allowed = {"primary_provider", "cloudflare_account_id", "cloudflare_api_token", "groq_api_key"}
+    clean = {k: v for k, v in payload.items() if k in allowed and isinstance(v, str)}
+    _vault.save(_vault_sid(), clean)
+    return jsonify({"success": True, "expires_in": 1800}), 200
+
+
+@app.route("/api/credentials/status", methods=["GET"])
+def temporary_credentials_status():
+    data = _vault_config()
+    return jsonify({"enabled": _vault is not None, "configured": bool(data), "provider": data.get("primary_provider")})
+
+
+@app.route("/api/credentials", methods=["DELETE"])
+def delete_temporary_credentials():
+    if _vault is not None and "_vault_sid" in session:
+        _vault.delete(session.pop("_vault_sid"))
+    return jsonify({"success": True})
 
 
 @app.after_request
@@ -219,6 +305,7 @@ def inject_globals():
         "max_batch_urls": MAX_BATCH_URLS,
         "has_notion_configured": has_notion_config(session_dict=session),
         "is_hosted": is_serverless_env(),
+        "vault_enabled": _vault is not None,
         "csrf_token": session["_csrf_token"],
         "provider_catalogue": PROVIDER_CATALOGUE,
     }
@@ -303,6 +390,9 @@ def enforce_byok_onboarding():
         "api_search_rebuild_index",
         "api_search_embed",
         "api_environment",
+        "store_temporary_credentials",
+        "temporary_credentials_status",
+        "delete_temporary_credentials",
         "health_check",
         "api_health",
     }
@@ -342,6 +432,7 @@ def health_check():
         "status": "healthy",
         "version": APP_VERSION,
         "is_hosted": is_serverless_env(),
+        "vault_enabled": _vault is not None,
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }), 200
 
@@ -830,6 +921,7 @@ def api_notion_status():
     return jsonify({
         "configured": configured,
         "is_hosted": is_serverless_env(),
+        "vault_enabled": _vault is not None,
     })
 
 

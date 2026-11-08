@@ -1,5 +1,5 @@
 """
-Vercel Serverless Function entrypoint for WebBrief AI (v1.6.1).
+Vercel Serverless Function entrypoint for WebBrief AI (v1.6.2).
 Exports the Flask application instance 'app' for serverless hosting on Vercel.
 Includes a Flask-native error boundary to diagnose any cold-start bootstrap failures.
 """
@@ -37,7 +37,7 @@ except Exception as exc:
             "status": "error",
             "code": "BOOTSTRAP_ERROR",
             "message": "WebBrief AI failed to initialize due to a serverless bootstrap error.",
-            "detail": str(exc),
+            "detail": "Check deployment runtime logs.",
         }), 500
 
     app = fallback_app
