@@ -1,11 +1,10 @@
 """
 Vercel Serverless Function entrypoint for WebBrief AI (v1.6.1).
-Exports the WSGI Flask application callable for serverless hosting.
-Includes error-boundary fallback to gracefully report configuration or bootstrap failures.
+Exports the Flask application instance for serverless hosting on Vercel.
+Includes a Flask-native error boundary to diagnose any cold-start bootstrap failures.
 """
 import sys
 import os
-import json
 import logging
 
 # Ensure the root project directory is on sys.path
@@ -19,34 +18,20 @@ try:
     from app import app
 except Exception as exc:
     logger.critical("Failed to bootstrap WebBrief AI application: %s", str(exc), exc_info=True)
+    from flask import Flask, jsonify
 
-    def app(environ, start_response):
-        path = environ.get("PATH_INFO", "")
-        if path in ("/health", "/api/health"):
-            status = "500 Internal Server Error"
-            body = json.dumps({
-                "status": "degraded",
-                "error": "Application bootstrap failed. Missing required environment configuration (e.g. FLASK_SECRET_KEY).",
-                "detail": str(exc)
-            }).encode("utf-8")
-            content_type = "application/json"
-        else:
-            status = "500 Internal Server Error"
-            body = (
-                b"<!DOCTYPE html><html><head><title>WebBrief AI - Configuration Error</title></head>"
-                b"<body style='font-family:system-ui,-apple-system,sans-serif;padding:2.5rem;background:#0f172a;color:#f8fafc;max-width:700px;margin:auto;'>"
-                b"<h2 style='color:#ef4444;'>WebBrief AI &mdash; Serverless Configuration Error</h2>"
-                b"<p>The application could not start due to missing environment configuration:</p>"
-                b"<pre style='background:#1e293b;padding:1rem;border-radius:8px;border:1px solid #334155;overflow:auto;'>" + str(exc).encode("utf-8") + b"</pre>"
-                b"<p style='color:#94a3b8;'>If running on Vercel, please ensure <code>FLASK_SECRET_KEY</code> is configured in your Vercel Project Environment Variables.</p>"
-                b"</body></html>"
-            )
-            content_type = "text/html"
+    fallback_app = Flask(__name__)
 
-        start_response(status, [
-            ("Content-Type", content_type),
-            ("Content-Length", str(len(body)))
-        ])
-        return [body]
+    @fallback_app.route("/<path:path>", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    @fallback_app.route("/", methods=["GET", "POST", "PUT", "DELETE", "PATCH"])
+    def bootstrap_error(path=""):
+        return jsonify({
+            "status": "error",
+            "code": "BOOTSTRAP_ERROR",
+            "message": "WebBrief AI failed to initialize due to a serverless bootstrap error.",
+            "detail": str(exc),
+        }), 500
+
+    app = fallback_app
 
 handler = app

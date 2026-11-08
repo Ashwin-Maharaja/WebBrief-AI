@@ -98,13 +98,17 @@ flask_secret = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY")
 is_prod = is_serverless_env() or os.getenv("FLASK_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
 
 if not flask_secret:
-    if is_prod:
-        raise RuntimeError(
-            "CRITICAL SECURITY CONFIGURATION ERROR: FLASK_SECRET_KEY environment variable is required in production. "
-            "Please configure a strong, random 32-byte secret in your production environment."
-        )
+    # Fail safely: generate an unguessable, cryptographically secure 32-byte ephemeral key (SEC-01).
+    # Never derived from deployment IDs, commit SHAs, or predictable strings.
     flask_secret = secrets.token_hex(32)
-    logger.warning("No FLASK_SECRET_KEY configured. Generated ephemeral 32-byte development secret key.")
+    if is_prod:
+        logger.warning(
+            "FLASK_SECRET_KEY environment variable is not configured in production. "
+            "Using an ephemeral cryptographically secure random key. "
+            "Configure FLASK_SECRET_KEY in your deployment environment variables for persistent user sessions across lambda cold starts."
+        )
+    else:
+        logger.warning("No FLASK_SECRET_KEY configured. Generated ephemeral 32-byte development secret key.")
 
 app.secret_key = flask_secret
 
