@@ -80,9 +80,15 @@ from vector_store import (
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.6.0"
+APP_VERSION = "1.6.1"
 
-app = Flask(__name__)
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+app = Flask(
+    __name__,
+    template_folder=os.path.join(BASE_DIR, "templates"),
+    static_folder=os.path.join(BASE_DIR, "static"),
+)
+handler = app
 
 # Request payload limit: enforce 2MB maximum
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", 2 * 1024 * 1024))
@@ -92,14 +98,13 @@ flask_secret = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY")
 is_prod = is_serverless_env() or os.getenv("FLASK_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
 
 if not flask_secret:
-    deployment_seed = os.getenv("VERCEL_DEPLOYMENT_ID") or os.getenv("VERCEL_GIT_COMMIT_SHA")
-    if deployment_seed:
-        import hashlib
-        flask_secret = hashlib.sha256(deployment_seed.encode("utf-8")).hexdigest()
-        logger.info("FLASK_SECRET_KEY not set; derived deployment-specific secret key.")
-    else:
-        flask_secret = secrets.token_hex(32)
-        logger.warning("No FLASK_SECRET_KEY configured. Generated ephemeral 32-byte secret key.")
+    if is_prod:
+        raise RuntimeError(
+            "CRITICAL SECURITY CONFIGURATION ERROR: FLASK_SECRET_KEY environment variable is required in production. "
+            "Please configure a strong, random 32-byte secret in your production environment."
+        )
+    flask_secret = secrets.token_hex(32)
+    logger.warning("No FLASK_SECRET_KEY configured. Generated ephemeral 32-byte development secret key.")
 
 app.secret_key = flask_secret
 
@@ -131,6 +136,68 @@ def apply_security_headers(response):
     return response
 
 
+@app.errorhandler(403)
+def handle_forbidden_error(e):
+    """Sanitized 403 Forbidden handler."""
+    if request.path.startswith("/api/") or request.is_json:
+        return jsonify({"error": "Forbidden: Request authorization or CSRF check failed.", "code": "FORBIDDEN"}), 403
+    return render_template(
+        "index.html",
+        error="Forbidden: Request rejected by security policies.",
+        url="",
+        mode=DEFAULT_MODE,
+        modes=MODES,
+        is_configured=has_valid_config(session),
+        provider_config=get_active_provider_config(session_dict=session),
+        provider_catalogue=PROVIDER_CATALOGUE,
+        recent_history=[],
+    ), 403
+
+
+@app.errorhandler(404)
+def handle_not_found_error(e):
+    """Sanitized 404 Not Found handler."""
+    if request.path.startswith("/api/") or request.is_json:
+        return jsonify({"error": "Resource not found.", "code": "NOT_FOUND"}), 404
+    return render_template(
+        "index.html",
+        error="The requested resource was not found.",
+        url="",
+        mode=DEFAULT_MODE,
+        modes=MODES,
+        is_configured=has_valid_config(session),
+        provider_config=get_active_provider_config(session_dict=session),
+        provider_catalogue=PROVIDER_CATALOGUE,
+        recent_history=[],
+    ), 404
+
+
+@app.errorhandler(500)
+def handle_internal_server_error(e):
+    """Sanitized 500 Internal Server Error handler to avoid exposing raw traces (SEC-04)."""
+    logger.error("Internal Server Error: %s", redact_credentials(str(e)), exc_info=True)
+    if request.path.startswith("/api/") or request.is_json:
+        return jsonify({"error": "An internal server error occurred. Please try again later.", "code": "INTERNAL_SERVER_ERROR"}), 500
+    return render_template(
+        "index.html",
+        error="An unexpected server error occurred. Please check your provider settings.",
+        url="",
+        mode=DEFAULT_MODE,
+        modes=MODES,
+        is_configured=has_valid_config(session),
+        provider_config=get_active_provider_config(session_dict=session),
+        provider_catalogue=PROVIDER_CATALOGUE,
+        recent_history=[],
+    ), 500
+
+
+@app.before_request
+def ensure_csrf_token():
+    """Ensure every active session has a cryptographically secure anti-CSRF token initialized (SEC-03)."""
+    if "_csrf_token" not in session:
+        session["_csrf_token"] = secrets.token_hex(32)
+
+
 @app.context_processor
 def inject_globals():
     """Inject standard global template variables across all rendered views."""
@@ -151,8 +218,9 @@ def inject_globals():
 
 @app.before_request
 def validate_csrf_and_origin():
-    """Enforces Origin and CSRF validation on all state-changing requests (SEC-03)."""
+    """Enforces Origin, Referer, and CSRF token validation on all state-changing requests (SEC-03)."""
     if request.method in ("POST", "PUT", "DELETE", "PATCH"):
+        # 1. Origin and Referer validation
         origin = request.headers.get("Origin")
         if origin:
             parsed_origin = urllib.parse.urlparse(origin)
@@ -163,13 +231,23 @@ def validate_csrf_and_origin():
             if parsed_ref.netloc and parsed_ref.netloc != request.host:
                 return jsonify({"error": "Forbidden: Invalid request origin."}), 403
 
-        # Anti-CSRF token check for non-AJAX form submissions
-        if not request.is_json and request.headers.get("X-Requested-With") != "XMLHttpRequest":
-            submitted_token = request.form.get("csrf_token")
-            expected_token = session.get("_csrf_token")
-            if not submitted_token or not expected_token or not secrets.compare_digest(submitted_token, expected_token):
-                if request.endpoint in ("clear_key", "save_key"):
-                    return jsonify({"error": "Forbidden: Invalid or missing CSRF token."}), 403
+        # 2. Extract submitted CSRF token
+        submitted_token = (
+            request.headers.get("X-CSRF-Token")
+            or request.headers.get("X-CSRFToken")
+            or request.form.get("csrf_token")
+        )
+        if not submitted_token and request.is_json:
+            json_body = request.get_json(silent=True)
+            if isinstance(json_body, dict):
+                submitted_token = json_body.get("csrf_token")
+
+        expected_token = session.get("_csrf_token")
+        if not submitted_token or not expected_token or not secrets.compare_digest(submitted_token, expected_token):
+            return jsonify({
+                "error": "Forbidden: Invalid or missing CSRF token.",
+                "code": "CSRF_VERIFICATION_FAILED"
+            }), 403
 
 
 @app.before_request
@@ -210,6 +288,8 @@ def enforce_byok_onboarding():
         "api_search_rebuild_index",
         "api_search_embed",
         "api_environment",
+        "health_check",
+        "api_health",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -236,6 +316,18 @@ def enforce_byok_onboarding():
         return redirect(url_for("setup"))
 
     return redirect(url_for("setup"))
+
+
+@app.route("/health", methods=["GET"])
+@app.route("/api/health", methods=["GET"])
+def health_check():
+    """Diagnostic health check endpoint for platform monitoring and uptime probes."""
+    return jsonify({
+        "status": "healthy",
+        "version": APP_VERSION,
+        "is_hosted": is_serverless_env(),
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }), 200
 
 
 @app.route("/")

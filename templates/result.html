@@ -3,6 +3,43 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="csrf-token" content="{{ csrf_token }}">
+    <script>
+        (function() {
+            const originalFetch = window.fetch;
+            window.fetch = function(input, init) {
+                init = init || {};
+                let method = 'GET';
+                if (init.method) {
+                    method = init.method.toUpperCase();
+                } else if (input instanceof Request && input.method) {
+                    method = input.method.toUpperCase();
+                }
+                if (['POST', 'PUT', 'DELETE', 'PATCH'].includes(method)) {
+                    const tokenMeta = document.querySelector('meta[name="csrf-token"]');
+                    const token = tokenMeta ? tokenMeta.getAttribute('content') : '';
+                    if (token) {
+                        if (init.headers instanceof Headers) {
+                            if (!init.headers.has('X-CSRF-Token')) {
+                                init.headers.set('X-CSRF-Token', token);
+                            }
+                        } else if (Array.isArray(init.headers)) {
+                            const hasToken = init.headers.some(([k]) => k.toLowerCase() === 'x-csrf-token');
+                            if (!hasToken) {
+                                init.headers.push(['X-CSRF-Token', token]);
+                            }
+                        } else {
+                            init.headers = init.headers || {};
+                            if (!init.headers['X-CSRF-Token'] && !init.headers['x-csrf-token']) {
+                                init.headers['X-CSRF-Token'] = token;
+                            }
+                        }
+                    }
+                }
+                return originalFetch.call(this, input, init);
+            };
+        })();
+    </script>
     <title>WebBrief AI — Structured Summary Result</title>
     <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,7 +67,7 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v1.5</span>
+                    <span class="badge">v{{ app_version }}</span>
                 </div>
             </div>
             <div class="header-nav">
@@ -167,7 +204,7 @@
         </section>
 
         <footer class="app-footer">
-            <p>WebBrief AI v1.5 • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI v{{ app_version }} • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>

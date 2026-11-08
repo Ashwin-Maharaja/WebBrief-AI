@@ -12,23 +12,30 @@ import re
 import urllib.parse
 from typing import Dict, Any, Optional
 
-from reportlab.lib.pagesizes import letter
-from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Paragraph,
-    Spacer,
-    Table,
-    TableStyle,
-    HRFlowable,
-    KeepTogether,
-    PageBreak,
-)
-from reportlab.pdfgen import canvas
+try:
+    from reportlab.lib.pagesizes import letter
+    from reportlab.lib import colors
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.platypus import (
+        SimpleDocTemplate,
+        Paragraph,
+        Spacer,
+        Table,
+        TableStyle,
+        HRFlowable,
+        KeepTogether,
+        PageBreak,
+    )
+    from reportlab.pdfgen import canvas
+    REPORTLAB_AVAILABLE = True
+except ImportError:
+    REPORTLAB_AVAILABLE = False
+    letter = (612, 792)
+    colors = None
+    canvas = None
 
 
-class NumberedCanvas(canvas.Canvas):
+class NumberedCanvas(canvas.Canvas if REPORTLAB_AVAILABLE else object):
     """
     Two-pass canvas to dynamically compute and display total page count:
     'Page X of Y' in the running footer, along with clean running headers on subsequent pages.
@@ -105,16 +112,11 @@ def generate_summary_pdf(
     """
     Generates a professional PDF document from a structured summary dictionary.
 
-    Args:
-        summary: Structured summary dict (title, overview, key_points, important_details, conclusion, mode_name, stats).
-        url: Source webpage URL.
-        title: Optional title override.
-        mode: Summarization mode key or label.
-        created_at: Formatted creation date/time string.
-
     Returns:
         io.BytesIO: In-memory byte buffer containing the completed PDF.
     """
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("PDF export is unavailable because the reportlab library is not installed.")
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
@@ -330,6 +332,8 @@ def generate_batch_summary_pdf(
     Generates a single, consolidated multi-article PDF containing all completed
     summaries in a batch, separated by clean page breaks.
     """
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("PDF export is unavailable because the reportlab library is not installed.")
     buffer = io.BytesIO()
 
     doc = SimpleDocTemplate(
@@ -585,6 +589,8 @@ def generate_comparison_pdf(comp: Dict[str, Any]) -> io.BytesIO:
     Generates a beautifully styled, multi-page ReportLab PDF
     specifically structured for comparative research briefs.
     """
+    if not REPORTLAB_AVAILABLE:
+        raise RuntimeError("PDF export is unavailable because the reportlab library is not installed.")
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,

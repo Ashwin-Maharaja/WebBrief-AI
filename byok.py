@@ -60,7 +60,7 @@ def is_serverless_env() -> bool:
 def redact_credentials(text: str) -> str:
     """
     Redacts any sensitive provider credentials from logs, error messages, and exception traces.
-    Masks Groq API keys (gsk_...), Cloudflare tokens, and legacy tokens.
+    Masks Groq API keys (gsk_...), Cloudflare tokens, Notion tokens, Bearer headers, and legacy tokens.
     """
     if not text or not isinstance(text, str):
         return ""
@@ -68,6 +68,10 @@ def redact_credentials(text: str) -> str:
     sanitized = re.sub(r"gsk_[a-zA-Z0-9_\-]{20,}", "gsk_...", text)
     # Redact legacy sk- tokens
     sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{16,}", "sk-...", sanitized)
+    # Redact Notion integration keys (secret_... or ntn_...)
+    sanitized = re.sub(r"(?:secret_|ntn_)[a-zA-Z0-9_\-]{20,}", "[notion_secret_masked]", sanitized)
+    # Redact Authorization Bearer headers
+    sanitized = re.sub(r"(Bearer\s+)[a-zA-Z0-9_\-\.]{15,}", r"\1[token_masked]", sanitized, flags=re.IGNORECASE)
     # Redact Cloudflare Account IDs (32 hex characters) if exposed in error messages
     sanitized = re.sub(r"\b[0-9a-f]{32}\b", "[account_id_masked]", sanitized, flags=re.IGNORECASE)
     return sanitized

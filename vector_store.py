@@ -16,6 +16,7 @@ import struct
 from typing import Dict, Any, List, Optional, Tuple
 
 from dotenv import load_dotenv
+from byok import is_serverless_env
 from history import get_db_connection, init_db, get_history, get_history_entry, get_default_db_path
 
 load_dotenv()
@@ -37,6 +38,8 @@ class VectorStoreError(Exception):
 # -------------------------------------------------------------
 def init_vector_store(db_path: Optional[str] = None) -> None:
     """Initializes the summary_embeddings table inside the SQLite database."""
+    if is_serverless_env() and db_path is None:
+        return
     init_db(db_path)
     try:
         conn = get_db_connection(db_path)
