@@ -158,6 +158,61 @@ class TestAppVaultRoutes(unittest.TestCase):
             )
             self.assertEqual(res.status_code, 503)
 
+    @patch('app.validate_groq_credentials', return_value=(True, ''))
+    @patch('app.validate_cloudflare_credentials', return_value=(True, ''))
+    def test_vault_fallback_restoration(self, mock_cf, mock_groq):
+        """Verifies that fallback provider and model settings are fully stored and restored."""
+        fake_redis = FakeRedis()
+        test_vault = TemporaryCredentialVault(fake_redis, Fernet.generate_key())
+        with patch('app._vault', test_vault):
+            res = self.client.post(
+                '/api/credentials',
+                json={
+                    'primary_provider': 'cloudflare',
+                    'cloudflare_account_id': 'test_acc',
+                    'cloudflare_api_token': 'test_tok',
+                    'primary_model': '@cf/meta/llama-3.1-8b-instruct',
+                    'fallback_provider': 'groq',
+                    'groq_api_key': 'gsk_fallback_key',
+                    'fallback_model': 'llama-3.3-70b-versatile',
+                    'fallback_enabled': True
+                },
+                headers={'X-CSRF-Token': self.csrf_token}
+            )
+            self.assertEqual(res.status_code, 200)
+
+            # Check status endpoint exposes provider and fallback metadata without keys
+            res_status = self.client.get('/api/credentials/status')
+            data = res_status.get_json()
+            self.assertTrue(data['configured'])
+            self.assertEqual(data['provider'], 'cloudflare')
+            self.assertEqual(data['fallback_provider'], 'groq')
+            self.assertEqual(data['primary_model'], '@cf/meta/llama-3.1-8b-instruct')
+            self.assertEqual(data['fallback_model'], 'llama-3.3-70b-versatile')
+            self.assertNotIn('test_tok', str(data))
+            self.assertNotIn('gsk_fallback_key', str(data))
+
+    @patch('app.validate_groq_credentials', return_value=(True, ''))
+    @patch('app.validate_cloudflare_credentials', return_value=(False, 'Invalid CF credentials'))
+    def test_vault_invalid_fallback_rejection(self, mock_cf, mock_groq):
+        """Verifies that invalid fallback credentials are authenticated and rejected before storage."""
+        fake_redis = FakeRedis()
+        test_vault = TemporaryCredentialVault(fake_redis, Fernet.generate_key())
+        with patch('app._vault', test_vault):
+            res = self.client.post(
+                '/api/credentials',
+                json={
+                    'primary_provider': 'groq',
+                    'groq_api_key': 'gsk_valid_key',
+                    'fallback_provider': 'cloudflare',
+                    'cloudflare_account_id': 'bad_acc',
+                    'cloudflare_api_token': 'bad_tok'
+                },
+                headers={'X-CSRF-Token': self.csrf_token}
+            )
+            self.assertEqual(res.status_code, 400)
+            self.assertIn("Fallback provider credentials failed validation", res.get_json().get("error", ""))
+
 
 if __name__ == '__main__':
     unittest.main()

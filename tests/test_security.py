@@ -86,14 +86,14 @@ class TestHealthCheckEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.2")
+        self.assertEqual(data.get("version"), "1.6.3")
 
     def test_api_health_endpoint(self):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.2")
+        self.assertEqual(data.get("version"), "1.6.3")
 
 
 class TestCSRFProtection(unittest.TestCase):
@@ -204,6 +204,84 @@ class TestPDFExporterGuard(unittest.TestCase):
         from pdf_exporter import REPORTLAB_AVAILABLE
         # ReportLab is installed in this test environment
         self.assertTrue(REPORTLAB_AVAILABLE)
+
+
+class TestSSRFHardening(unittest.TestCase):
+    """Test SSRF rejection of CGNAT, metadata, private IPs, and DNS rebinding protections."""
+
+    def test_cgnat_rejection(self):
+        from scraper import is_safe_ip, validate_safe_url, ScraperError
+        self.assertFalse(is_safe_ip("100.64.0.1"))
+        self.assertFalse(is_safe_ip("100.127.255.254"))
+        with self.assertRaises(ScraperError) as ctx:
+            validate_safe_url("http://100.64.0.1/admin")
+        self.assertIn("restricted for security", str(ctx.exception))
+
+    def test_cloud_metadata_rejection(self):
+        from scraper import is_safe_ip, validate_safe_url, ScraperError
+        self.assertFalse(is_safe_ip("169.254.169.254"))
+        self.assertFalse(is_safe_ip("100.100.100.200"))
+        self.assertFalse(is_safe_ip("fd00:ec2::254"))
+        with self.assertRaises(ScraperError):
+            validate_safe_url("http://169.254.169.254/latest/meta-data/")
+
+    def test_private_and_loopback_rejection(self):
+        from scraper import is_safe_ip, validate_safe_url, ScraperError
+        for ip in ("127.0.0.1", "10.0.0.1", "192.168.1.1", "172.16.0.1", "::1"):
+            self.assertFalse(is_safe_ip(ip))
+        with self.assertRaises(ScraperError):
+            validate_safe_url("http://localhost:5000")
+        with self.assertRaises(ScraperError):
+            validate_safe_url("http://127.0.0.1:8080")
+
+    def test_dns_rebinding_mixed_ip_rejection(self):
+        """Simulates DNS resolving to a mixed safe and unsafe IP, ensuring immediate rejection."""
+        import socket
+        from scraper import resolve_and_validate_safe_url, ScraperError
+        mock_addrinfo = [
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 0)),
+            (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("100.64.0.1", 0)),
+        ]
+        with patch("socket.getaddrinfo", return_value=mock_addrinfo):
+            with self.assertRaises(ScraperError) as ctx:
+                resolve_and_validate_safe_url("http://rebind-test.com")
+            self.assertIn("restricted for security", str(ctx.exception))
+
+    def test_response_size_limits_constant(self):
+        from scraper import MAX_RESPONSE_BYTES
+        self.assertEqual(MAX_RESPONSE_BYTES, 5 * 1024 * 1024)
+
+
+class TestRateLimiting(unittest.TestCase):
+    """Test built-in sliding-window rate limiting on sensitive routes."""
+
+    def setUp(self):
+        from app import app, rate_limiter
+        app.config["TESTING"] = True
+        self.client = app.test_client()
+        self.limiter = rate_limiter
+        self.limiter._events.clear()
+        self.client.get("/")
+        with self.client.session_transaction() as sess:
+            self.csrf = sess.get("_csrf_token", "")
+
+    def test_validate_key_rate_limit(self):
+        for _ in range(20):
+            res = self.client.post(
+                "/api/validate-key",
+                json={"provider": "groq", "groq_api_key": "gsk_test"},
+                headers={"X-CSRF-Token": self.csrf}
+            )
+            self.assertNotEqual(res.status_code, 429)
+
+        # 21st request triggers rate limit 429
+        res = self.client.post(
+            "/api/validate-key",
+            json={"provider": "groq", "groq_api_key": "gsk_test"},
+            headers={"X-CSRF-Token": self.csrf}
+        )
+        self.assertEqual(res.status_code, 429)
+        self.assertEqual(res.get_json().get("code"), "RATE_LIMIT_EXCEEDED")
 
 
 if __name__ == "__main__":

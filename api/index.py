@@ -1,5 +1,5 @@
 """
-Vercel Serverless Function entrypoint for WebBrief AI (v1.6.2).
+Vercel Serverless Function entrypoint for WebBrief AI (v1.6.3).
 Exports the Flask application instance 'app' for serverless hosting on Vercel.
 Includes a Flask-native error boundary to diagnose any cold-start bootstrap failures.
 """

@@ -4,6 +4,8 @@ import socket
 import urllib.parse
 import requests
 from bs4 import BeautifulSoup
+from requests.adapters import HTTPAdapter
+from urllib3.connection import HTTPConnection, HTTPSConnection
 
 logger = logging.getLogger(__name__)
 
@@ -12,6 +14,7 @@ STATIC_TIMEOUT = 15          # Timeout in seconds for static requests
 BROWSER_TIMEOUT = 15         # Timeout in seconds for Playwright browser fallback
 MIN_SUFFICIENT_LENGTH = 60   # Minimum characters of readable text to consider static extraction adequate
 MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB maximum allowed webpage download size
+MAX_SUBREQUESTS = 50         # Maximum subrequests allowed per dynamic browser page load
 
 
 class ScraperError(Exception):
@@ -21,9 +24,10 @@ class ScraperError(Exception):
 
 def is_safe_ip(ip_str: str) -> bool:
     """
-    Returns True if the IP address is a public, routable IP,
-    and not private, loopback, link-local, reserved, multicast, or unspecified.
-    Explicitly handles IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) and cloud metadata services.
+    Returns True if the IP address is a public, globally-routable unicast IP.
+    Strictly rejects private, loopback, link-local, reserved, multicast, unspecified,
+    CGNAT (RFC 6598 100.64.0.0/10), and cloud metadata services.
+    Handles IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1).
     """
     try:
         ip = ipaddress.ip_address(ip_str)
@@ -31,6 +35,10 @@ def is_safe_ip(ip_str: str) -> bool:
         # Check IPv4-mapped IPv6 address (e.g. ::ffff:127.0.0.1)
         if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
             return is_safe_ip(str(ip.ipv4_mapped))
+
+        # Must be a globally routable public unicast address
+        if not ip.is_global:
+            return False
 
         if (
             ip.is_private
@@ -42,10 +50,12 @@ def is_safe_ip(ip_str: str) -> bool:
         ):
             return False
 
+        # Explicit CGNAT subnet defense (RFC 6598: 100.64.0.0/10)
+        cgnat_net = ipaddress.ip_network("100.64.0.0/10")
+        if ip.version == 4 and ip in cgnat_net:
+            return False
+
         # Explicit Cloud Metadata IP defense
-        # AWS/GCP/Azure link-local metadata 169.254.169.254
-        # Alibaba Cloud metadata 100.100.100.200
-        # AWS IMDSv2 IPv6 metadata fd00:ec2::254
         metadata_ips = {
             "169.254.169.254",
             "100.100.100.200",
@@ -59,17 +69,17 @@ def is_safe_ip(ip_str: str) -> bool:
         return False
 
 
-def validate_safe_url(url: str) -> str:
+def resolve_and_validate_safe_url(url: str) -> tuple[str, str]:
     """
-    Validates that a URL is well-formed, uses HTTP or HTTPS, and does not target
-    localhost, internal private networks, cloud metadata services, or link-local addresses (SSRF prevention).
-    Rejects URLs with embedded user credentials or unauthorized ports.
+    Validates that a URL is well-formed, uses HTTP or HTTPS, does not target internal/private
+    networks, cloud metadata services, CGNAT addresses, or link-local ranges (SSRF prevention).
+    Resolves the domain and confirms all resolved destination IPs are safe.
 
     Returns:
-        The normalized URL string if valid.
+        tuple of (normalized_url, pinned_safe_ip)
 
     Raises:
-        ScraperError: If the URL is invalid or targets an internal/private address.
+        ScraperError: If the URL or any resolved IP is unsafe or invalid.
     """
     if not url or not isinstance(url, str):
         raise ScraperError("Please enter a valid webpage URL.")
@@ -121,7 +131,7 @@ def validate_safe_url(url: str) -> str:
             raise ScraperError(
                 f"Access to internal, loopback, or private network address ({ip}) is restricted for security."
             )
-        return url
+        return url, str(ip)
     except ValueError:
         # Not a raw IP literal, proceed to DNS resolution
         pass
@@ -143,14 +153,67 @@ def validate_safe_url(url: str) -> str:
     if not addr_info:
         raise ScraperError(f"No IP addresses resolved for domain '{hostname}'.")
 
+    safe_ips = []
     for family, _, _, _, sockaddr in addr_info:
         ip_str = sockaddr[0]
         if not is_safe_ip(ip_str):
             raise ScraperError(
                 f"Access to internal, loopback, or private network address ({ip_str}) is restricted for security."
             )
+        safe_ips.append(ip_str)
 
-    return url
+    # Return normalized URL and the primary verified IP for connection pinning
+    return url, safe_ips[0]
+
+
+def validate_safe_url(url: str) -> str:
+    """
+    Backward-compatible wrapper validating a URL and returning the normalized safe URL string.
+    """
+    normalized_url, _ = resolve_and_validate_safe_url(url)
+    return normalized_url
+
+
+class PinnedHTTPConnection(HTTPConnection):
+    """HTTPConnection that connects directly to a verified IP, preventing connection-time DNS rebinding."""
+    def _new_conn(self):
+        extra_kw = {}
+        if self.source_address:
+            extra_kw["source_address"] = self.source_address
+        if self.socket_options:
+            extra_kw["socket_options"] = self.socket_options
+        target_ip = getattr(self, "_pinned_ip", self.host)
+        return socket.create_connection((target_ip, self.port), self.timeout, **extra_kw)
+
+
+class PinnedHTTPSConnection(HTTPSConnection):
+    """HTTPSConnection that connects socket to verified IP while preserving TLS SNI & hostname cert checks."""
+    def _new_conn(self):
+        extra_kw = {}
+        if self.source_address:
+            extra_kw["source_address"] = self.source_address
+        if self.socket_options:
+            extra_kw["socket_options"] = self.socket_options
+        target_ip = getattr(self, "_pinned_ip", self.host)
+        return socket.create_connection((target_ip, self.port), self.timeout, **extra_kw)
+
+
+class PinnedIPAdapter(HTTPAdapter):
+    """Custom HTTPAdapter that pins verified destination IPs to eliminate DNS rebinding TOCTOU."""
+    def __init__(self, pinned_ips=None, *args, **kwargs):
+        self.pinned_ips = pinned_ips or {}
+        super().__init__(*args, **kwargs)
+
+    def get_connection(self, url, proxies=None):
+        conn = super().get_connection(url, proxies=proxies)
+        host = urllib.parse.urlparse(url).hostname
+        if host and host in self.pinned_ips:
+            conn._pinned_ip = self.pinned_ips[host]
+            if conn.scheme == "https":
+                conn.ConnectionCls = PinnedHTTPSConnection
+            else:
+                conn.ConnectionCls = PinnedHTTPConnection
+        return conn
 
 
 def extract_readable_content(html: str) -> tuple[str, str]:
@@ -187,8 +250,9 @@ def extract_readable_content(html: str) -> tuple[str, str]:
 def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
     """
     Attempts to fetch webpage HTML statically using requests.
-    Enforces strict pre-flight SSRF validation on every redirect hop (max 5 hops)
+    Enforces strict pre-flight SSRF validation and IP pinning on every redirect hop (max 5 hops)
     with allow_redirects=False to prevent DNS rebinding and internal network pivot attacks.
+    Enforces a strict 5 MB streaming download limit to prevent memory exhaustion DoS.
     """
     headers = {
         "User-Agent": (
@@ -203,12 +267,20 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
     current_url = url
     max_redirects = 5
     response = None
+    pinned_ips = {}
 
     try:
         with requests.Session() as session:
+            adapter = PinnedIPAdapter(pinned_ips)
+            session.mount("https://", adapter)
+            session.mount("http://", adapter)
+
             for _ in range(max_redirects):
-                # Validate every hop before connection
-                validated_url = validate_safe_url(current_url)
+                # Validate and pin IP before connection on each hop
+                validated_url, verified_ip = resolve_and_validate_safe_url(current_url)
+                host = urllib.parse.urlparse(validated_url).hostname
+                if host:
+                    pinned_ips[host] = verified_ip
 
                 response = session.get(
                     validated_url,
@@ -225,7 +297,7 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
                         break
                     # Resolve relative redirect URLs safely
                     next_url = urllib.parse.urljoin(current_url, location)
-                    current_url = validate_safe_url(next_url)
+                    current_url = next_url
                     continue
 
                 # Final response reached
@@ -290,7 +362,8 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
 def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
     """
     Headless browser scraper using Playwright as fallback for JavaScript-rendered websites.
-    Aborts unnecessary resources (images, fonts, stylesheets, media) and enforces SSRF blocks.
+    Enforces SSRF validation on all subrequests, enforces a 50-request subrequest budget,
+    enforces a 5 MB content limit, and guarantees browser process termination.
     """
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
@@ -299,89 +372,135 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
             "Dynamic browser rendering is not available on this server (Playwright is not installed)."
         )
 
+    browser = None
+    context = None
+    playwright_cm = None
+
     try:
-        with sync_playwright() as p:
+        playwright_cm = sync_playwright()
+        p = playwright_cm.__enter__()
+
+        try:
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu",
+                ],
+            )
+        except Exception as e:
+            raise ScraperError(f"Failed to start headless browser engine: {str(e)}")
+
+        context = browser.new_context(
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1280, "height": 800},
+        )
+        page = context.new_page()
+
+        subrequest_count = 0
+        total_downloaded_bytes = 0
+
+        # Resource optimization & SSRF interception handler
+        def route_handler(route):
+            nonlocal subrequest_count
+            subrequest_count += 1
+            if subrequest_count > MAX_SUBREQUESTS:
+                route.abort("budgetexceeded")
+                return
+
+            req = route.request
+            # Abort non-essential assets to save bandwidth and maximize rendering speed
+            if req.resource_type in ("image", "media", "font", "stylesheet", "websocket", "eventsource", "manifest", "other"):
+                route.abort()
+                return
+
+            # SSRF defense for subresources and redirects
+            req_url = req.url
             try:
-                browser = p.chromium.launch(
-                    headless=True,
-                    args=[
-                        "--no-sandbox",
-                        "--disable-setuid-sandbox",
-                        "--disable-dev-shm-usage",
-                        "--disable-gpu",
-                    ],
-                )
-            except Exception as e:
-                raise ScraperError(f"Failed to start headless browser engine: {str(e)}")
+                parsed_req = urllib.parse.urlparse(req_url)
+                if parsed_req.scheme.lower() not in ("http", "https"):
+                    route.abort()
+                    return
+                if parsed_req.username or parsed_req.password:
+                    route.abort()
+                    return
+                if parsed_req.port and parsed_req.port not in (80, 443, 8080, 8443):
+                    route.abort()
+                    return
+                validate_safe_url(req_url)
+            except Exception:
+                route.abort()
+                return
 
+            route.continue_()
+
+        page.route("**/*", route_handler)
+
+        def on_response(resp):
+            nonlocal total_downloaded_bytes
             try:
-                context = browser.new_context(
-                    user_agent=(
-                        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                        "AppleWebKit/537.36 (KHTML, like Gecko) "
-                        "Chrome/124.0.0.0 Safari/537.36"
-                    ),
-                    viewport={"width": 1280, "height": 800},
-                )
-                page = context.new_page()
+                cl = resp.headers.get("content-length")
+                if cl:
+                    total_downloaded_bytes += int(cl)
+                    if total_downloaded_bytes > MAX_RESPONSE_BYTES:
+                        route_handler(None)
+            except Exception:
+                pass
 
-                # Resource optimization & SSRF interception handler
-                def route_handler(route):
-                    req = route.request
-                    # Abort non-essential assets to save bandwidth and maximize rendering speed
-                    if req.resource_type in ("image", "media", "font", "stylesheet"):
-                        route.abort()
-                        return
+        page.on("response", on_response)
 
-                    # SSRF defense for subresources and redirects
-                    req_url = req.url
-                    try:
-                        parsed_req = urllib.parse.urlparse(req_url)
-                        if parsed_req.scheme.lower() not in ("http", "https"):
-                            route.abort()
-                            return
-                        if parsed_req.username or parsed_req.password:
-                            route.abort()
-                            return
-                        if parsed_req.port and parsed_req.port not in (80, 443, 8080, 8443):
-                            route.abort()
-                            return
-                        validate_safe_url(req_url)
-                    except Exception:
-                        route.abort()
-                        return
+        try:
+            # Navigate to the target page
+            page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
 
-                    route.continue_()
+            # Wait briefly for dynamic client-side DOM rendering
+            try:
+                page.wait_for_selector("p, article, main, [role='main']", timeout=5000)
+            except PlaywrightTimeoutError:
+                pass
 
-                page.route("**/*", route_handler)
+        except PlaywrightTimeoutError:
+            raise ScraperError("Connection timed out while loading JavaScript-rendered webpage.")
+        except PlaywrightError as e:
+            raise ScraperError(f"Browser navigation failed: {str(e)}")
 
-                try:
-                    # Navigate to the target page
-                    page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        # Validate destination URL after any redirects
+        validate_safe_url(page.url)
 
-                    # Wait briefly for dynamic client-side DOM rendering
-                    try:
-                        page.wait_for_selector("p, article, main, [role='main']", timeout=5000)
-                    except PlaywrightTimeoutError:
-                        pass
+        content = page.content()
+        if len(content.encode("utf-8")) > MAX_RESPONSE_BYTES:
+            raise ScraperError(
+                f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+            )
 
-                except PlaywrightTimeoutError:
-                    raise ScraperError("Connection timed out while loading JavaScript-rendered webpage.")
-                except PlaywrightError as e:
-                    raise ScraperError(f"Browser navigation failed: {str(e)}")
-
-                # Validate destination URL after any redirects
-                validate_safe_url(page.url)
-
-                return page.content()
-
-            finally:
-                browser.close()
+        return content
 
     except ScraperError:
         raise
     except Exception as e:
         raise ScraperError(f"Browser rendering encountered an error: {str(e)}")
+    finally:
+        if context:
+            try:
+                context.close()
+            except Exception:
+                pass
+        if browser:
+            try:
+                browser.close()
+            except Exception:
+                pass
+        if playwright_cm:
+            try:
+                playwright_cm.__exit__(None, None, None)
+            except Exception:
+                pass
 
 
 def scrape_article(url: str) -> str:
@@ -395,7 +514,7 @@ def scrape_article(url: str) -> str:
         ScraperError: When the URL is invalid, blocked for SSRF security, unreachable,
                       or lacks extractable content across both static and dynamic methods.
     """
-    # Step 1: Validate and sanitize URL (blocks SSRF, private IPs, loopback, bad schemes)
+    # Step 1: Validate and sanitize URL (blocks SSRF, private IPs, loopback, CGNAT, bad schemes)
     safe_url = validate_safe_url(url)
 
     static_error = None

@@ -50,7 +50,10 @@
             const savedTheme = localStorage.getItem("webbrief_theme") || "dark";
             document.documentElement.setAttribute("data-theme", savedTheme);
         })();
+        window.__WEBBRIEF_IS_HOSTED = {{ 'true' if is_hosted else 'false' }};
+        window.__WEBBRIEF_VAULT_ENABLED = {{ 'true' if vault_enabled else 'false' }};
     </script>
+    <script src="{{ url_for('static', filename='storage_adapter.js') }}"></script>
     <style>
         .setup-card {
             max-width: 680px;

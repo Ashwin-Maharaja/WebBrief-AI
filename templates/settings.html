@@ -50,7 +50,10 @@
             const savedTheme = localStorage.getItem("webbrief_theme") || "dark";
             document.documentElement.setAttribute("data-theme", savedTheme);
         })();
+        window.__WEBBRIEF_IS_HOSTED = {{ 'true' if is_hosted else 'false' }};
+        window.__WEBBRIEF_VAULT_ENABLED = {{ 'true' if vault_enabled else 'false' }};
     </script>
+    <script src="{{ url_for('static', filename='storage_adapter.js') }}"></script>
     <style>
         .settings-card {
             max-width: 680px;
@@ -707,10 +710,25 @@
                 });
                 const data = await res.json();
                 if (res.ok && data.success) {
+                    if (window.__WEBBRIEF_VAULT_ENABLED) {
+                        const tokenInput = document.getElementById("settings-cf-token");
+                        const groqInput = document.getElementById("settings-groq-key");
+                        if (tokenInput) tokenInput.value = "";
+                        if (groqInput) groqInput.value = "";
+                        if (window.StorageAdapter) {
+                            StorageAdapter.setProviderConfig(payload);
+                        }
+                    }
                     alertBox.style.background = "rgba(16, 185, 129, 0.15)";
                     alertBox.style.color = "#34d399";
                     alertBox.textContent = `✓ ${data.message || 'Configuration saved successfully!'}`;
-                    setTimeout(() => window.location.reload(), 1200);
+                    setTimeout(() => {
+                        if (data.redirect) {
+                            window.location.href = data.redirect;
+                        } else {
+                            window.location.reload();
+                        }
+                    }, 1200);
                 } else {
                     alertBox.style.background = "rgba(239, 68, 68, 0.15)";
                     alertBox.style.color = "#f87171";

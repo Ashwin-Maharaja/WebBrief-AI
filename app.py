@@ -8,6 +8,8 @@ import urllib.parse
 import uuid
 import queue
 import threading
+import time
+from collections import defaultdict
 
 from flask import (
     Flask,
@@ -80,7 +82,7 @@ from vector_store import (
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.6.2"
+APP_VERSION = "1.6.3"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(
@@ -147,6 +149,43 @@ elif is_prod and (os.getenv("REDIS_URL") or os.getenv("CREDENTIAL_ENCRYPTION_KEY
     raise RuntimeError("Temporary BYOK vault requires both REDIS_URL and CREDENTIAL_ENCRYPTION_KEY")
 
 
+class InMemoryRateLimiter:
+    """Thread-safe sliding-window rate limiter accounting for shared NATs and anonymous sessions."""
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._events = defaultdict(list)
+
+    def is_allowed(self, key: str, max_requests: int, window_seconds: int = 60) -> bool:
+        now = time.time()
+        cutoff = now - window_seconds
+        with self._lock:
+            timestamps = self._events[key]
+            valid = [t for t in timestamps if t > cutoff]
+            if len(valid) >= max_requests:
+                self._events[key] = valid
+                return False
+            valid.append(now)
+            self._events[key] = valid
+            return True
+
+rate_limiter = InMemoryRateLimiter()
+
+def check_rate_limit(endpoint_name: str, max_requests: int, window_seconds: int = 60):
+    """
+    Enforces lightweight per-client sliding window rate limits.
+    Combines client IP and session token to avoid penalizing shared NAT / campus networks.
+    """
+    client_ip = request.remote_addr or "unknown"
+    session_token = session.get("_csrf_token") or session.get("_vault_sid") or ""
+    client_key = f"{endpoint_name}:{client_ip}:{session_token[:16]}"
+    if not rate_limiter.is_allowed(client_key, max_requests, window_seconds):
+        return jsonify({
+            "error": "Rate limit exceeded. Please wait a moment before sending more requests.",
+            "code": "RATE_LIMIT_EXCEEDED"
+        }), 429
+    return None
+
+
 def _vault_sid():
     if "_vault_sid" not in session:
         session["_vault_sid"] = secrets.token_urlsafe(32)
@@ -164,13 +203,20 @@ def attach_vault_credentials():
     """Merge credentials into request-scoped JSON only; never return them to client."""
     if _vault is None or not request.is_json or request.method != "POST":
         return
-    if request.endpoint not in {"summarize", "batch_summarize", "compare_articles_route", "api_search_embed"}:
+    if request.endpoint not in {
+        "summarize", "batch_summarize", "compare_articles_route",
+        "api_search_embed", "api_search_semantic", "api_search_rebuild_index"
+    }:
         return
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return
     stored = _vault_config()
-    for key in ("cloudflare_account_id", "cloudflare_api_token", "groq_api_key"):
+    for key in (
+        "cloudflare_account_id", "cloudflare_api_token", "groq_api_key",
+        "fallback_provider", "fallback_model", "primary_model", "cloudflare_model",
+        "groq_model", "fallback_enabled"
+    ):
         if not payload.get(key) and stored.get(key):
             payload[key] = stored[key]
     if stored and not payload.get("primary_provider"):
@@ -181,23 +227,47 @@ def attach_vault_credentials():
 def store_temporary_credentials():
     if _vault is None:
         return jsonify({"error": "Temporary credential vault is not configured."}), 503
+
+    limit_resp = check_rate_limit("store_credentials", max_requests=15, window_seconds=60)
+    if limit_resp:
+        return limit_resp
+
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "JSON object required."}), 400
     provider = payload.get("primary_provider", "cloudflare")
     if provider == "cloudflare":
-        valid, _ = validate_cloudflare_credentials(payload.get("cloudflare_account_id", ""), payload.get("cloudflare_api_token", ""))
+        valid, msg = validate_cloudflare_credentials(payload.get("cloudflare_account_id", ""), payload.get("cloudflare_api_token", ""))
     elif provider == "groq":
-        valid, _ = validate_groq_credentials(payload.get("groq_api_key", ""))
+        valid, msg = validate_groq_credentials(payload.get("groq_api_key", ""))
     else:
         return jsonify({"error": "Unsupported provider."}), 400
     if not valid:
-        return jsonify({"error": "Provider credentials failed validation."}), 400
+        return jsonify({"error": f"Provider credentials failed validation: {msg}"}), 400
+
+    # Validate fallback credentials if provided
+    fallback_provider = payload.get("fallback_provider")
+    if fallback_provider:
+        if fallback_provider == "groq":
+            fb_key = payload.get("groq_api_key", "").strip()
+            if fb_key:
+                fb_valid, fb_msg = validate_groq_credentials(fb_key)
+                if not fb_valid:
+                    return jsonify({"error": f"Fallback provider credentials failed validation: {fb_msg}"}), 400
+        elif fallback_provider == "cloudflare":
+            fb_id = payload.get("cloudflare_account_id", "").strip()
+            fb_tok = payload.get("cloudflare_api_token", "").strip()
+            if fb_id or fb_tok:
+                fb_valid, fb_msg = validate_cloudflare_credentials(fb_id, fb_tok)
+                if not fb_valid:
+                    return jsonify({"error": f"Fallback provider credentials failed validation: {fb_msg}"}), 400
+
     allowed = {
         "primary_provider", "cloudflare_account_id", "cloudflare_api_token",
-        "groq_api_key", "fallback_provider", "fallback_model", "primary_model"
+        "groq_api_key", "fallback_provider", "fallback_model", "primary_model",
+        "cloudflare_model", "groq_model", "fallback_enabled"
     }
-    clean = {k: v for k, v in payload.items() if k in allowed and isinstance(v, str)}
+    clean = {k: v for k, v in payload.items() if k in allowed and (isinstance(v, str) or isinstance(v, bool))}
     saved = _vault.save(_vault_sid(), clean)
     if not saved:
         return jsonify({"error": "Failed to store credentials in temporary vault."}), 503
@@ -207,7 +277,14 @@ def store_temporary_credentials():
 @app.route("/api/credentials/status", methods=["GET"])
 def temporary_credentials_status():
     data = _vault_config()
-    return jsonify({"enabled": _vault is not None, "configured": bool(data), "provider": data.get("primary_provider")})
+    return jsonify({
+        "enabled": _vault is not None,
+        "configured": bool(data),
+        "provider": data.get("primary_provider"),
+        "fallback_provider": data.get("fallback_provider"),
+        "primary_model": data.get("primary_model"),
+        "fallback_model": data.get("fallback_model"),
+    })
 
 
 @app.route("/api/credentials", methods=["DELETE"])
@@ -685,6 +762,9 @@ def batch_validate():
 
 @app.route("/batch/summarize", methods=["POST"])
 def batch_summarize():
+    limit_resp = check_rate_limit("batch_summarize", max_requests=10, window_seconds=60)
+    if limit_resp:
+        return limit_resp
     data = request.get_json() or {}
     raw_urls = data.get("urls", [])
 
@@ -799,6 +879,9 @@ def batch_export_pdf():
 # -------------------------------------------------------------
 @app.route("/compare", methods=["POST"])
 def compare_articles_route():
+    limit_resp = check_rate_limit("compare", max_requests=25, window_seconds=60)
+    if limit_resp:
+        return limit_resp
     data = request.get_json() if request.is_json else request.form.to_dict()
     url_a = data.get("url_a", "").strip()
     url_b = data.get("url_b", "").strip()
@@ -1169,6 +1252,9 @@ def validate_key():
     Validates submitted provider credentials without consuming generation tokens.
     Supports Cloudflare Workers AI and GroqCloud.
     """
+    limit_resp = check_rate_limit("validate_key", max_requests=20, window_seconds=60)
+    if limit_resp:
+        return limit_resp
     data = request.get_json() or {} if request.is_json else request.form.to_dict()
     provider = data.get("provider", "").strip().lower()
 
@@ -1259,11 +1345,27 @@ def save_key():
 
     # Hosted serverless mode: do not touch filesystem
     if is_serverless_env():
+        if _vault is not None:
+            clean_vault = {
+                "primary_provider": primary_provider,
+                "cloudflare_account_id": data.get("cloudflare_account_id", "").strip(),
+                "cloudflare_api_token": data.get("cloudflare_api_token", "").strip(),
+                "cloudflare_model": data.get("cloudflare_model", "").strip(),
+                "groq_api_key": data.get("groq_api_key", "").strip() or data.get("api_key", "").strip(),
+                "groq_model": data.get("groq_model", "").strip(),
+                "fallback_enabled": fallback_enabled,
+                "fallback_provider": data.get("fallback_provider", "").strip().lower() if fallback_enabled else None,
+                "fallback_model": data.get("fallback_model", "").strip() if fallback_enabled else None,
+            }
+            clean_vault = {k: v for k, v in clean_vault.items() if v}
+            _vault.save(_vault_sid(), clean_vault)
+
         if is_ajax:
             return jsonify({
                 "success": True,
-                "message": "Provider configuration verified for active browser session.",
+                "message": "Provider configuration verified for active temporary session.",
                 "is_hosted": True,
+                "vault_enabled": _vault is not None,
                 "redirect": url_for("home")
             })
         return redirect(url_for("home"))
@@ -1299,6 +1401,9 @@ def clear_key():
 # -------------------------------------------------------------
 @app.route("/summarize", methods=["POST"])
 def summarize():
+    limit_resp = check_rate_limit("summarize", max_requests=30, window_seconds=60)
+    if limit_resp:
+        return limit_resp
     if request.is_json:
         data = request.get_json() or {}
         url = data.get("url", "").strip()

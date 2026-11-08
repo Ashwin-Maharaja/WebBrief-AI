@@ -1,8 +1,8 @@
-> **v1.6.2 update:** Optional Redis-backed encrypted temporary BYOK vault is available. See [release notes](RELEASE_v1.6.2.md). The default hosted browser-memory flow remains supported.
+> **v1.6.3 update:** Production-hardened release featuring connection-level SSRF pinning, CGNAT rejection, streaming scraper bounds, prompt injection boundaries, and optional encrypted BYOK vault with failover restoration.
 
 # WebBrief AI
 
-> **Production Release — v1.6.2**  
+> **Production Release — v1.6.3**  
 > An intelligent, multi-mode website summarizer powered by a modular multi-provider AI architecture (Cloudflare Workers AI & GroqCloud) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and automatic provider failover routing.
 
 ---
@@ -44,15 +44,16 @@ In **v1.6.0**, WebBrief AI upgrades its intelligence layer from a single vendor 
 
 ---
 
-## 2. What's New in v1.6.2 (Maintenance & Security Patch)
+## 2. What's New in v1.6.3 (Security Hardening, Vault & SSRF Remediation)
 
-- **Production Secret-Key Enforcement**: Strict enforcement requiring an explicit, cryptographically random FLASK_SECRET_KEY in production environments; development mode uses safe ephemeral 32-byte secret generation with explicit warnings.
-- **Universal Anti-CSRF Token Validation**: Universal CSRF token validation across all state-changing endpoints (POST, PUT, DELETE, PATCH) via X-CSRF-Token headers, form payloads, and automated frontend etch interceptors.
-- **Enhanced Credential Sanitization**: Thorough masking of Notion integration tokens (secret_..., 
-tn_...), Authorization Bearer headers (Bearer [token_masked]), Cloudflare Account IDs, and Groq API keys in logs and exception traces.
-- **Serverless Resilience for Vercel**: Deployment-aware SQLite protection preventing illegal write attempts on read-only serverless filesystems; ReportLab import error boundaries ensuring PDF generator dependencies cannot crash application bootstrap.
-- **Vercel Zero-Config Deployment**: Modernized ercel.json rewrites and pi/index.py WSGI error boundary to prevent 500 FUNCTION_INVOCATION_FAILED errors on Vercel.
-- **Diagnostic Platform Health Probes**: Dedicated /health and /api/health endpoints returning JSON uptime, version, and deployment status for platform monitoring.
+- **SSRF Defense with Connection-Level IP Pinning**: DNS validation is paired with custom socket connection pinning (`PinnedIPAdapter`), eliminating Time-of-Check to Time-of-Use (TOCTOU) DNS rebinding attacks.
+- **Non-Globally-Routable & CGNAT IP Rejection**: Rejection of all non-globally-routable unicast destination IPs, including Carrier-Grade NAT (CGNAT RFC 6598: `100.64.0.0/10`), loopback, link-local, and cloud metadata addresses (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`).
+- **Scraper Resource & Memory Protection**: Strict 5 MB streaming download cap on both static (`requests`) and dynamic (`playwright`) extraction pipelines. Subrequest navigation budget (max 50 requests) and reliable browser process termination.
+- **Prompt Injection Trust Boundaries**: Explicit security instructions and `<webpage_content>`, `<section_content>`, and `<intermediate_summaries>` XML boundary tags classifying scraped DOM text as untrusted and instructing LLMs to ignore embedded overrides.
+- **Ephemeral BYOK Vault with Full Failover**: Optional Redis-backed Fernet-encrypted vault storing and restoring primary credentials, fallback provider settings, and model selections across sessions.
+- **Cross-Page Vault Consistency**: Synchronized vault activation, credential masking, and validation across Home, Settings, and Setup pages.
+- **Lightweight Sliding-Window Rate Limiting**: Built-in per-client request throttling on `/summarize`, `/batch/summarize`, `/compare`, `/api/credentials`, and `/api/validate-key` accounting for shared NATs and anonymous sessions.
+- **Zero OpenAI Dependencies**: Total removal of legacy OpenAI placeholder values and SDK imports.
 
 ---
 
@@ -465,6 +466,8 @@ vercel
 | `HOST` | Optional | `127.0.0.1` | Local web server binding host |
 | `SESSION_COOKIE_SECURE` | Optional | `false` (local) / `true` (prod) | Sets Secure flag on session cookies for HTTPS |
 | `MAX_CONTENT_LENGTH` | Optional | `2097152` (2MB) | Maximum allowed incoming request body size in bytes |
+| `REDIS_URL` | Optional | None | TLS-enabled Redis URL for encrypted temporary BYOK vault |
+| `CREDENTIAL_ENCRYPTION_KEY` | Optional | None | Base64-encoded 32-byte Fernet key for vault encryption |
 
 ---
 
@@ -512,10 +515,10 @@ Contributions are welcome! Please follow these steps:
 
 1. **Fork the Repository**.
 2. **Create a Feature Branch**: `git checkout -b feature/amazing-feature`.
-3. **Write Tests**: Ensure any changes include accompanying tests in `scratch/test_v160_providers.py`.
+3. **Write Tests**: Ensure any changes include accompanying tests in `tests/`.
 4. **Run Test Suites**:
    ```bash
-   .\venv\Scripts\python.exe scratch/test_v160_providers.py
+   python -m unittest discover tests
    ```
 5. **Commit Your Changes**: Follow conventional commits (e.g., `feat: ...`, `fix: ...`).
 6. **Open a Pull Request**.
