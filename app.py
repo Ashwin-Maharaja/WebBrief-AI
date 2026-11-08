@@ -193,9 +193,14 @@ def store_temporary_credentials():
         return jsonify({"error": "Unsupported provider."}), 400
     if not valid:
         return jsonify({"error": "Provider credentials failed validation."}), 400
-    allowed = {"primary_provider", "cloudflare_account_id", "cloudflare_api_token", "groq_api_key"}
+    allowed = {
+        "primary_provider", "cloudflare_account_id", "cloudflare_api_token",
+        "groq_api_key", "fallback_provider", "fallback_model", "primary_model"
+    }
     clean = {k: v for k, v in payload.items() if k in allowed and isinstance(v, str)}
-    _vault.save(_vault_sid(), clean)
+    saved = _vault.save(_vault_sid(), clean)
+    if not saved:
+        return jsonify({"error": "Failed to store credentials in temporary vault."}), 503
     return jsonify({"success": True, "expires_in": 1800}), 200
 
 

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 STATIC_TIMEOUT = 15          # Timeout in seconds for static requests
 BROWSER_TIMEOUT = 15         # Timeout in seconds for Playwright browser fallback
 MIN_SUFFICIENT_LENGTH = 60   # Minimum characters of readable text to consider static extraction adequate
+MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB maximum allowed webpage download size
 
 
 class ScraperError(Exception):
@@ -214,6 +215,7 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
                     headers=headers,
                     timeout=timeout,
                     allow_redirects=False,
+                    stream=True,
                 )
 
                 # Check if response is a redirect
@@ -232,7 +234,34 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
                 raise ScraperError("Too many redirects (exceeded limit of 5).")
 
             response.raise_for_status()
-            return response.text
+
+            # Enforce maximum response size limit to prevent memory exhaustion / DoS
+            content_length = response.headers.get("Content-Length")
+            if content_length:
+                try:
+                    if int(content_length) > MAX_RESPONSE_BYTES:
+                        raise ScraperError(
+                            f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+                        )
+                except ValueError:
+                    pass
+
+            content_chunks = []
+            total_bytes = 0
+            for chunk in response.iter_content(chunk_size=65536):
+                total_bytes += len(chunk)
+                if total_bytes > MAX_RESPONSE_BYTES:
+                    raise ScraperError(
+                        f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+                    )
+                content_chunks.append(chunk)
+
+            raw_bytes = b"".join(content_chunks)
+            encoding = response.encoding or "utf-8"
+            try:
+                return raw_bytes.decode(encoding, errors="replace")
+            except Exception:
+                return raw_bytes.decode("utf-8", errors="replace")
 
     except requests.exceptions.MissingSchema:
         raise ScraperError("Invalid URL schema. Please include http:// or https://.")

@@ -112,7 +112,8 @@ def build_summarization_prompt(article_text, mode=DEFAULT_MODE, custom_directive
     )
 
     user_input = (
-        f"Summarize the following webpage content into the structured JSON format using mode '{mode_info['name']}':\n\n{article_text}"
+        f"Summarize the following webpage content into the structured JSON format using mode '{mode_info['name']}':\n\n"
+        f"<webpage_content>\n{article_text}\n</webpage_content>"
     )
 
     return instructions, user_input
@@ -134,7 +135,10 @@ def build_chunk_map_prompt(chunk_content, chunk_index, total_chunks, mode=DEFAUL
         "- Respond in clean, concise prose or bullet points without meta-commentary."
     )
 
-    user_input = f"Webpage Section {chunk_index}/{total_chunks}:\n\n{chunk_content}"
+    user_input = (
+        f"Webpage Section {chunk_index}/{total_chunks}:\n\n"
+        f"<section_content>\n{chunk_content}\n</section_content>"
+    )
     return instructions, user_input
 
 

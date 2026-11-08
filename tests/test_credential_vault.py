@@ -2,8 +2,9 @@
 import json
 import time
 import unittest
-from unittest.mock import patch
+from unittest.mock import patch, MagicMock
 from cryptography.fernet import Fernet
+from redis.exceptions import RedisError
 from credential_vault import TemporaryCredentialVault
 from app import app
 
@@ -27,13 +28,30 @@ class FakeRedis:
         self.data.pop(key, None)
 
 
+class BrokenRedis:
+    """Simulates a Redis instance throwing network or connection exceptions."""
+    def setex(self, key, ttl, value):
+        raise RedisError("Redis connection refused")
+
+    def get(self, key):
+        raise RedisError("Redis read timeout")
+
+    def expire(self, key, ttl):
+        raise RedisError("Redis socket timeout")
+
+    def delete(self, key):
+        raise RedisError("Redis cluster unreachable")
+
+
 class VaultTests(unittest.TestCase):
     def setUp(self):
         self.redis = FakeRedis()
-        self.vault = TemporaryCredentialVault(self.redis, Fernet.generate_key())
+        self.key = Fernet.generate_key()
+        self.vault = TemporaryCredentialVault(self.redis, self.key)
 
     def test_encryption_and_session_isolation(self):
-        self.vault.save('alice', {'primary_provider': 'groq', 'groq_api_key': 'gsk_test_secret'})
+        saved = self.vault.save('alice', {'primary_provider': 'groq', 'groq_api_key': 'gsk_test_secret'})
+        self.assertTrue(saved)
         blob = next(iter(self.redis.data.values()))
         self.assertNotIn(b'gsk_test_secret', blob)
         self.assertEqual(self.vault.load('alice')['groq_api_key'], 'gsk_test_secret')
@@ -48,6 +66,25 @@ class VaultTests(unittest.TestCase):
         self.vault.save('alice', {'groq_api_key': 'test'})
         with patch('credential_vault.time.time', return_value=time.time() + 9 * 3600):
             self.assertEqual(self.vault.load('alice'), {})
+
+    def test_invalid_token_handling(self):
+        """Verifies that key rotation or corrupted cipher blobs do NOT raise uncaught InvalidToken."""
+        self.vault.save('alice', {'groq_api_key': 'secret_value'})
+        # Create a second vault instance with a different key
+        other_vault = TemporaryCredentialVault(self.redis, Fernet.generate_key())
+        # Should gracefully return {} and delete corrupted record without crashing
+        loaded = other_vault.load('alice')
+        self.assertEqual(loaded, {})
+        # Verify the unparseable key was removed from Redis
+        self.assertIsNone(self.redis.get(self.vault._key('alice')))
+
+    def test_redis_error_graceful_handling(self):
+        """Verifies that Redis network or timeout errors do not crash callers."""
+        broken_vault = TemporaryCredentialVault(BrokenRedis(), self.key)
+        self.assertFalse(broken_vault.save('alice', {'groq_api_key': 'secret'}))
+        self.assertEqual(broken_vault.load('alice'), {})
+        # delete should not raise
+        broken_vault.delete('alice')
 
 
 class TestAppVaultRoutes(unittest.TestCase):
@@ -66,7 +103,11 @@ class TestAppVaultRoutes(unittest.TestCase):
         self.assertFalse(data['configured'])
 
     def test_vault_unconfigured_post(self):
-        res = self.client.post('/api/credentials', json={'primary_provider': 'groq', 'groq_api_key': 'gsk_test'}, headers={'X-CSRF-Token': self.csrf_token})
+        res = self.client.post(
+            '/api/credentials',
+            json={'primary_provider': 'groq', 'groq_api_key': 'gsk_test'},
+            headers={'X-CSRF-Token': self.csrf_token}
+        )
         self.assertEqual(res.status_code, 503)
 
     @patch('app.validate_groq_credentials', return_value=(True, ''))
@@ -77,7 +118,12 @@ class TestAppVaultRoutes(unittest.TestCase):
             # Post credentials
             res = self.client.post(
                 '/api/credentials',
-                json={'primary_provider': 'groq', 'groq_api_key': 'gsk_test_key_12345'},
+                json={
+                    'primary_provider': 'groq',
+                    'groq_api_key': 'gsk_test_key_12345',
+                    'fallback_provider': 'cloudflare',
+                    'primary_model': 'llama-3.3-70b-versatile'
+                },
                 headers={'X-CSRF-Token': self.csrf_token}
             )
             self.assertEqual(res.status_code, 200)
@@ -100,6 +146,17 @@ class TestAppVaultRoutes(unittest.TestCase):
             # Status check after delete
             res_status2 = self.client.get('/api/credentials/status')
             self.assertFalse(res_status2.get_json()['configured'])
+
+    @patch('app.validate_groq_credentials', return_value=(True, ''))
+    def test_vault_storage_failure_returns_503(self, mock_val):
+        broken_vault = TemporaryCredentialVault(BrokenRedis(), Fernet.generate_key())
+        with patch('app._vault', broken_vault):
+            res = self.client.post(
+                '/api/credentials',
+                json={'primary_provider': 'groq', 'groq_api_key': 'gsk_valid_key'},
+                headers={'X-CSRF-Token': self.csrf_token}
+            )
+            self.assertEqual(res.status_code, 503)
 
 
 if __name__ == '__main__':

@@ -31,7 +31,6 @@ ENV_FALLBACK_MODEL = "FALLBACK_MODEL"
 # Placeholder values that must not be treated as valid credentials
 PLACEHOLDER_KEYS = {
     "",
-    "your_openai_api_key_here",
     "your_cloudflare_account_id_here",
     "your_cloudflare_api_token_here",
     "your_groq_api_key_here",
@@ -339,7 +338,6 @@ def clear_saved_provider_config(env_path: Optional[str] = None) -> Tuple[bool, s
         ENV_FALLBACK_ENABLED,
         ENV_FALLBACK_PROVIDER,
         ENV_FALLBACK_MODEL,
-        "OPENAI_API_KEY",  # Clean legacy key as well
     ]
 
     for k in managed_keys:
