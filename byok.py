@@ -116,11 +116,11 @@ def get_active_provider_config(
     if is_serverless_env():
         # Hosted mode: strictly isolated to per-request payload
         primary_provider = req.get("primary_provider") or "cloudflare"
-        cf_account_id = req.get("cloudflare_account_id") or ""
-        cf_api_token = req.get("cloudflare_api_token") or ""
+        cf_account_id = req.get("cloudflare_account_id") or req.get("fallback_cloudflare_account_id") or ""
+        cf_api_token = req.get("cloudflare_api_token") or req.get("fallback_cloudflare_api_token") or ""
         cf_model = req.get("cloudflare_model") or get_default_model("cloudflare")
 
-        groq_api_key = req.get("groq_api_key") or req.get("api_key") or ""
+        groq_api_key = req.get("groq_api_key") or req.get("fallback_groq_api_key") or req.get("api_key") or ""
         groq_model = req.get("groq_model") or get_default_model("groq")
 
         fallback_enabled = req.get("fallback_enabled") in (True, "true", "1", 1)
@@ -129,11 +129,11 @@ def get_active_provider_config(
     else:
         # Local self-hosted mode: environment variables with optional request payload overrides
         primary_provider = req.get("primary_provider") or os.getenv(ENV_PRIMARY_PROVIDER, "cloudflare").strip().lower()
-        cf_account_id = req.get("cloudflare_account_id") or os.getenv(ENV_CF_ACCOUNT_ID, "").strip()
-        cf_api_token = req.get("cloudflare_api_token") or os.getenv(ENV_CF_API_TOKEN, "").strip()
+        cf_account_id = req.get("cloudflare_account_id") or req.get("fallback_cloudflare_account_id") or os.getenv(ENV_CF_ACCOUNT_ID, "").strip()
+        cf_api_token = req.get("cloudflare_api_token") or req.get("fallback_cloudflare_api_token") or os.getenv(ENV_CF_API_TOKEN, "").strip()
         cf_model = req.get("cloudflare_model") or os.getenv(ENV_CF_MODEL, "").strip() or get_default_model("cloudflare")
 
-        groq_api_key = req.get("groq_api_key") or req.get("api_key") or os.getenv(ENV_GROQ_API_KEY, "").strip()
+        groq_api_key = req.get("groq_api_key") or req.get("fallback_groq_api_key") or req.get("api_key") or os.getenv(ENV_GROQ_API_KEY, "").strip()
         groq_model = req.get("groq_model") or os.getenv(ENV_GROQ_MODEL, "").strip() or get_default_model("groq")
 
         fb_env = os.getenv(ENV_FALLBACK_ENABLED, "false").strip().lower() in ("true", "1", "yes")
@@ -181,6 +181,7 @@ def get_router(session_dict: Optional[dict] = None, request_data: Optional[dict]
     """
     Builds and returns an AIRouter configured with current active credentials.
     """
+    req = request_data or {}
     config = get_active_provider_config(session_dict=session_dict, request_data=request_data)
     primary_id = config.get("primary_provider", "cloudflare")
 
@@ -207,17 +208,17 @@ def get_router(session_dict: Optional[dict] = None, request_data: Optional[dict]
     if fallback_enabled and fallback_id:
         if fallback_id == "cloudflare":
             fallback_creds = {
-                "account_id": config.get("cloudflare_account_id"),
-                "api_token": config.get("cloudflare_api_token"),
+                "account_id": req.get("fallback_cloudflare_account_id") or config.get("cloudflare_account_id"),
+                "api_token": req.get("fallback_cloudflare_api_token") or config.get("cloudflare_api_token"),
             }
             if not fallback_model:
-                fallback_model = config.get("cloudflare_model")
+                fallback_model = req.get("fallback_model") or config.get("cloudflare_model") or get_default_model("cloudflare")
         elif fallback_id == "groq":
             fallback_creds = {
-                "api_key": config.get("groq_api_key"),
+                "api_key": req.get("fallback_groq_api_key") or config.get("groq_api_key"),
             }
             if not fallback_model:
-                fallback_model = config.get("groq_model")
+                fallback_model = req.get("fallback_model") or config.get("groq_model") or get_default_model("groq")
 
     return AIRouter(
         primary_provider=primary_id,

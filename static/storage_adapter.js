@@ -25,11 +25,24 @@
         cloudflare_api_token: '',
         cloudflare_model: '@cf/meta/llama-3.1-8b-instruct',
         groq_api_key: '',
-        groq_model: 'llama-3.3-70b-versatile',
+        groq_model: 'llama-3.1-8b-instant',
         fallback_enabled: false,
         fallback_provider: 'groq',
-        fallback_model: 'llama-3.3-70b-versatile'
+        fallback_model: 'llama-3.1-8b-instant'
     };
+
+    // Restore non-sensitive preferences from tab session storage if available
+    try {
+        if (window.sessionStorage) {
+            const rawPrefs = window.sessionStorage.getItem('webbrief_provider_prefs');
+            if (rawPrefs) {
+                const parsed = JSON.parse(rawPrefs);
+                if (parsed && typeof parsed === 'object') {
+                    _inMemoryProviderConfig = Object.assign({}, _inMemoryProviderConfig, parsed);
+                }
+            }
+        }
+    } catch (_) {}
 
     // Restore the anonymous server-side vault session after a page reload.
     if (window.__WEBBRIEF_VAULT_ENABLED) {
@@ -185,6 +198,21 @@
                     _inMemoryApiKey = '';
                 } else if (cfg.groq_api_key) _inMemoryApiKey = cfg.groq_api_key;
                 else if (cfg.cloudflare_api_token) _inMemoryApiKey = cfg.cloudflare_api_token;
+
+                // Safely save non-sensitive preferences across tab navigation
+                try {
+                    if (window.sessionStorage) {
+                        const prefs = {
+                            primary_provider: _inMemoryProviderConfig.primary_provider,
+                            cloudflare_model: _inMemoryProviderConfig.cloudflare_model,
+                            groq_model: _inMemoryProviderConfig.groq_model,
+                            fallback_enabled: _inMemoryProviderConfig.fallback_enabled,
+                            fallback_provider: _inMemoryProviderConfig.fallback_provider,
+                            fallback_model: _inMemoryProviderConfig.fallback_model
+                        };
+                        window.sessionStorage.setItem('webbrief_provider_prefs', JSON.stringify(prefs));
+                    }
+                } catch (_) {}
             }
         },
 

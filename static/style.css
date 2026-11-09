@@ -1560,6 +1560,23 @@ pre, code {
     font-size: 13px;
 }
 
+#hosted-model-select {
+    width: auto;
+    max-width: 220px;
+    font-size: 13px;
+}
+
+.fallback-config-container {
+    transition: all 0.2s ease-in-out;
+}
+
+.fallback-inputs-grid {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: flex-end;
+}
+
 #hosted-cf-inputs {
     display: flex;
     gap: 8px;
@@ -1691,6 +1708,22 @@ pre, code {
     #hosted-provider-select {
         max-width: 100% !important;
         width: 100% !important;
+    }
+
+    #hosted-model-select {
+        max-width: 100% !important;
+        width: 100% !important;
+    }
+
+    .fallback-inputs-grid {
+        flex-direction: column !important;
+        align-items: stretch !important;
+        gap: 10px !important;
+    }
+
+    .fallback-inputs-grid > div {
+        width: 100% !important;
+        min-width: 100% !important;
     }
 
     #hosted-cf-inputs,

@@ -250,7 +250,7 @@
                         <span class="status-val">
                             <code>
                                 {% if provider_config.primary_provider == 'groq' %}
-                                    {{ provider_config.groq_model or 'llama-3.3-70b-versatile' }}
+                                    {{ provider_config.groq_model or 'llama-3.1-8b-instant' }}
                                 {% else %}
                                     {{ provider_config.cloudflare_model or '@cf/meta/llama-3.1-8b-instruct' }}
                                 {% endif %}
@@ -389,10 +389,14 @@
                             <div class="form-group">
                                 <label for="settings-fallback-model" class="form-label">Fallback Model</label>
                                 <select id="settings-fallback-model" class="form-control">
-                                    <option value="llama-3.3-70b-versatile">Llama 3.3 70B Versatile (Groq)</option>
-                                    <option value="llama-3.1-8b-instant">Llama 3.1 8B Instant (Groq)</option>
-                                    <option value="@cf/meta/llama-3.1-8b-instruct">Llama 3.1 8B Instruct (Cloudflare)</option>
-                                    <option value="@cf/mistral/mistral-7b-instruct-v0.1">Mistral 7B Instruct (Cloudflare)</option>
+                                    <option value="llama-3.1-8b-instant" {% if provider_config.fallback_model == 'llama-3.1-8b-instant' or (not provider_config.fallback_model and provider_config.fallback_provider == 'groq') %}selected{% endif %}>Llama 3.1 8B Instant (Groq)</option>
+                                    <option value="openai/gpt-oss-120b" {% if provider_config.fallback_model == 'openai/gpt-oss-120b' %}selected{% endif %}>GPT-OSS 120B (Groq)</option>
+                                    <option value="openai/gpt-oss-20b" {% if provider_config.fallback_model == 'openai/gpt-oss-20b' %}selected{% endif %}>GPT-OSS 20B (Groq)</option>
+                                    <option value="qwen/qwen3.8-27b" {% if provider_config.fallback_model == 'qwen/qwen3.8-27b' %}selected{% endif %}>Qwen 3.8 27B (Groq)</option>
+                                    <option value="@cf/meta/llama-3.1-8b-instruct" {% if provider_config.fallback_model == '@cf/meta/llama-3.1-8b-instruct' or (not provider_config.fallback_model and provider_config.fallback_provider == 'cloudflare') %}selected{% endif %}>Llama 3.1 8B Instruct (Cloudflare)</option>
+                                    <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast" {% if provider_config.fallback_model == '@cf/meta/llama-3.3-70b-instruct-fp8-fast' %}selected{% endif %}>Llama 3.3 70B Instruct Fast (Cloudflare)</option>
+                                    <option value="@cf/mistral/mistral-7b-instruct-v0.1" {% if provider_config.fallback_model == '@cf/mistral/mistral-7b-instruct-v0.1' %}selected{% endif %}>Mistral 7B Instruct (Cloudflare)</option>
+                                    <option value="llama-3.3-70b-versatile" {% if provider_config.fallback_model == 'llama-3.3-70b-versatile' %}selected{% endif %}>Llama 3.3 70B Versatile (Groq Tier 1+)</option>
                                 </select>
                             </div>
                         </div>
@@ -726,9 +730,9 @@
                         const groqInput = document.getElementById("settings-groq-key");
                         if (tokenInput) tokenInput.value = "";
                         if (groqInput) groqInput.value = "";
-                        if (window.StorageAdapter) {
-                            StorageAdapter.setProviderConfig(payload);
-                        }
+                    }
+                    if (window.StorageAdapter) {
+                        StorageAdapter.setProviderConfig(payload);
                     }
                     alertBox.style.background = "rgba(16, 185, 129, 0.15)";
                     alertBox.style.color = "#34d399";

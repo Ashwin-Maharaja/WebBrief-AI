@@ -52,7 +52,7 @@ class GroqProvider(BaseProvider):
 
     @property
     def default_model(self) -> str:
-        return get_default_model("groq") or "llama-3.3-70b-versatile"
+        return get_default_model("groq") or "llama-3.1-8b-instant"
 
     def _get_headers(self) -> Dict[str, str]:
         return {

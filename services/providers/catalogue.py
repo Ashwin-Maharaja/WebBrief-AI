@@ -1,5 +1,5 @@
 """
-WebBrief AI — Verified Model Catalogue (v1.6.0).
+WebBrief AI — Verified Model Catalogue (v1.6.4).
 Provides curated lists of supported models, readable descriptions, and free-tier compatibility flags.
 """
 
@@ -17,6 +17,14 @@ PROVIDER_CATALOGUE: Dict[str, Dict[str, Any]] = {
                 "free_tier": True,
                 "recommended": True,
                 "description": "Meta's flagship compact model. Fast, precise, and ideal for webpage summarization.",
+            },
+            {
+                "id": "@cf/meta/llama-3.3-70b-instruct-fp8-fast",
+                "name": "Llama 3.3 70B Instruct Fast",
+                "context_window": 8192,
+                "free_tier": True,
+                "recommended": False,
+                "description": "High-capacity 70B parameter model with fp8 acceleration for in-depth analysis.",
             },
             {
                 "id": "@cf/meta/llama-3-8b-instruct",
@@ -46,39 +54,47 @@ PROVIDER_CATALOGUE: Dict[str, Dict[str, Any]] = {
     },
     "groq": {
         "name": "GroqCloud",
-        "default_model": "llama-3.3-70b-versatile",
+        "default_model": "llama-3.1-8b-instant",
         "models": [
             {
-                "id": "llama-3.3-70b-versatile",
-                "name": "Llama 3.3 70B Versatile (Recommended)",
+                "id": "llama-3.1-8b-instant",
+                "name": "Llama 3.1 8B Instant (Recommended)",
                 "context_window": 128000,
                 "free_tier": True,
                 "recommended": True,
-                "description": "State-of-the-art 70B parameter model operating at blazing speed on Groq LPUs.",
+                "description": "Ultra-low latency inference with an expansive 128k context window. Active and highly reliable on Groq free tier.",
             },
             {
-                "id": "llama-3.1-8b-instant",
-                "name": "Llama 3.1 8B Instant",
+                "id": "openai/gpt-oss-120b",
+                "name": "GPT-OSS 120B",
+                "context_window": 131072,
+                "free_tier": True,
+                "recommended": False,
+                "description": "Flagship 120B open-weights mixture-of-experts model operating at high speed on Groq LPUs.",
+            },
+            {
+                "id": "openai/gpt-oss-20b",
+                "name": "GPT-OSS 20B",
+                "context_window": 131072,
+                "free_tier": True,
+                "recommended": False,
+                "description": "High-efficiency 20B open-weights model balancing sub-second latency and sharp extraction.",
+            },
+            {
+                "id": "qwen/qwen3.8-27b",
+                "name": "Qwen 3.8 27B",
+                "context_window": 131072,
+                "free_tier": True,
+                "recommended": False,
+                "description": "Advanced open architecture with strong synthesis, reasoning, and multilingual comprehension.",
+            },
+            {
+                "id": "llama-3.3-70b-versatile",
+                "name": "Llama 3.3 70B Versatile",
                 "context_window": 128000,
-                "free_tier": True,
+                "free_tier": False,
                 "recommended": False,
-                "description": "Sub-second latency with an expansive 128k context window.",
-            },
-            {
-                "id": "mixtral-8x7b-32768",
-                "name": "Mixtral 8x7B (MoE)",
-                "context_window": 32768,
-                "free_tier": True,
-                "recommended": False,
-                "description": "High-throughput mixture of experts model with balanced performance.",
-            },
-            {
-                "id": "gemma2-9b-it",
-                "name": "Gemma 2 9B IT",
-                "context_window": 8192,
-                "free_tier": True,
-                "recommended": False,
-                "description": "Google's lightweight instruction-tuned architecture running on Groq LPUs.",
+                "description": "High-capacity 70B model (requires Groq Tier 1+ or paid billing).",
             },
         ],
     },

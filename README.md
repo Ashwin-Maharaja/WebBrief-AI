@@ -73,7 +73,7 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 - **Complete Decoupling from OpenAI**: The OpenAI Python SDK and all direct OpenAI API calls have been completely removed.
 - **Modular Provider Abstraction**: Introduces `BaseProvider` and dedicated adapters for Cloudflare Workers AI and GroqCloud under `services/providers/`.
 - **Primary Provider: Cloudflare Workers AI**: Fast, serverless inference utilizing Cloudflare's global edge network (recommended models: `llama-3.1-8b-instruct`, `mistral-7b-instruct-v0.2`, `qwen1.5-7b-chat`).
-- **Optional Fallback Provider: GroqCloud**: Ultra-low-latency LPU inference (recommended models: `llama-3.3-70b-versatile`, `llama-3.1-8b-instant`, `mixtral-8x7b-32768`).
+- **Optional Fallback Provider: GroqCloud**: Ultra-low-latency LPU inference (recommended models: `llama-3.1-8b-instant`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`).
 - **Automatic Provider Routing (`AIRouter`)**: Automatically attempts inference with the primary provider and seamlessly cascades to the fallback provider on recoverable runtime faults.
 - **Intelligent Fallback Policies**:
   - *Eligible for Fallback*: Rate limits (HTTP 429), quota exhaustion, service unavailabilities (HTTP 500, 502, 503, 504), and bounded timeouts.
@@ -169,7 +169,7 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 | **Role** | Primary Recommended Provider | Optional Fallback / Alternative Primary |
 | **Credentials Required** | Cloudflare Account ID + API Token | Groq API Key (`gsk_...`) |
 | **Inference Engine** | Cloudflare Global Edge Workers AI | Groq LPU™ Inference Engine |
-| **Verified Models** | `@cf/meta/llama-3.1-8b-instruct`<br>`@cf/mistralai/mistral-7b-instruct-v0.2`<br>`@cf/qwen/qwen1.5-7b-chat`<br>`@cf/meta/llama-3-8b-instruct` | `llama-3.3-70b-versatile`<br>`llama-3.1-8b-instant`<br>`mixtral-8x7b-32768`<br>`gemma2-9b-it` |
+| **Verified Models** | `@cf/meta/llama-3.1-8b-instruct`<br>`@cf/meta/llama-3.3-70b-instruct-fp8-fast`<br>`@cf/meta/llama-3-8b-instruct`<br>`@cf/mistral/mistral-7b-instruct-v0.1`<br>`@cf/qwen/qwen1.5-7b-chat` | `llama-3.1-8b-instant`<br>`openai/gpt-oss-120b`<br>`openai/gpt-oss-20b`<br>`qwen/qwen3.8-27b`<br>`llama-3.3-70b-versatile` |
 | **Free-Tier Compatibility** | High (Included in standard Workers AI limits) | Free Cloud Tier with generous rate limits |
 | **Text Embeddings** | `@cf/baai/bge-base-en-v1.5` (768-dim) | Deterministic normalized feature vector fallback |
 
@@ -386,7 +386,7 @@ You can configure your credentials via the interactive web UI or directly in `.e
    ```ini
    PRIMARY_PROVIDER=groq
    GROQ_API_KEY=gsk_your_groq_api_key_here
-   GROQ_DEFAULT_MODEL=llama-3.3-70b-versatile
+   GROQ_DEFAULT_MODEL=llama-3.1-8b-instant
    ```
 
 ### Optional Fallback Configuration
@@ -394,7 +394,7 @@ To enable automatic failover when your primary provider is rate-limited or unava
 ```ini
 FALLBACK_ENABLED=true
 FALLBACK_PROVIDER=groq
-FALLBACK_MODEL=llama-3.3-70b-versatile
+FALLBACK_MODEL=llama-3.1-8b-instant
 ```
 
 ---
@@ -468,7 +468,7 @@ vercel
 | `CLOUDFLARE_API_TOKEN` | Conditional | None | Cloudflare API Token with Workers AI permissions |
 | `CLOUDFLARE_DEFAULT_MODEL`| Optional | `@cf/meta/llama-3.1-8b-instruct` | Default Cloudflare model identifier |
 | `GROQ_API_KEY` | Conditional | None | Groq API Key (required if primary/fallback is Groq) |
-| `GROQ_DEFAULT_MODEL` | Optional | `llama-3.3-70b-versatile` | Default Groq model identifier |
+| `GROQ_DEFAULT_MODEL` | Optional | `llama-3.1-8b-instant` | Default Groq model identifier |
 | `FALLBACK_ENABLED` | Optional | `false` | Enable automatic failover routing (`true` or `false`) |
 | `FALLBACK_PROVIDER` | Conditional | None | Fallback provider (`cloudflare` or `groq`) |
 | `FALLBACK_MODEL` | Conditional | None | Fallback model identifier |

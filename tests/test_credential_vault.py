@@ -122,7 +122,7 @@ class TestAppVaultRoutes(unittest.TestCase):
                     'primary_provider': 'groq',
                     'groq_api_key': 'gsk_test_key_12345',
                     'fallback_provider': 'cloudflare',
-                    'primary_model': 'llama-3.3-70b-versatile'
+                    'primary_model': 'llama-3.1-8b-instant'
                 },
                 headers={'X-CSRF-Token': self.csrf_token}
             )
@@ -190,7 +190,7 @@ class TestAppVaultRoutes(unittest.TestCase):
                     'primary_model': '@cf/meta/llama-3.1-8b-instruct',
                     'fallback_provider': 'groq',
                     'groq_api_key': 'gsk_fallback_key',
-                    'fallback_model': 'llama-3.3-70b-versatile',
+                    'fallback_model': 'llama-3.1-8b-instant',
                     'fallback_enabled': True
                 },
                 headers={'X-CSRF-Token': self.csrf_token}
@@ -204,7 +204,7 @@ class TestAppVaultRoutes(unittest.TestCase):
             self.assertEqual(data['provider'], 'cloudflare')
             self.assertEqual(data['fallback_provider'], 'groq')
             self.assertEqual(data['primary_model'], '@cf/meta/llama-3.1-8b-instruct')
-            self.assertEqual(data['fallback_model'], 'llama-3.3-70b-versatile')
+            self.assertEqual(data['fallback_model'], 'llama-3.1-8b-instant')
             self.assertNotIn('test_tok', str(data))
             self.assertNotIn('gsk_fallback_key', str(data))
 
