@@ -362,9 +362,12 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
 def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
     """
     Headless browser scraper using Playwright as fallback for JavaScript-rendered websites.
-    Enforces SSRF validation on all subrequests, enforces a 50-request subrequest budget,
-    enforces a 5 MB content limit, and guarantees browser process termination.
+    Enforces SSRF validation on all subrequests and redirects, enforces a 50-request subrequest budget,
+    enforces a 5 MB cumulative content limit, and guarantees browser process termination.
     """
+    # Defense-in-depth: re-verify target URL before launching browser engine
+    validate_safe_url(url)
+
     try:
         from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeoutError, Error as PlaywrightError
     except ImportError:
@@ -405,10 +408,15 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
 
         subrequest_count = 0
         total_downloaded_bytes = 0
+        size_exceeded = False
 
         # Resource optimization & SSRF interception handler
         def route_handler(route):
-            nonlocal subrequest_count
+            nonlocal subrequest_count, size_exceeded
+            if size_exceeded:
+                route.abort("contentlength")
+                return
+
             subrequest_count += 1
             if subrequest_count > MAX_SUBREQUESTS:
                 route.abort("budgetexceeded")
@@ -417,7 +425,7 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
             req = route.request
             # Abort non-essential assets to save bandwidth and maximize rendering speed
             if req.resource_type in ("image", "media", "font", "stylesheet", "websocket", "eventsource", "manifest", "other"):
-                route.abort()
+                route.abort("blockedbyclient")
                 return
 
             # SSRF defense for subresources and redirects
@@ -425,17 +433,17 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
             try:
                 parsed_req = urllib.parse.urlparse(req_url)
                 if parsed_req.scheme.lower() not in ("http", "https"):
-                    route.abort()
+                    route.abort("blockedbyclient")
                     return
                 if parsed_req.username or parsed_req.password:
-                    route.abort()
+                    route.abort("blockedbyclient")
                     return
                 if parsed_req.port and parsed_req.port not in (80, 443, 8080, 8443):
-                    route.abort()
+                    route.abort("blockedbyclient")
                     return
                 validate_safe_url(req_url)
             except Exception:
-                route.abort()
+                route.abort("blockedbyclient")
                 return
 
             route.continue_()
@@ -443,13 +451,13 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
         page.route("**/*", route_handler)
 
         def on_response(resp):
-            nonlocal total_downloaded_bytes
+            nonlocal total_downloaded_bytes, size_exceeded
             try:
                 cl = resp.headers.get("content-length")
-                if cl:
+                if cl and cl.isdigit():
                     total_downloaded_bytes += int(cl)
                     if total_downloaded_bytes > MAX_RESPONSE_BYTES:
-                        route_handler(None)
+                        size_exceeded = True
             except Exception:
                 pass
 
@@ -468,13 +476,23 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
         except PlaywrightTimeoutError:
             raise ScraperError("Connection timed out while loading JavaScript-rendered webpage.")
         except PlaywrightError as e:
+            if size_exceeded:
+                raise ScraperError(
+                    f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+                )
             raise ScraperError(f"Browser navigation failed: {str(e)}")
+
+        if size_exceeded or total_downloaded_bytes > MAX_RESPONSE_BYTES:
+            raise ScraperError(
+                f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+            )
 
         # Validate destination URL after any redirects
         validate_safe_url(page.url)
 
         content = page.content()
-        if len(content.encode("utf-8")) > MAX_RESPONSE_BYTES:
+        content_bytes = len(content.encode("utf-8"))
+        if (total_downloaded_bytes + content_bytes) > MAX_RESPONSE_BYTES or content_bytes > MAX_RESPONSE_BYTES:
             raise ScraperError(
                 f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
             )

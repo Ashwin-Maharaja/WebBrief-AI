@@ -159,6 +159,22 @@ class TestAppVaultRoutes(unittest.TestCase):
             self.assertEqual(res.status_code, 503)
 
     @patch('app.validate_groq_credentials', return_value=(True, ''))
+    def test_save_config_vault_storage_failure_returns_503(self, mock_val):
+        """Verifies that /api/save-config does not return success when vault write fails in serverless mode."""
+        broken_vault = TemporaryCredentialVault(BrokenRedis(), Fernet.generate_key())
+        with patch('app._vault', broken_vault):
+            with patch('app.is_serverless_env', return_value=True):
+                res = self.client.post(
+                    '/api/save-config',
+                    json={'primary_provider': 'groq', 'groq_api_key': 'gsk_valid_key'},
+                    headers={'X-CSRF-Token': self.csrf_token}
+                )
+                self.assertEqual(res.status_code, 503)
+                data = res.get_json()
+                self.assertFalse(data.get('success', False))
+                self.assertIn("Failed to store", data.get('error', ''))
+
+    @patch('app.validate_groq_credentials', return_value=(True, ''))
     @patch('app.validate_cloudflare_credentials', return_value=(True, ''))
     def test_vault_fallback_restoration(self, mock_cf, mock_groq):
         """Verifies that fallback provider and model settings are fully stored and restored."""

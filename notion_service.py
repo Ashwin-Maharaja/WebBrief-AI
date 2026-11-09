@@ -27,17 +27,32 @@ class NotionError(Exception):
 # -------------------------------------------------------------
 # Credential Management (BYOK)
 # -------------------------------------------------------------
-def get_notion_key(provided_token: Optional[str] = None, session_dict: Optional[Dict[str, Any]] = None) -> Optional[str]:
+def get_notion_key(
+    provided_token: Optional[str] = None,
+    session_dict: Optional[Dict[str, Any]] = None,
+    vault_config: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
     """
     Retrieves the Notion integration token.
     If provided directly in request parameters (e.g. hosted in-memory submission), uses it.
+    If present in temporary vault configuration or session context, uses it.
     Otherwise in local self-hosted mode, reads strictly from process environment.
-    Never reads or exposes credentials in client session cookies.
+    Never exposes credentials in client session cookies.
     """
     if provided_token and str(provided_token).strip():
         token = str(provided_token).strip()
         if token.startswith("secret_") or token.startswith("ntn_"):
             return token
+
+    if vault_config and isinstance(vault_config, dict):
+        v_tok = vault_config.get("notion_token") or vault_config.get("notion_api_key")
+        if v_tok and str(v_tok).strip():
+            return str(v_tok).strip()
+
+    if session_dict and isinstance(session_dict, dict):
+        s_tok = session_dict.get("_notion_token") or session_dict.get("notion_api_key")
+        if s_tok and str(s_tok).strip():
+            return str(s_tok).strip()
 
     token = os.getenv("NOTION_API_KEY") or os.getenv("NOTION_TOKEN")
     if token and str(token).strip():
@@ -46,55 +61,84 @@ def get_notion_key(provided_token: Optional[str] = None, session_dict: Optional[
     return None
 
 
-def has_notion_config(session_dict: Optional[Dict[str, Any]] = None, provided_token: Optional[str] = None) -> bool:
+def has_notion_config(
+    session_dict: Optional[Dict[str, Any]] = None,
+    provided_token: Optional[str] = None,
+    vault_config: Optional[Dict[str, Any]] = None,
+) -> bool:
     """Returns True if a Notion integration token is configured."""
-    key = get_notion_key(provided_token=provided_token)
+    key = get_notion_key(provided_token=provided_token, session_dict=session_dict, vault_config=vault_config)
     return bool(key and len(key) >= 10)
 
 
-def save_notion_key_to_env(key: str, env_file_path: Optional[str] = None) -> bool:
+def save_notion_key_to_env(
+    key: str,
+    env_file_path: Optional[str] = None,
+    session_dict: Optional[Dict[str, Any]] = None,
+    is_hosted: bool = False,
+) -> Tuple[bool, str]:
     """
-    Saves the Notion integration token to the local .env configuration file safely.
+    Persists the Notion integration token.
+    In hosted / serverless mode: does not write to ephemeral filesystem;
+    stores in session/vault context and returns a success confirmation.
+    In local self-hosted mode: writes NOTION_API_KEY to local .env configuration file.
+    Never exposes raw tokens in return messages.
     """
     if not key or not isinstance(key, str):
-        return False
+        return False, "Invalid Notion integration token provided."
 
     cleaned_key = key.strip()
+    if len(cleaned_key) < 10:
+        return False, "Notion integration token is too short."
+
+    # Hosted serverless mode: do not touch filesystem
+    if is_hosted:
+        if session_dict is not None:
+            session_dict["_notion_token"] = cleaned_key
+        return True, "Notion token configured for active temporary session."
+
+    # Local mode: persist to .env
     if not env_file_path:
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_file_path = os.path.join(workspace_dir, ".env")
 
     try:
-        lines = []
+        lines_env = []
         key_found = False
         if os.path.isfile(env_file_path):
             with open(env_file_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if line.startswith("NOTION_API_KEY=") or line.startswith("NOTION_TOKEN="):
-                        lines.append(f"NOTION_API_KEY={cleaned_key}\n")
+                        lines_env.append(f"NOTION_API_KEY={cleaned_key}\n")
                         key_found = True
                     else:
-                        lines.append(line)
+                        lines_env.append(line)
 
         if not key_found:
-            lines.append(f"NOTION_API_KEY={cleaned_key}\n")
+            lines_env.append(f"NOTION_API_KEY={cleaned_key}\n")
 
         with open(env_file_path, "w", encoding="utf-8") as f:
-            f.writelines(lines)
+            f.writelines(lines_env)
 
         os.environ["NOTION_API_KEY"] = cleaned_key
-        return True
+        return True, "Notion integration token saved to local .env configuration."
     except Exception as e:
         logger.error("Failed to write NOTION_API_KEY to .env: %s", str(e))
-        return False
+        return False, f"Failed to save Notion token to local configuration: {str(e)}"
 
 
 def clear_saved_notion_key(session_dict: Optional[Dict[str, Any]] = None, env_file_path: Optional[str] = None) -> bool:
     """
-    Removes the Notion token from session and local .env.
+    Removes the Notion token from session, process environment, and local .env.
     """
-    if session_dict is not None and "notion_api_key" in session_dict:
+    if session_dict is not None:
+        session_dict.pop("_notion_token", None)
         session_dict.pop("notion_api_key", None)
+
+    if "NOTION_API_KEY" in os.environ:
+        del os.environ["NOTION_API_KEY"]
+    if "NOTION_TOKEN" in os.environ:
+        del os.environ["NOTION_TOKEN"]
 
     if not env_file_path:
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
@@ -102,19 +146,14 @@ def clear_saved_notion_key(session_dict: Optional[Dict[str, Any]] = None, env_fi
 
     try:
         if os.path.isfile(env_file_path):
-            lines = []
+            lines_env = []
             with open(env_file_path, "r", encoding="utf-8") as f:
                 for line in f:
                     if not (line.startswith("NOTION_API_KEY=") or line.startswith("NOTION_TOKEN=")):
-                        lines.append(line)
+                        lines_env.append(line)
 
             with open(env_file_path, "w", encoding="utf-8") as f:
-                f.writelines(lines)
-
-        if "NOTION_API_KEY" in os.environ:
-            del os.environ["NOTION_API_KEY"]
-        if "NOTION_TOKEN" in os.environ:
-            del os.environ["NOTION_TOKEN"]
+                f.writelines(lines_env)
 
         return True
     except Exception as e:

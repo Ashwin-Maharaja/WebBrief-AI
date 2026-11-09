@@ -18,21 +18,44 @@ if BASE_DIR not in sys.path:
 class TestSecretKeyHandling(unittest.TestCase):
     """Test Flask secret-key initialization under production vs development modes."""
 
-    def test_production_missing_secret_key_fails_safely(self):
-        """Production environment without FLASK_SECRET_KEY generates an unguessable 32-byte ephemeral key without crash."""
-        with patch.dict(os.environ, {"VERCEL": "1", "FLASK_SECRET_KEY": "", "SECRET_KEY": ""}, clear=False):
-            # When FLASK_SECRET_KEY is absent, app boots with cryptographically secure ephemeral secret
-            import secrets
-            flask_secret = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY")
-            if not flask_secret:
-                flask_secret = secrets.token_hex(32)
-            self.assertEqual(len(flask_secret), 64)
+    def test_production_missing_secret_key_raises_runtime_error(self):
+        """Production environment without FLASK_SECRET_KEY must fail startup safely with RuntimeError."""
+        from app import resolve_flask_secret
+        with patch.dict(os.environ, {"FLASK_SECRET_KEY": "", "SECRET_KEY": ""}, clear=False):
+            with self.assertRaises(RuntimeError) as ctx:
+                resolve_flask_secret(is_production=True)
+            self.assertIn("Production requires an explicitly configured, secure FLASK_SECRET_KEY", str(ctx.exception))
+
+    def test_production_placeholder_secret_key_raises_runtime_error(self):
+        """Production environment with placeholder or weak secret key must raise RuntimeError."""
+        from app import resolve_flask_secret
+        for placeholder in ("your_flask_secret_key_here", "change-me", "dev", "123456", "short-key"):
+            with patch.dict(os.environ, {"FLASK_SECRET_KEY": placeholder, "SECRET_KEY": ""}, clear=False):
+                with self.assertRaises(RuntimeError):
+                    resolve_flask_secret(is_production=True)
+
+    def test_production_valid_secret_key_accepted(self):
+        """Production environment with valid high-entropy secret key succeeds."""
+        from app import resolve_flask_secret
+        valid_key = "a" * 64
+        with patch.dict(os.environ, {"FLASK_SECRET_KEY": valid_key, "SECRET_KEY": ""}, clear=False):
+            resolved = resolve_flask_secret(is_production=True)
+            self.assertEqual(resolved, valid_key)
 
     def test_development_ephemeral_secret_generation(self):
-        """Development environment generates an ephemeral 32-byte secret key."""
-        import secrets
-        key = secrets.token_hex(32)
-        self.assertEqual(len(key), 64)  # 32 bytes = 64 hex characters
+        """Development environment generates an ephemeral 32-byte secret key when unconfigured."""
+        from app import resolve_flask_secret
+        with patch.dict(os.environ, {"FLASK_SECRET_KEY": "", "SECRET_KEY": ""}, clear=False):
+            key = resolve_flask_secret(is_production=False)
+            self.assertEqual(len(key), 64)  # 32 bytes = 64 hex characters
+
+    def test_development_configured_secret_accepted(self):
+        """Development environment uses configured secret if valid."""
+        from app import resolve_flask_secret
+        valid_key = "d" * 64
+        with patch.dict(os.environ, {"FLASK_SECRET_KEY": valid_key, "SECRET_KEY": ""}, clear=False):
+            resolved = resolve_flask_secret(is_production=False)
+            self.assertEqual(resolved, valid_key)
 
 
 class TestCredentialRedaction(unittest.TestCase):
@@ -86,14 +109,14 @@ class TestHealthCheckEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.3")
+        self.assertEqual(data.get("version"), "1.6.4")
 
     def test_api_health_endpoint(self):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.3")
+        self.assertEqual(data.get("version"), "1.6.4")
 
 
 class TestCSRFProtection(unittest.TestCase):
@@ -248,8 +271,46 @@ class TestSSRFHardening(unittest.TestCase):
             self.assertIn("restricted for security", str(ctx.exception))
 
     def test_response_size_limits_constant(self):
-        from scraper import MAX_RESPONSE_BYTES
+        from scraper import MAX_RESPONSE_BYTES, MAX_SUBREQUESTS
         self.assertEqual(MAX_RESPONSE_BYTES, 5 * 1024 * 1024)
+        self.assertEqual(MAX_SUBREQUESTS, 50)
+
+    def test_playwright_direct_unsafe_url_rejected(self):
+        """Playwright browser invocation directly rejects SSRF/private destinations upfront."""
+        from scraper import scrape_with_browser, ScraperError
+        with self.assertRaises(ScraperError) as ctx:
+            scrape_with_browser("http://127.0.0.1:8080/internal")
+        self.assertIn("restricted for security", str(ctx.exception))
+
+    def test_playwright_oversized_response_interception(self):
+        """Mock Playwright run exceeding MAX_RESPONSE_BYTES raises ScraperError."""
+        from unittest.mock import MagicMock
+        from scraper import scrape_with_browser, ScraperError
+
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+        mock_browser = MagicMock()
+        mock_browser.new_context.return_value = mock_context
+
+        mock_pw = MagicMock()
+        mock_pw.chromium.launch.return_value = mock_browser
+
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_pw
+
+        # Simulate page.content() returning 6 MB
+        oversized_content = "A" * (6 * 1024 * 1024)
+        mock_page.content.return_value = oversized_content
+        mock_page.url = "https://example.com/huge"
+
+        with patch("playwright.sync_api.sync_playwright", return_value=mock_cm):
+            with patch("scraper.validate_safe_url", return_value="https://example.com/huge"):
+                with self.assertRaises(ScraperError) as ctx:
+                    scrape_with_browser("https://example.com/huge")
+                self.assertIn("exceeds maximum allowed size", str(ctx.exception))
+                mock_context.close.assert_called_once()
+                mock_browser.close.assert_called_once()
 
 
 class TestRateLimiting(unittest.TestCase):
@@ -282,6 +343,123 @@ class TestRateLimiting(unittest.TestCase):
         )
         self.assertEqual(res.status_code, 429)
         self.assertEqual(res.get_json().get("code"), "RATE_LIMIT_EXCEEDED")
+
+    def test_redis_rate_limiter_exceeded(self):
+        """When Redis rate limit counter exceeds threshold, returns False."""
+        from unittest.mock import MagicMock
+        from app import is_rate_limited_redis
+        mock_redis = MagicMock()
+        mock_pipe = MagicMock()
+        mock_pipe.execute.return_value = (25, True)
+        mock_redis.pipeline.return_value = mock_pipe
+
+        allowed = is_rate_limited_redis(mock_redis, "test_key", max_requests=20, window_seconds=60)
+        self.assertFalse(allowed)
+
+    def test_redis_rate_limiter_error_falls_back_to_none(self):
+        """When Redis throws an exception, returns None to trigger graceful fallback to in-memory limiter."""
+        from unittest.mock import MagicMock
+        from redis.exceptions import RedisError
+        from app import is_rate_limited_redis
+        mock_redis = MagicMock()
+        mock_redis.pipeline.side_effect = RedisError("Connection lost")
+
+        allowed = is_rate_limited_redis(mock_redis, "test_key", max_requests=20, window_seconds=60)
+        self.assertIsNone(allowed)
+
+
+class TestFrontendDOMInjection(unittest.TestCase):
+    """Test templates against XSS and unsafe DOM interpolation."""
+
+    def test_index_html_notion_selector_uses_safe_dom_construction(self):
+        with open("templates/index.html", "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertNotIn("select.innerHTML = json.pages.map", content)
+        self.assertIn('document.createElement("option")', content)
+        self.assertIn("opt.textContent =", content)
+
+    def test_index_html_batch_url_input_does_not_interpolate_raw_val(self):
+        with open("templates/index.html", "r", encoding="utf-8") as f:
+            content = f.read()
+        self.assertNotIn('value="${val}"', content)
+        self.assertIn('inputEl.value = val || ""', content)
+
+
+class TestNotionIntegration(unittest.TestCase):
+    """Test Notion credential persistence contract, hosted vs local separation, and confidentiality."""
+
+    def test_save_notion_key_returns_tuple_contract(self):
+        """save_notion_key_to_env returns a (bool, str) tuple in all execution paths."""
+        from notion_service import save_notion_key_to_env
+        res_empty = save_notion_key_to_env("")
+        self.assertIsInstance(res_empty, tuple)
+        self.assertFalse(res_empty[0])
+        self.assertIn("Invalid", res_empty[1])
+
+        res_short = save_notion_key_to_env("short")
+        self.assertIsInstance(res_short, tuple)
+        self.assertFalse(res_short[0])
+        self.assertIn("too short", res_short[1])
+
+    def test_hosted_notion_storage_does_not_touch_filesystem(self):
+        """In hosted mode, Notion key is stored in session context without writing to .env."""
+        import tempfile
+        from notion_service import save_notion_key_to_env, get_notion_key
+        dummy_session = {}
+        fake_token = "secret_" + "a" * 32
+        success, msg = save_notion_key_to_env(fake_token, session_dict=dummy_session, is_hosted=True)
+        self.assertTrue(success)
+        self.assertEqual(dummy_session.get("_notion_token"), fake_token)
+        retrieved = get_notion_key(session_dict=dummy_session)
+        self.assertEqual(retrieved, fake_token)
+
+    def test_local_notion_storage_persists_to_env_safely(self):
+        """In local mode, Notion key writes to specified .env file."""
+        import tempfile
+        from notion_service import save_notion_key_to_env, clear_saved_notion_key
+        with tempfile.NamedTemporaryFile("w+", delete=False) as tf:
+            tf.write("FLASK_ENV=development\n")
+            temp_path = tf.name
+
+        try:
+            fake_token = "secret_" + "b" * 32
+            success, msg = save_notion_key_to_env(fake_token, env_file_path=temp_path, is_hosted=False)
+            self.assertTrue(success)
+            with open(temp_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn(f"NOTION_API_KEY={fake_token}", content)
+
+            # Clear key
+            clear_saved_notion_key(env_file_path=temp_path)
+            with open(temp_path, "r", encoding="utf-8") as f:
+                cleared_content = f.read()
+            self.assertNotIn("NOTION_API_KEY=", cleared_content)
+        finally:
+            if os.path.exists(temp_path):
+                os.remove(temp_path)
+
+    def test_notion_endpoints_confidentiality(self):
+        """Notion endpoints return connection metadata but never expose raw credentials."""
+        from app import app
+        client = app.test_client()
+        client.get("/")
+        with client.session_transaction() as sess:
+            csrf = sess.get("_csrf_token", "")
+
+        fake_token = "secret_" + "c" * 32
+        with patch("app.validate_notion_token", return_value=(True, "")):
+            with patch("app.get_accessible_pages", return_value=[{"id": "p1", "title": "Dashboard", "icon": "📄"}]):
+                with patch("app.is_serverless_env", return_value=True):
+                    res = client.post(
+                        "/api/notion/connect",
+                        json={"token": fake_token},
+                        headers={"X-CSRF-Token": csrf}
+                    )
+                    self.assertEqual(res.status_code, 200)
+                    data = res.get_json()
+                    self.assertTrue(data.get("success"))
+                    self.assertNotIn(fake_token, str(data))
+                    self.assertEqual(len(data.get("pages", [])), 1)
 
 
 if __name__ == "__main__":

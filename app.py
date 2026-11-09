@@ -82,7 +82,7 @@ from vector_store import (
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.6.3"
+APP_VERSION = "1.6.4"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(
@@ -99,24 +99,71 @@ handler = app
 # Request payload limit: enforce 2MB maximum
 app.config["MAX_CONTENT_LENGTH"] = int(os.getenv("MAX_CONTENT_LENGTH", 2 * 1024 * 1024))
 
-# Secret key for secure, signed session cookies (SEC-01)
-flask_secret = os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY")
+INSECURE_SECRET_PLACEHOLDERS = {
+    "",
+    "your_flask_secret_key_here",
+    "your_secret_key_here",
+    "change-me",
+    "change_me",
+    "changeme",
+    "development-key",
+    "development",
+    "dev",
+    "secret",
+    "secret_key",
+    "flask_secret_key",
+    "123456",
+    "12345678",
+    "password",
+    "admin",
+    "placeholder",
+    "webbrief",
+    "webbrief-ai",
+}
+
+
+def resolve_flask_secret(is_production: bool) -> str:
+    """
+    Resolves the Flask secret key according to environment mode (SEC-01).
+    In production: strictly enforces an explicitly configured, high-entropy FLASK_SECRET_KEY
+    (minimum 32 characters / 16 bytes). Fails startup safely if missing or insecure.
+    Never derives secrets from deployment IDs, commit SHAs, or predictable strings.
+    In development: allows configured key or safely generates a cryptographic 32-byte ephemeral key.
+    """
+    raw_secret = (os.getenv("FLASK_SECRET_KEY") or os.getenv("SECRET_KEY") or "").strip()
+    is_insecure = (
+        not raw_secret
+        or raw_secret.lower() in INSECURE_SECRET_PLACEHOLDERS
+        or len(raw_secret) < 32
+    )
+
+    if is_production:
+        if is_insecure:
+            raise RuntimeError(
+                "CRITICAL: Production requires an explicitly configured, secure FLASK_SECRET_KEY "
+                "(minimum 32 characters). Ephemeral secrets are rejected in production to prevent "
+                "session invalidation across serverless instances and cold starts. "
+                "Generate a key using 'python -c \"import secrets; print(secrets.token_hex(32))\"' "
+                "and configure it in your deployment environment variables."
+            )
+        return raw_secret
+
+    # Development mode
+    if is_insecure:
+        if raw_secret:
+            logger.warning(
+                "Configured FLASK_SECRET_KEY is insecure or a placeholder. "
+                "Using an ephemeral 32-byte cryptographically secure random key for local development."
+            )
+        else:
+            logger.warning("No FLASK_SECRET_KEY configured. Generated ephemeral 32-byte development secret key.")
+        return secrets.token_hex(32)
+
+    return raw_secret
+
+
 is_prod = is_serverless_env() or os.getenv("FLASK_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
-
-if not flask_secret:
-    # Fail safely: generate an unguessable, cryptographically secure 32-byte ephemeral key (SEC-01).
-    # Never derived from deployment IDs, commit SHAs, or predictable strings.
-    flask_secret = secrets.token_hex(32)
-    if is_prod:
-        logger.warning(
-            "FLASK_SECRET_KEY environment variable is not configured in production. "
-            "Using an ephemeral cryptographically secure random key. "
-            "Configure FLASK_SECRET_KEY in your deployment environment variables for persistent user sessions across lambda cold starts."
-        )
-    else:
-        logger.warning("No FLASK_SECRET_KEY configured. Generated ephemeral 32-byte development secret key.")
-
-app.secret_key = flask_secret
+app.secret_key = resolve_flask_secret(is_prod)
 
 # Session Cookie Hardening (SEC-02)
 is_secure_cookie = os.getenv("SESSION_COOKIE_SECURE", "true" if is_prod else "false").lower() in ("true", "1")
@@ -134,6 +181,7 @@ app.config.update(
 from credential_vault import TemporaryCredentialVault
 
 _vault = None
+_redis = None
 if os.getenv("REDIS_URL") and os.getenv("CREDENTIAL_ENCRYPTION_KEY"):
     from redis import Redis
     from flask_session import Session
@@ -150,7 +198,12 @@ elif is_prod and (os.getenv("REDIS_URL") or os.getenv("CREDENTIAL_ENCRYPTION_KEY
 
 
 class InMemoryRateLimiter:
-    """Thread-safe sliding-window rate limiter accounting for shared NATs and anonymous sessions."""
+    """
+    Thread-safe process-local sliding-window rate limiter accounting for shared NATs and anonymous sessions.
+    NOTE: Process-local rate limiting protects against rapid bursts within a single application instance
+    or serverless cold start. It does not provide globally synchronized distributed rate limiting across
+    multiple independent serverless Lambda instances unless backed by an external store (e.g. Redis).
+    """
     def __init__(self):
         self._lock = threading.Lock()
         self._events = defaultdict(list)
@@ -170,15 +223,47 @@ class InMemoryRateLimiter:
 
 rate_limiter = InMemoryRateLimiter()
 
+
+def is_rate_limited_redis(redis_client, key: str, max_requests: int, window_seconds: int = 60) -> Optional[bool]:
+    """
+    Atomic rate limiting check using Redis when configured.
+    Returns:
+        True if request is allowed.
+        False if rate limit is exceeded.
+        None if Redis error occurs (triggering graceful fallback to in-memory limiter).
+    """
+    try:
+        rkey = f"webbrief:ratelimit:{key}"
+        pipe = redis_client.pipeline()
+        pipe.incr(rkey)
+        pipe.expire(rkey, window_seconds)
+        current, _ = pipe.execute()
+        return int(current) <= max_requests
+    except Exception as e:
+        logger.warning("Redis rate limiter unavailable (%s). Falling back to in-memory rate limiter.", str(e))
+        return None
+
+
 def check_rate_limit(endpoint_name: str, max_requests: int, window_seconds: int = 60):
     """
-    Enforces lightweight per-client sliding window rate limits.
-    Combines client IP and session token to avoid penalizing shared NAT / campus networks.
+    Enforces per-client sliding window rate limits.
+    Combines endpoint name, client IP, and session token prefix to isolate clients
+    without penalizing users sharing corporate, institutional, or mobile NAT gateways.
+    If Redis is configured and reachable, synchronizes state across serverless instances.
+    Gracefully falls back to process-local InMemoryRateLimiter if Redis is not configured or fails.
     """
     client_ip = request.remote_addr or "unknown"
     session_token = session.get("_csrf_token") or session.get("_vault_sid") or ""
     client_key = f"{endpoint_name}:{client_ip}:{session_token[:16]}"
-    if not rate_limiter.is_allowed(client_key, max_requests, window_seconds):
+
+    allowed = None
+    if _redis is not None:
+        allowed = is_rate_limited_redis(_redis, client_key, max_requests, window_seconds)
+
+    if allowed is None:
+        allowed = rate_limiter.is_allowed(client_key, max_requests, window_seconds)
+
+    if not allowed:
         return jsonify({
             "error": "Rate limit exceeded. Please wait a moment before sending more requests.",
             "code": "RATE_LIMIT_EXCEEDED"
@@ -265,9 +350,12 @@ def store_temporary_credentials():
     allowed = {
         "primary_provider", "cloudflare_account_id", "cloudflare_api_token",
         "groq_api_key", "fallback_provider", "fallback_model", "primary_model",
-        "cloudflare_model", "groq_model", "fallback_enabled"
+        "cloudflare_model", "groq_model", "fallback_enabled", "notion_token"
     }
     clean = {k: v for k, v in payload.items() if k in allowed and (isinstance(v, str) or isinstance(v, bool))}
+    existing_cfg = _vault_config() or {}
+    if "notion_token" in existing_cfg and "notion_token" not in clean:
+        clean["notion_token"] = existing_cfg["notion_token"]
     saved = _vault.save(_vault_sid(), clean)
     if not saved:
         return jsonify({"error": "Failed to store credentials in temporary vault."}), 503
@@ -1005,7 +1093,8 @@ def compare_export_pdf():
 # -------------------------------------------------------------
 @app.route("/api/notion/status", methods=["GET"])
 def api_notion_status():
-    configured = has_notion_config(session_dict=session)
+    v_cfg = _vault_config() if _vault else None
+    configured = has_notion_config(session_dict=session, vault_config=v_cfg)
     return jsonify({
         "configured": configured,
         "is_hosted": is_serverless_env(),
@@ -1024,27 +1113,53 @@ def api_notion_connect():
     if not is_valid:
         return jsonify({"error": msg}), 400
 
-    success, save_msg = save_notion_key_to_env(token, session_dict=session)
+    if is_serverless_env():
+        if _vault is not None:
+            cfg = _vault_config() or {}
+            cfg["notion_token"] = token
+            saved = _vault.save(_vault_sid(), cfg)
+            if not saved:
+                return jsonify({"error": "Failed to store Notion token in temporary vault."}), 503
+            success, save_msg = True, "Notion connected for active temporary session."
+        else:
+            success, save_msg = save_notion_key_to_env(
+                token,
+                session_dict=session,
+                is_hosted=True,
+            )
+    else:
+        success, save_msg = save_notion_key_to_env(
+            token,
+            session_dict=session,
+            is_hosted=False,
+        )
+
     if not success:
         return jsonify({"error": save_msg}), 500
 
     pages = get_accessible_pages(api_key=token)
     return jsonify({
         "success": True,
-        "message": "Notion connected successfully.",
+        "message": save_msg or "Notion connected successfully.",
         "pages": pages,
     })
 
 
 @app.route("/api/notion/disconnect", methods=["POST"])
 def api_notion_disconnect():
+    if _vault is not None:
+        cfg = _vault_config() or {}
+        if "notion_token" in cfg:
+            cfg.pop("notion_token", None)
+            _vault.save(_vault_sid(), cfg)
     clear_saved_notion_key(session_dict=session)
     return jsonify({"success": True, "message": "Notion disconnected."})
 
 
 @app.route("/api/notion/pages", methods=["GET"])
 def api_notion_pages():
-    token = get_notion_key(session_dict=session)
+    v_cfg = _vault_config() if _vault else None
+    token = get_notion_key(session_dict=session, vault_config=v_cfg)
     if not token:
         return jsonify({"error": "Notion is not connected."}), 401
     pages = get_accessible_pages(api_key=token)
@@ -1053,10 +1168,9 @@ def api_notion_pages():
 
 @app.route("/api/notion/export", methods=["POST"])
 def api_notion_export():
-    token = get_notion_key(session_dict=session)
+    v_cfg = _vault_config() if _vault else None
     data = request.get_json() or {}
-    if not token:
-        token = data.get("notion_token", "").strip()
+    token = get_notion_key(provided_token=data.get("notion_token"), session_dict=session, vault_config=v_cfg)
     if not token:
         return jsonify({"error": "Notion is not connected. Please connect in Settings."}), 401
 
@@ -1358,7 +1472,12 @@ def save_key():
                 "fallback_model": data.get("fallback_model", "").strip() if fallback_enabled else None,
             }
             clean_vault = {k: v for k, v in clean_vault.items() if v}
-            _vault.save(_vault_sid(), clean_vault)
+            saved = _vault.save(_vault_sid(), clean_vault)
+            if not saved:
+                err_msg = "Failed to store provider credentials in temporary vault."
+                if is_ajax:
+                    return jsonify({"success": False, "error": err_msg}), 503
+                return render_template("setup.html", error=err_msg, is_configured=False), 503
 
         if is_ajax:
             return jsonify({

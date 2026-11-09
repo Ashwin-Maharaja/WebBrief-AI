@@ -1335,7 +1335,7 @@
                                     </div>
                                     <h3 class="match-card-title">${escapeHtml(res.title || 'Saved Summary')}</h3>
                                 </div>
-                                <button type="button" class="btn btn-primary" style="font-size: 12px; padding: 6px 14px; white-space: nowrap;" onclick="reopenSummaryDirect('${res.id}')">
+                                <button type="button" class="btn btn-primary btn-open-match" style="font-size: 12px; padding: 6px 14px; white-space: nowrap;">
                                     Open Summary &rarr;
                                 </button>
                             </div>
@@ -1352,9 +1352,11 @@
                                         ${escapeHtml(res.url)}
                                     </a>
                                 </div>
-                                ${res.id ? `<a href="/export-pdf/${res.id}" class="btn btn-secondary" style="font-size: 11px; padding: 3px 8px; text-decoration: none;">PDF</a>` : ''}
+                                ${res.id ? `<a href="/export-pdf/${encodeURIComponent(res.id)}" class="btn btn-secondary" style="font-size: 11px; padding: 3px 8px; text-decoration: none;">PDF</a>` : ''}
                             </div>
                         `;
+                        const openBtn = matchItem.querySelector(".btn-open-match");
+                        if (openBtn) openBtn.addEventListener("click", () => reopenSummaryDirect(res.id));
                         list.appendChild(matchItem);
                     });
                 }
@@ -1406,7 +1408,6 @@
                                 type="url"
                                 class="form-control batch-url-input"
                                 placeholder="https://example.com/article-${rowIdx}"
-                                value="${val}"
                                 autocomplete="off"
                             >
                         </div>
@@ -1419,6 +1420,7 @@
 
                 list.appendChild(row);
                 const inputEl = row.querySelector(".batch-url-input");
+                inputEl.value = val || "";
                 inputEl.addEventListener("input", () => {
                     validateBatchInputsClient();
                     updateBatchSubmitBtnText();
@@ -2177,7 +2179,13 @@
                     }
 
                     if (json.pages && json.pages.length > 0) {
-                        select.innerHTML = json.pages.map(p => `<option value="${p.id}">${p.icon || '📄'} ${p.title || 'Untitled Page'}</option>`).join("");
+                        select.innerHTML = "";
+                        json.pages.forEach(p => {
+                            const opt = document.createElement("option");
+                            opt.value = p.id || "";
+                            opt.textContent = `${p.icon || '📄'} ${p.title || 'Untitled Page'}`;
+                            select.appendChild(opt);
+                        });
                     } else {
                         select.innerHTML = '<option value="">No shared pages found. Use manual Page ID below or share pages in Notion.</option>';
                     }

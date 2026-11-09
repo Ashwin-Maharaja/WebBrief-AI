@@ -1,15 +1,15 @@
-> **v1.6.3 update:** Production-hardened release featuring connection-level SSRF pinning, CGNAT rejection, streaming scraper bounds, prompt injection boundaries, and optional encrypted BYOK vault with failover restoration.
+> **v1.6.4 update:** Stability, security, and reliability patch featuring strict production secret enforcement, Playwright SSRF & response-size hardening, Redis vault atomic confirmation, Notion contract alignment, and frontend DOM injection defense.
 
 # WebBrief AI
 
-> **Production Release — v1.6.3**  
+> **Production Release — v1.6.4**  
 > An intelligent, multi-mode website summarizer powered by a modular multi-provider AI architecture (Cloudflare Workers AI & GroqCloud) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and automatic provider failover routing.
 
 ---
 
 ## Table of Contents
 1. [Project Overview](#1-project-overview)
-2. [What's New in v1.6.0](#2-whats-new-in-v160)
+2. [What's New in v1.6.4](#2-whats-new-in-v164-stability-security--reliability-patch)
 3. [Features](#3-features)
 4. [Multi-Provider AI Architecture & Routing](#4-multi-provider-ai-architecture--routing)
 5. [Deployment Models & Architecture](#5-deployment-models--architecture)
@@ -40,11 +40,22 @@ WebBrief AI simplifies reading long articles, technical papers, corporate releas
 
 Built with enterprise-grade SSRF defense, deployment-aware storage, and a **Bring Your Own Key (BYOK)** security architecture, WebBrief AI guarantees that personal API credentials remain private, stored locally in `.env` for self-hosted instances or strictly in active browser memory for public Vercel visitors—never shared between users, never logged, and never exposing developer API credits.
 
-In **v1.6.0**, WebBrief AI upgrades its intelligence layer from a single vendor dependency to a modular, multi-provider engine supporting **Cloudflare Workers AI** (primary recommended) and **GroqCloud** (high-speed fallback), complete with independent model selectors, verified model catalogues, dynamic routing, and transparent fallback disclosure.
+In **v1.6.4**, WebBrief AI delivers a security and stability hardened release while maintaining its modular, multi-provider engine supporting **Cloudflare Workers AI** (primary recommended) and **GroqCloud** (high-speed fallback), complete with independent model selectors, verified model catalogues, dynamic routing, and transparent fallback disclosure.
 
 ---
 
-## 2. What's New in v1.6.3 (Security Hardening, Vault & SSRF Remediation)
+## 2. What's New in v1.6.4 (Stability, Security & Reliability Patch)
+
+- **Flask Production Secret Enforcement**: In production environments, strictly enforces an explicit, high-entropy `FLASK_SECRET_KEY` (minimum 32 characters / 16 bytes). Startup fails safely (`RuntimeError`) if missing or set to insecure placeholders.
+- **Playwright SSRF & Response-Size Hardening**: Fixed the route abort accounting bug in dynamic scraping; enforces a cumulative 5 MB streaming limit, a 50-request subrequest budget, and independent SSRF verification on all subresources and redirects.
+- **Redis Credential Vault Atomic Confirmation**: Ensures `/api/save-config` checks vault write results atomically, returning HTTP 503 if Redis persistence fails and preserving entered user inputs.
+- **Notion Integration Contract & Hosted Isolation**: Aligned function signatures to return a `Tuple[bool, str]` contract, cleanly separating hosted in-memory/vault sessions from local `.env` persistence without touching the serverless filesystem.
+- **Frontend DOM Injection Prevention**: Replaced raw template string interpolation in Notion page selection and batch URL rows with safe DOM construction (`document.createElement`, `.value`, `.textContent`), eliminating XSS vectors.
+- **Shared Serverless Rate Limiting**: Added support for atomic Redis-backed rate limiting (`INCR` + `EXPIRE`) across serverless Lambda instances when Redis is configured, with graceful fallback to process-local in-memory limiting.
+
+---
+
+## 2.1. Highlights from v1.6.3 (Security Hardening, Vault & SSRF Remediation)
 
 - **SSRF Defense with Connection-Level IP Pinning**: DNS validation is paired with custom socket connection pinning (`PinnedIPAdapter`), eliminating Time-of-Check to Time-of-Use (TOCTOU) DNS rebinding attacks.
 - **Non-Globally-Routable & CGNAT IP Rejection**: Rejection of all non-globally-routable unicast destination IPs, including Carrier-Grade NAT (CGNAT RFC 6598: `100.64.0.0/10`), loopback, link-local, and cloud metadata addresses (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`).
@@ -57,7 +68,7 @@ In **v1.6.0**, WebBrief AI upgrades its intelligence layer from a single vendor 
 
 ---
 
-## 2.1. Highlights from v1.6.0
+## 2.2. Highlights from v1.6.0
 
 - **Complete Decoupling from OpenAI**: The OpenAI Python SDK and all direct OpenAI API calls have been completely removed.
 - **Modular Provider Abstraction**: Introduces `BaseProvider` and dedicated adapters for Cloudflare Workers AI and GroqCloud under `services/providers/`.
@@ -75,7 +86,7 @@ In **v1.6.0**, WebBrief AI upgrades its intelligence layer from a single vendor 
 
 ## 3. Features
 
-- **Multi-Provider BYOK & Fallback Routing (v1.6.0)**:
+- **Multi-Provider BYOK & Fallback Routing**:
   - Choose between Cloudflare Workers AI and GroqCloud as your primary provider.
   - Enable optional fallback to protect against rate limits or temporary outages.
   - Single-provider users can use either provider independently without being forced to configure both.
@@ -197,7 +208,7 @@ WebBrief AI uses embedded vector storage directly inside SQLite (`webbrief_histo
 ### Primary Interface & Multi-Provider Badging
 ```
 +-------------------------------------------------------------------------+
-| [O] WebBrief AI  v1.6.0             [History]  [Settings]  [* Mode: Dark]|
+| [O] WebBrief AI  v1.6.4             [History]  [Settings]  [* Mode: Dark]|
 | Turn any webpage into an accurate, structured AI summary in seconds.    |
 +-------------------------------------------------------------------------+
 | Webpage URL: [ https://example.com/deep-dive-article                 ]  |
@@ -436,12 +447,14 @@ vercel
 ```
 
 ### 2. Deploy via GitHub Integration
-1. Push your repository to GitHub.
+1. Push your repository to GitHub (`https://github.com/Ashwin-Maharaja/WebBrief-AI`).
 2. In the Vercel Dashboard, click **Add New Project** and select your repository.
-3. Vercel automatically detects `vercel.json` and `api/index.py`.
+3. Vercel automatically detects `vercel.json` and routes requests directly to `app.py`.
 4. Under **Environment Variables**, configure:
-   - `FLASK_SECRET_KEY`: A random 32-character secret string.
+   - `FLASK_SECRET_KEY`: High-entropy 32-character secret string (e.g. `python -c "import secrets; print(secrets.token_hex(32))"`). Required in production.
    - `SESSION_COOKIE_SECURE`: `true`
+   - `REDIS_URL` (optional): Managed TLS Redis connection string (e.g. Upstash) for encrypted session vault and cross-instance rate limiting.
+   - `CREDENTIAL_ENCRYPTION_KEY` (optional): Fernet key if `REDIS_URL` is set (`python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`).
 5. Click **Deploy**.
 
 ---
