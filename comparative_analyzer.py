@@ -294,11 +294,8 @@ def compare_articles(
         from byok import get_router, has_valid_config
         req_payload = provider_config or {}
         if api_key:
-            if api_key.startswith("gsk_"):
-                req_payload["groq_api_key"] = api_key
-                req_payload["primary_provider"] = "groq"
-            else:
-                req_payload["api_key"] = api_key
+            req_payload["gemini_api_key"] = api_key
+            req_payload["primary_provider"] = "gemini"
 
         if not has_valid_config(request_data=req_payload):
             raise ComparisonError("No AI provider configured. Please configure credentials in Settings.")

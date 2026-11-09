@@ -1,6 +1,6 @@
 """
-WebBrief AI — Multi-Provider BYOK & Credential Security Manager (v1.6.0).
-Manages BYOK credentials for Cloudflare Workers AI and GroqCloud across
+WebBrief AI — Google Gemini BYOK & Credential Security Manager.
+Manages BYOK credentials for Google Gemini Developer API across
 local self-hosted and hosted serverless environments.
 """
 
@@ -10,30 +10,18 @@ import tempfile
 from typing import Dict, Any, Tuple, Optional
 from dotenv import load_dotenv
 
-from services.providers.cloudflare import CloudflareProvider
-from services.providers.groq import GroqProvider
+from services.providers.gemini import GeminiProvider
 from services.providers.router import AIRouter
 from services.providers.catalogue import get_default_model
 
 # Standard configuration keys
-ENV_PRIMARY_PROVIDER = "PRIMARY_PROVIDER"
-ENV_CF_ACCOUNT_ID = "CLOUDFLARE_ACCOUNT_ID"
-ENV_CF_API_TOKEN = "CLOUDFLARE_API_TOKEN"
-ENV_CF_MODEL = "CLOUDFLARE_DEFAULT_MODEL"
-
-ENV_GROQ_API_KEY = "GROQ_API_KEY"
-ENV_GROQ_MODEL = "GROQ_DEFAULT_MODEL"
-
-ENV_FALLBACK_ENABLED = "FALLBACK_ENABLED"
-ENV_FALLBACK_PROVIDER = "FALLBACK_PROVIDER"
-ENV_FALLBACK_MODEL = "FALLBACK_MODEL"
+ENV_GEMINI_API_KEY = "GEMINI_API_KEY"
+ENV_GEMINI_MODEL = "GEMINI_DEFAULT_MODEL"
 
 # Placeholder values that must not be treated as valid credentials
 PLACEHOLDER_KEYS = {
     "",
-    "your_cloudflare_account_id_here",
-    "your_cloudflare_api_token_here",
-    "your_groq_api_key_here",
+    "your_gemini_api_key_here",
     "your_api_key_here",
     "placeholder",
     "none",
@@ -59,46 +47,30 @@ def is_serverless_env() -> bool:
 def redact_credentials(text: str) -> str:
     """
     Redacts any sensitive provider credentials from logs, error messages, and exception traces.
-    Masks Groq API keys (gsk_...), Cloudflare tokens, Notion tokens, Bearer headers, and legacy tokens.
+    Masks Gemini API keys (AIza...), Notion tokens, Bearer headers, and legacy tokens.
     """
     if not text or not isinstance(text, str):
         return ""
-    # Redact Groq keys (gsk_...)
-    sanitized = re.sub(r"gsk_[a-zA-Z0-9_\-]{20,}", "gsk_...", text)
+    # Redact Google Gemini API keys (AIza...)
+    sanitized = re.sub(r"AIza[a-zA-Z0-9_\-]{25,}", "AIzaSy[gemini_key_masked]", text)
     # Redact legacy sk- tokens
     sanitized = re.sub(r"sk-[a-zA-Z0-9_\-]{16,}", "sk-...", sanitized)
     # Redact Notion integration keys (secret_... or ntn_...)
     sanitized = re.sub(r"(?:secret_|ntn_)[a-zA-Z0-9_\-]{20,}", "[notion_secret_masked]", sanitized)
     # Redact Authorization Bearer headers
     sanitized = re.sub(r"(Bearer\s+)[a-zA-Z0-9_\-\.]{15,}", r"\1[token_masked]", sanitized, flags=re.IGNORECASE)
-    # Redact Cloudflare Account IDs (32 hex characters) if exposed in error messages
-    sanitized = re.sub(r"\b[0-9a-f]{32}\b", "[account_id_masked]", sanitized, flags=re.IGNORECASE)
     return sanitized
 
 
-def validate_cloudflare_credentials(account_id: str, api_token: str) -> Tuple[bool, str]:
-    """Validates Cloudflare credentials using a zero-token catalogue query."""
-    clean_id = (account_id or "").strip()
-    clean_token = (api_token or "").strip()
-
-    if not clean_id or clean_id.lower() in PLACEHOLDER_KEYS:
-        return False, "Please enter your Cloudflare Account ID."
-    if not clean_token or clean_token.lower() in PLACEHOLDER_KEYS:
-        return False, "Please enter your Cloudflare API token."
-
-    provider = CloudflareProvider(account_id=clean_id, api_token=clean_token)
-    return provider.test_connection()
-
-
-def validate_groq_credentials(api_key: str) -> Tuple[bool, str]:
-    """Validates Groq credentials using the zero-token GET /models endpoint."""
+def validate_gemini_credentials(api_key: str) -> Tuple[bool, str]:
+    """Validates Google Gemini credentials using a zero-token model query."""
     clean_key = (api_key or "").strip()
     if not clean_key or clean_key.lower() in PLACEHOLDER_KEYS:
-        return False, "Please enter your Groq API key."
-    if not clean_key.startswith("gsk_") and len(clean_key) < 20:
-        return False, "Invalid Groq API key format. Groq keys typically start with 'gsk_'."
+        return False, "Please enter your Google Gemini API key."
+    if not clean_key.startswith("AIza") and len(clean_key) < 20:
+        return False, "Invalid Google Gemini API key format. Gemini keys typically start with 'AIza'."
 
-    provider = GroqProvider(api_key=clean_key)
+    provider = GeminiProvider(api_key=clean_key)
     return provider.test_connection()
 
 
@@ -115,119 +87,43 @@ def get_active_provider_config(
 
     if is_serverless_env():
         # Hosted mode: strictly isolated to per-request payload
-        primary_provider = req.get("primary_provider") or "cloudflare"
-        cf_account_id = req.get("cloudflare_account_id") or req.get("fallback_cloudflare_account_id") or ""
-        cf_api_token = req.get("cloudflare_api_token") or req.get("fallback_cloudflare_api_token") or ""
-        cf_model = req.get("cloudflare_model") or get_default_model("cloudflare")
-
-        groq_api_key = req.get("groq_api_key") or req.get("fallback_groq_api_key") or req.get("api_key") or ""
-        groq_model = req.get("groq_model") or get_default_model("groq")
-
-        fallback_enabled = req.get("fallback_enabled") in (True, "true", "1", 1)
-        fallback_provider = req.get("fallback_provider") or ("groq" if primary_provider == "cloudflare" else "cloudflare")
-        fallback_model = req.get("fallback_model")
+        gemini_api_key = req.get("gemini_api_key") or req.get("api_key") or ""
+        gemini_model = req.get("gemini_model") or get_default_model("gemini")
     else:
         # Local self-hosted mode: environment variables with optional request payload overrides
-        primary_provider = req.get("primary_provider") or os.getenv(ENV_PRIMARY_PROVIDER, "cloudflare").strip().lower()
-        cf_account_id = req.get("cloudflare_account_id") or req.get("fallback_cloudflare_account_id") or os.getenv(ENV_CF_ACCOUNT_ID, "").strip()
-        cf_api_token = req.get("cloudflare_api_token") or req.get("fallback_cloudflare_api_token") or os.getenv(ENV_CF_API_TOKEN, "").strip()
-        cf_model = req.get("cloudflare_model") or os.getenv(ENV_CF_MODEL, "").strip() or get_default_model("cloudflare")
-
-        groq_api_key = req.get("groq_api_key") or req.get("fallback_groq_api_key") or req.get("api_key") or os.getenv(ENV_GROQ_API_KEY, "").strip()
-        groq_model = req.get("groq_model") or os.getenv(ENV_GROQ_MODEL, "").strip() or get_default_model("groq")
-
-        fb_env = os.getenv(ENV_FALLBACK_ENABLED, "false").strip().lower() in ("true", "1", "yes")
-        fallback_enabled = req.get("fallback_enabled") in (True, "true", "1", 1) if "fallback_enabled" in req else fb_env
-        fallback_provider = req.get("fallback_provider") or os.getenv(ENV_FALLBACK_PROVIDER, "groq" if primary_provider == "cloudflare" else "cloudflare").strip().lower()
-        fallback_model = req.get("fallback_model") or os.getenv(ENV_FALLBACK_MODEL, "").strip() or None
+        gemini_api_key = req.get("gemini_api_key") or req.get("api_key") or os.getenv(ENV_GEMINI_API_KEY, "").strip()
+        gemini_model = req.get("gemini_model") or os.getenv(ENV_GEMINI_MODEL, "").strip() or get_default_model("gemini")
 
     # Sanitize placeholders
-    if cf_account_id.lower() in PLACEHOLDER_KEYS:
-        cf_account_id = ""
-    if cf_api_token.lower() in PLACEHOLDER_KEYS:
-        cf_api_token = ""
-    if groq_api_key.lower() in PLACEHOLDER_KEYS:
-        groq_api_key = ""
+    if gemini_api_key.lower() in PLACEHOLDER_KEYS:
+        gemini_api_key = ""
 
     return {
-        "primary_provider": primary_provider,
-        "cloudflare_account_id": cf_account_id,
-        "cloudflare_api_token": cf_api_token,
-        "cloudflare_model": cf_model,
-        "groq_api_key": groq_api_key,
-        "groq_model": groq_model,
-        "fallback_enabled": fallback_enabled,
-        "fallback_provider": fallback_provider,
-        "fallback_model": fallback_model,
+        "primary_provider": "gemini",
+        "gemini_api_key": gemini_api_key,
+        "gemini_model": gemini_model or "gemini-3.8-flash",
     }
 
 
 def has_valid_config(session_dict: Optional[dict] = None, request_data: Optional[dict] = None) -> bool:
     """
-    Returns True if the primary provider has valid non-placeholder credentials configured.
+    Returns True if valid non-placeholder Gemini credentials are configured.
     """
     config = get_active_provider_config(session_dict=session_dict, request_data=request_data)
-    primary = config.get("primary_provider", "cloudflare")
-
-    if primary == "cloudflare":
-        return bool(config.get("cloudflare_account_id") and config.get("cloudflare_api_token"))
-    elif primary == "groq":
-        return bool(config.get("groq_api_key"))
-
-    return False
+    return bool(config.get("gemini_api_key"))
 
 
 def get_router(session_dict: Optional[dict] = None, request_data: Optional[dict] = None) -> AIRouter:
     """
     Builds and returns an AIRouter configured with current active credentials.
     """
-    req = request_data or {}
     config = get_active_provider_config(session_dict=session_dict, request_data=request_data)
-    primary_id = config.get("primary_provider", "cloudflare")
-
-    primary_creds = {}
-    primary_model = None
-
-    if primary_id == "cloudflare":
-        primary_creds = {
-            "account_id": config.get("cloudflare_account_id"),
-            "api_token": config.get("cloudflare_api_token"),
-        }
-        primary_model = config.get("cloudflare_model")
-    else:
-        primary_creds = {
-            "api_key": config.get("groq_api_key"),
-        }
-        primary_model = config.get("groq_model")
-
-    fallback_enabled = config.get("fallback_enabled", False)
-    fallback_id = config.get("fallback_provider")
-    fallback_creds = {}
-    fallback_model = config.get("fallback_model")
-
-    if fallback_enabled and fallback_id:
-        if fallback_id == "cloudflare":
-            fallback_creds = {
-                "account_id": req.get("fallback_cloudflare_account_id") or config.get("cloudflare_account_id"),
-                "api_token": req.get("fallback_cloudflare_api_token") or config.get("cloudflare_api_token"),
-            }
-            if not fallback_model:
-                fallback_model = req.get("fallback_model") or config.get("cloudflare_model") or get_default_model("cloudflare")
-        elif fallback_id == "groq":
-            fallback_creds = {
-                "api_key": req.get("fallback_groq_api_key") or config.get("groq_api_key"),
-            }
-            if not fallback_model:
-                fallback_model = req.get("fallback_model") or config.get("groq_model") or get_default_model("groq")
-
     return AIRouter(
-        primary_provider=primary_id,
-        primary_credentials=primary_creds,
-        primary_model=primary_model,
-        fallback_enabled=fallback_enabled,
-        fallback_provider=fallback_id,
-        fallback_credentials=fallback_creds,
-        fallback_model=fallback_model,
+        primary_provider="gemini",
+        primary_credentials={
+            "api_key": config.get("gemini_api_key"),
+        },
+        primary_model=config.get("gemini_model") or get_default_model("gemini"),
     )
 
 
@@ -252,26 +148,13 @@ def save_provider_config_to_env(
         return False, "An existing configuration file (.env) was detected. Please confirm settings replacement."
 
     updates = {}
-    if "primary_provider" in config_dict:
-        updates[ENV_PRIMARY_PROVIDER] = str(config_dict["primary_provider"]).strip().lower()
-    if "cloudflare_account_id" in config_dict:
-        updates[ENV_CF_ACCOUNT_ID] = str(config_dict["cloudflare_account_id"]).strip()
-    if "cloudflare_api_token" in config_dict:
-        updates[ENV_CF_API_TOKEN] = str(config_dict["cloudflare_api_token"]).strip()
-    if "cloudflare_model" in config_dict:
-        updates[ENV_CF_MODEL] = str(config_dict["cloudflare_model"]).strip()
+    if "gemini_api_key" in config_dict:
+        updates[ENV_GEMINI_API_KEY] = str(config_dict["gemini_api_key"]).strip()
+    elif "api_key" in config_dict:
+        updates[ENV_GEMINI_API_KEY] = str(config_dict["api_key"]).strip()
 
-    if "groq_api_key" in config_dict:
-        updates[ENV_GROQ_API_KEY] = str(config_dict["groq_api_key"]).strip()
-    if "groq_model" in config_dict:
-        updates[ENV_GROQ_MODEL] = str(config_dict["groq_model"]).strip()
-
-    if "fallback_enabled" in config_dict:
-        updates[ENV_FALLBACK_ENABLED] = "true" if config_dict["fallback_enabled"] else "false"
-    if "fallback_provider" in config_dict:
-        updates[ENV_FALLBACK_PROVIDER] = str(config_dict["fallback_provider"]).strip().lower()
-    if "fallback_model" in config_dict:
-        updates[ENV_FALLBACK_MODEL] = str(config_dict["fallback_model"]).strip()
+    if "gemini_model" in config_dict:
+        updates[ENV_GEMINI_MODEL] = str(config_dict["gemini_model"]).strip()
 
     # Read existing lines if .env exists
     env_lines = []
@@ -321,24 +204,27 @@ def save_provider_config_to_env(
             os.environ[k] = v
         load_dotenv(env_path, override=True)
 
-        return True, "Provider configuration successfully saved and active."
+        return True, "Google Gemini configuration successfully saved and active."
 
     except Exception as e:
         return False, f"Failed to save configuration: {str(e)}"
 
 
 def clear_saved_provider_config(env_path: Optional[str] = None) -> Tuple[bool, str]:
-    """Clears all stored provider credentials and routing configurations."""
+    """Clears stored provider credentials and model configurations."""
     managed_keys = [
-        ENV_PRIMARY_PROVIDER,
-        ENV_CF_ACCOUNT_ID,
-        ENV_CF_API_TOKEN,
-        ENV_CF_MODEL,
-        ENV_GROQ_API_KEY,
-        ENV_GROQ_MODEL,
-        ENV_FALLBACK_ENABLED,
-        ENV_FALLBACK_PROVIDER,
-        ENV_FALLBACK_MODEL,
+        ENV_GEMINI_API_KEY,
+        ENV_GEMINI_MODEL,
+        # Also clean up legacy keys if lingering
+        "PRIMARY_PROVIDER",
+        "CLOUDFLARE_ACCOUNT_ID",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_DEFAULT_MODEL",
+        "GROQ_API_KEY",
+        "GROQ_DEFAULT_MODEL",
+        "FALLBACK_ENABLED",
+        "FALLBACK_PROVIDER",
+        "FALLBACK_MODEL",
     ]
 
     for k in managed_keys:
@@ -359,7 +245,7 @@ def clear_saved_provider_config(env_path: Optional[str] = None) -> Tuple[bool, s
             ]
             with open(env_path, "w", encoding="utf-8") as f:
                 f.writelines(new_lines)
-            return True, "All provider configurations cleared successfully."
+            return True, "Provider configuration cleared successfully."
         except Exception as e:
             return False, f"Failed to update configuration file: {str(e)}"
 

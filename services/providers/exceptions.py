@@ -1,6 +1,6 @@
 """
-WebBrief AI — Normalized Provider Exceptions (v1.6.0).
-Provides standard exception classes for Cloudflare Workers AI and GroqCloud.
+WebBrief AI — Normalized Provider Exceptions.
+Provides standard exception classes for AI provider adapters (Google Gemini).
 """
 
 class ProviderError(Exception):

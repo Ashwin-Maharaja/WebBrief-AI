@@ -3,7 +3,7 @@
 # WebBrief AI
 
 > **Production Release — v1.6.4**  
-> An intelligent, multi-mode website summarizer powered by a modular multi-provider AI architecture (Cloudflare Workers AI & GroqCloud) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and automatic provider failover routing.
+> An intelligent, multi-mode website summarizer powered by a Google Gemini Developer API (gemini-3.8-flash) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and automatic provider failover routing.
 
 ---
 
@@ -40,7 +40,7 @@ WebBrief AI simplifies reading long articles, technical papers, corporate releas
 
 Built with enterprise-grade SSRF defense, deployment-aware storage, and a **Bring Your Own Key (BYOK)** security architecture, WebBrief AI guarantees that personal API credentials remain private, stored locally in `.env` for self-hosted instances or strictly in active browser memory for public Vercel visitors—never shared between users, never logged, and never exposing developer API credits.
 
-In **v1.6.4**, WebBrief AI delivers a security and stability hardened release while maintaining its modular, multi-provider engine supporting **Cloudflare Workers AI** (primary recommended) and **GroqCloud** (high-speed fallback), complete with independent model selectors, verified model catalogues, dynamic routing, and transparent fallback disclosure.
+In **v1.6.4**, WebBrief AI delivers a security and stability hardened release while maintaining its modular, multi-provider engine supporting **Google Gemini Developer API** (default: `gemini-3.8-flash`), complete with model selection, verified model catalogue, and secure BYOK handling.
 
 ---
 
@@ -71,23 +71,22 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 ## 2.2. Highlights from v1.6.0
 
 - **Complete Decoupling from OpenAI**: The OpenAI Python SDK and all direct OpenAI API calls have been completely removed.
-- **Modular Provider Abstraction**: Introduces `BaseProvider` and dedicated adapters for Cloudflare Workers AI and GroqCloud under `services/providers/`.
-- **Primary Provider: Cloudflare Workers AI**: Fast, serverless inference utilizing Cloudflare's global edge network (recommended models: `llama-3.1-8b-instruct`, `mistral-7b-instruct-v0.2`, `qwen1.5-7b-chat`).
-- **Optional Fallback Provider: GroqCloud**: Ultra-low-latency LPU inference (recommended models: `llama-3.1-8b-instant`, `openai/gpt-oss-120b`, `openai/gpt-oss-20b`, `qwen/qwen3.8-27b`).
+- **Modular Provider Abstraction**: Introduces `BaseProvider` and dedicated `GeminiProvider` adapter under `services/providers/`.
+- **Google Gemini Developer API**: Fast, multimodal-capable inference powered by Google's Gen AI SDK (recommended models: `gemini-3.8-flash`, `gemini-3.5-flash-lite`).
 - **Automatic Provider Routing (`AIRouter`)**: Automatically attempts inference with the primary provider and seamlessly cascades to the fallback provider on recoverable runtime faults.
 - **Intelligent Fallback Policies**:
   - *Eligible for Fallback*: Rate limits (HTTP 429), quota exhaustion, service unavailabilities (HTTP 500, 502, 503, 504), and bounded timeouts.
   - *Blocked from Fallback*: Authentication failures (HTTP 401, 403), invalid credentials, unknown models, or malformed requests (surfaces actionable feedback immediately).
 - **Curated Model Catalogue & Selection UI**: Dynamically populated model catalogues with human-friendly descriptions and free-tier tags across `/setup` and `/settings`.
 - **Provider Transparency Badge**: Every summary result card now displays the exact provider and model that generated it, highlighting whether fallback was triggered and why.
-- **Upgraded Vector Embeddings**: Local SQLite semantic search now utilizes Cloudflare Workers AI (`@cf/baai/bge-base-en-v1.5`) embeddings, with a deterministic feature-vector fallback for Groq-only configurations.
+- **Upgraded Vector Embeddings**: Local SQLite semantic search utilizes Google Gemini embeddings (`gemini-embedding-001`), with a deterministic feature-vector fallback for unauthenticated environments.
 
 ---
 
 ## 3. Features
 
 - **Multi-Provider BYOK & Fallback Routing**:
-  - Choose between Cloudflare Workers AI and GroqCloud as your primary provider.
+  - Select your preferred Google Gemini model directly from the UI or Settings.
   - Enable optional fallback to protect against rate limits or temporary outages.
   - Single-provider users can use either provider independently without being forced to configure both.
 - **Enterprise Security & Reliability Hardening**:
@@ -100,12 +99,12 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
   - **PDF Export Path Traversal Neutralization**: Sanitizes downloaded PDF filenames to strictly alphanumeric characters, underscores, and hyphens, preventing path traversal attacks and Content-Disposition header manipulation.
   - **Request Body Payload Limit**: Enforces a strict 2MB maximum content length (`MAX_CONTENT_LENGTH`) to protect backend memory from denial-of-service attempts.
 - **Hosted BYOK & Deployment-Aware Storage**:
-  - **Public Vercel Hosting Ready**: Visitors can freely use the public deployment by supplying their own Cloudflare or Groq credentials.
+  - **Public Vercel Hosting Ready**: Visitors can freely use the public deployment by supplying their own Google Gemini API key.
   - **In-Memory Credential Security**: Visitor API credentials reside exclusively in frontend JavaScript RAM during the active tab session. Credentials are **never** stored in `localStorage`, `sessionStorage`, `IndexedDB`, or browser-readable cookies, and are never written to the server's ephemeral filesystem or process environment.
   - **Zero Developer Credit Drainage**: Hosted mode strictly disables fallback to server-side developer credentials, ensuring visitors never consume developer API credits.
   - **Zero Cross-Visitor Data Leakage**: In hosted mode, all summary records, metadata, and history are stored locally in the visitor's browser via **IndexedDB** (`WebBriefDB`). Visitors never see each other's summaries.
   - **Anonymous Visitor Experience**: Completely account-free. No Google OAuth, mandatory login, or registration required to summarize webpages.
-  - **Automatic Credential Redaction**: All API keys and tokens matching standard signatures (`gsk_...`, Bearer tokens, Account IDs) are automatically sanitized and redacted from logs, error messages, and API traces.
+  - **Automatic Credential Redaction**: All API keys and tokens matching standard signatures (`AIza...`, Bearer tokens) are automatically sanitized and redacted from logs, error messages, and API traces.
 - **Local Knowledge Retrieval & Semantic Search**:
   - **Natural-Language Vector Search**: Query your personal summary library with questions without relying on exact keyword matches.
   - **Embedded SQLite Vector Storage**: Vectors are packed as binary float blobs (`struct.pack`) directly in `webbrief_history.db`. Zero separate database servers, zero native C++ compiler requirements, and 100% ACID persistence across all application restarts.
@@ -164,14 +163,15 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 
 ### Provider Details
 
-| Feature | Cloudflare Workers AI | GroqCloud |
-| :--- | :--- | :--- |
-| **Role** | Primary Recommended Provider | Optional Fallback / Alternative Primary |
-| **Credentials Required** | Cloudflare Account ID + API Token | Groq API Key (`gsk_...`) |
-| **Inference Engine** | Cloudflare Global Edge Workers AI | Groq LPU™ Inference Engine |
-| **Verified Models** | `@cf/meta/llama-3.1-8b-instruct`<br>`@cf/meta/llama-3.3-70b-instruct-fp8-fast`<br>`@cf/meta/llama-3-8b-instruct`<br>`@cf/mistral/mistral-7b-instruct-v0.1`<br>`@cf/qwen/qwen1.5-7b-chat` | `llama-3.1-8b-instant`<br>`openai/gpt-oss-120b`<br>`openai/gpt-oss-20b`<br>`qwen/qwen3.8-27b`<br>`llama-3.3-70b-versatile` |
-| **Free-Tier Compatibility** | High (Included in standard Workers AI limits) | Free Cloud Tier with generous rate limits |
-| **Text Embeddings** | `@cf/baai/bge-base-en-v1.5` (768-dim) | Deterministic normalized feature vector fallback |
+| Feature | Google Gemini Developer API |
+| :--- | :--- |
+| **Role** | Primary AI Provider |
+| **Credentials Required** | Google Gemini API Key (`AIza...`) |
+| **Inference Engine** | Google Gemini Developer Platform |
+| **Default Model** | `gemini-3.8-flash` |
+| **Verified Models** | `gemini-3.8-flash`<br>`gemini-3.5-flash-lite` |
+| **Free-Tier Compatibility** | Free tier available via Google AI Studio |
+| **Text Embeddings** | `gemini-embedding-001` (768-dim) / deterministic fallback |
 
 ---
 
@@ -197,7 +197,7 @@ WebBrief AI dynamically adapts its storage and security behavior based on its ex
 WebBrief AI uses embedded vector storage directly inside SQLite (`webbrief_history.db`):
 
 - **Zero Additional Daemons**: Embeddings are packed as binary float blobs (`struct.pack`) alongside article metadata.
-- **Embeddings Provider**: Cloudflare Workers AI `@cf/baai/bge-base-en-v1.5` (768 dimensions). If only Groq is configured, an internal deterministic feature-vector hashing generator is used so vector search functions seamlessly without extra dependencies.
+- **Embeddings Provider**: Google Gemini `gemini-embedding-001` (768 dimensions). A deterministic feature-vector hashing generator is also available for unauthenticated environments.
 - **SHA-256 Content Caching**: Embeddings are indexed by content hash. Summaries are never re-embedded unless their text changes.
 - **Search Latency**: Pure Python dot product executes in **~0.03ms** per vector comparison.
 
@@ -216,7 +216,7 @@ WebBrief AI uses embedded vector storage directly inside SQLite (`webbrief_histo
 | Summarization Mode:                                                     |
 | [⚡ Quick]       [📖 Detailed]     [📋 Bullet-Point]   [⚙️ Technical]    |
 |                                                                         |
-| [               Summarize Webpage (Cloudflare / Groq)                 ] |
+| [               Summarize Webpage (Google Gemini)                     ] |
 +-------------------------------------------------------------------------+
 ```
 
@@ -225,7 +225,7 @@ WebBrief AI uses embedded vector storage directly inside SQLite (`webbrief_histo
 +-------------------------------------------------------------------------+
 |  ✦ Quantum Computing Breakthrough                                      |
 |  [Detailed Summary]  Source: https://example.com...                      |
-|  ⚙️ Provider: Cloudflare Workers AI  |  Model: @cf/meta/llama-3.1-8b-instruct
+|  ⚙️ Provider: Google Gemini          |  Model: gemini-3.8-flash
 |                                                                         |
 |  ## Overview                                               [Copy Section]|
 |  Researchers achieve fault-tolerant logical qubits with neutral atoms... |
@@ -242,7 +242,7 @@ WebBrief AI uses embedded vector storage directly inside SQLite (`webbrief_histo
 
 - **Backend Runtime**: Python 3.10+
 - **Web Framework**: Flask 3.1+ (Jinja2 templates, signed `HttpOnly` sessions)
-- **AI Engine**: Modular `AIRouter` with REST clients for **Cloudflare Workers AI** & **GroqCloud**
+- **AI Engine**: Modular `AIRouter` with official Google Gen AI SDK for **Google Gemini**
 - **Web Scraping**:
   - Static: `requests` + `BeautifulSoup4`
   - Dynamic: `playwright` (Chromium headless with request routing)
@@ -273,8 +273,7 @@ WebBrief AI/
 │   └── providers/
 │       ├── __init__.py     # Module initialization and exports
 │       ├── base.py         # BaseProvider abstract base class definition
-│       ├── cloudflare.py   # Cloudflare Workers AI REST adapter & embeddings
-│       ├── groq.py         # GroqCloud REST adapter
+│       └── gemini.py       # Google Gemini Gen AI SDK adapter & embeddings
 │       ├── router.py       # AIRouter automatic routing & fallback engine
 │       ├── catalogue.py    # Verified model catalogue & free-tier mappings
 │       └── exceptions.py   # Normalized provider exception hierarchy
@@ -285,7 +284,7 @@ WebBrief AI/
 │   ├── index.html          # Primary application dashboard, mode selector, and result cards
 │   ├── history.html        # Dedicated summary library view (search, reopen, delete)
 │   ├── result.html         # Standalone result view with provider transparency badges
-│   ├── setup.html          # First-run BYOK onboarding wizard (Cloudflare & Groq)
+│   ├── setup.html          # First-run BYOK onboarding wizard (redirects to settings)
 │   └── settings.html       # Multi-provider configuration, model selection, danger zone
 ├── .env.example            # Multi-provider environment variable template
 ├── .gitignore              # Git ignore rules (protects credentials and local DBs)
@@ -301,9 +300,8 @@ WebBrief AI/
 ### Prerequisites
 - Python 3.10, 3.11, or 3.12 installed on your machine.
 - Git installed.
-- At least one AI provider account:
-  - **Cloudflare Account ID & API Token** (Cloudflare Dashboard > Workers AI), OR
-  - **Groq API Key** (https://console.groq.com/keys).
+- A Google Gemini Developer API key:
+  - **Google Gemini API Key** (https://aistudio.google.com/app/apikey).
 
 ### Clone the Repository
 ```bash
@@ -358,7 +356,7 @@ playwright install chromium
    ```
 2. Navigate to `http://127.0.0.1:5000` in your web browser.
 3. If no AI provider credentials are configured, WebBrief AI automatically redirects you to `/setup`.
-4. Choose your primary provider (**Cloudflare Workers AI** or **GroqCloud**) and select your model.
+4. Enter your Google Gemini API key and select your preferred model (`gemini-3.8-flash`).
 5. Provide your credentials and click **Validate & Save Configuration**.
 6. WebBrief AI executes a live, minimal verification request to verify authentication before persisting.
 
@@ -368,34 +366,14 @@ playwright install chromium
 
 You can configure your credentials via the interactive web UI or directly in `.env`:
 
-### Option A: Cloudflare Workers AI (Recommended)
-1. Find your **Account ID** in the Cloudflare Dashboard URL or right sidebar overview.
-2. Generate an **API Token** at `Cloudflare Dashboard > My Profile > API Tokens > Create Token > Workers AI Read/Edit template`.
-3. In `.env`:
+### Google Gemini Developer API Configuration
+1. Sign up and create an API key at [Google AI Studio](https://aistudio.google.com/app/apikey).
+2. In `.env`:
    ```ini
-   PRIMARY_PROVIDER=cloudflare
-   CLOUDFLARE_ACCOUNT_ID=your_account_id_here
-   CLOUDFLARE_API_TOKEN=your_token_here
-   CLOUDFLARE_DEFAULT_MODEL=@cf/meta/llama-3.1-8b-instruct
+   PRIMARY_PROVIDER=gemini
+   GEMINI_API_KEY=your_gemini_api_key_here
+   GEMINI_DEFAULT_MODEL=gemini-3.8-flash
    ```
-
-### Option B: GroqCloud
-1. Sign up for free at https://console.groq.com.
-2. Create an API key in **API Keys** (format: `gsk_...`).
-3. In `.env`:
-   ```ini
-   PRIMARY_PROVIDER=groq
-   GROQ_API_KEY=gsk_your_groq_api_key_here
-   GROQ_DEFAULT_MODEL=llama-3.1-8b-instant
-   ```
-
-### Optional Fallback Configuration
-To enable automatic failover when your primary provider is rate-limited or unavailable:
-```ini
-FALLBACK_ENABLED=true
-FALLBACK_PROVIDER=groq
-FALLBACK_MODEL=llama-3.1-8b-instant
-```
 
 ---
 
@@ -405,7 +383,7 @@ WebBrief AI strictly enforces a **Zero-Credential Exposure** architecture:
 
 - **Isolated Storage**: Saved credentials reside exclusively in your local `.env` or in active browser RAM on hosted Vercel deployments.
 - **No Client Leakage**: Sensitive tokens and keys are never rendered in frontend templates, never injected into HTML attributes, and never stored in cookies or client disk on hosted deployments.
-- **Automatic Sanitization**: Error messages and logs automatically mask Groq keys (`gsk_...`), Cloudflare tokens, and account IDs.
+- **Automatic Sanitization**: Error messages and logs automatically mask Google Gemini API keys (`AIza...`).
 - **Overwrite Protection**: Modifying an existing `.env` configuration requires explicit confirmation.
 - **SSRF Defense**:
   - DNS pre-resolution restricts scraper requests to public IP addresses.
@@ -463,15 +441,9 @@ vercel
 
 | Variable | Required | Default | Description |
 | :--- | :---: | :---: | :--- |
-| `PRIMARY_PROVIDER` | Required | `cloudflare` | Primary AI provider (`cloudflare` or `groq`) |
-| `CLOUDFLARE_ACCOUNT_ID` | Conditional | None | Cloudflare Account ID (required if primary/fallback is Cloudflare) |
-| `CLOUDFLARE_API_TOKEN` | Conditional | None | Cloudflare API Token with Workers AI permissions |
-| `CLOUDFLARE_DEFAULT_MODEL`| Optional | `@cf/meta/llama-3.1-8b-instruct` | Default Cloudflare model identifier |
-| `GROQ_API_KEY` | Conditional | None | Groq API Key (required if primary/fallback is Groq) |
-| `GROQ_DEFAULT_MODEL` | Optional | `llama-3.1-8b-instant` | Default Groq model identifier |
-| `FALLBACK_ENABLED` | Optional | `false` | Enable automatic failover routing (`true` or `false`) |
-| `FALLBACK_PROVIDER` | Conditional | None | Fallback provider (`cloudflare` or `groq`) |
-| `FALLBACK_MODEL` | Conditional | None | Fallback model identifier |
+| `PRIMARY_PROVIDER` | Required | `gemini` | Primary AI provider (`gemini`) |
+| `GEMINI_API_KEY` | Required | None | Google Gemini Developer API key |
+| `GEMINI_DEFAULT_MODEL` | Optional | `gemini-3.8-flash` | Default Gemini model identifier |
 | `NOTION_API_KEY` | Optional | None | Notion Internal Integration Secret for exporting briefs |
 | `FLASK_SECRET_KEY` | Required in Prod | Ephemeral Dev Key | 32-byte secret key used to sign session cookies |
 | `FLASK_DEBUG` | Optional | `0` | Set `1` to enable Flask debugger (development only) |
@@ -487,11 +459,10 @@ vercel
 ## 19. Troubleshooting
 
 ### Issue: "Provider authentication failed"
-- **Cloudflare**: Verify that your Account ID is correct and that your API Token has the `Workers AI: Read/Edit` permission enabled.
-- **Groq**: Verify your API key at https://console.groq.com/keys and ensure it begins with `gsk_`.
+- **Google Gemini**: Verify your API key at https://aistudio.google.com/app/apikey and ensure it starts with `AIza`.
 
 ### Issue: "Primary provider rate limited (HTTP 429)"
-- Enable automatic fallback to Groq or Cloudflare in `/settings` to seamlessly switch models during traffic spikes.
+- Check API quotas and limits in Google AI Studio if experiencing 429 rate limit responses.
 
 ### Issue: "Access to internal, loopback, or private addresses is restricted"
 - WebBrief AI blocks requests to `localhost`, `127.0.0.1`, and private IP ranges to prevent SSRF vulnerabilities. Ensure you supply public internet URLs.
@@ -518,7 +489,7 @@ vercel
 - [x] **v1.4 — Local Knowledge Retrieval & Semantic Search**: Natural-language vector embedding retrieval across saved summaries, embedded binary SQLite float vector storage, deterministic SHA-256 caching.
 - [x] **v1.5 — Hosted BYOK & Deployment-Aware Storage**: Public Vercel serverless deployment support, strictly in-memory active tab visitor keys, zero developer credit drainage, complete multi-user isolation via browser IndexedDB (`WebBriefDB`).
 - [x] **v1.5.1 — Security & Reliability Hardening**: Comprehensive audit and remediation across 10 security vectors (SEC-01 through SEC-10).
-- [x] **v1.6.0 — Multi-Provider AI Integration**: Complete removal of OpenAI dependencies; modular provider architecture (`services/providers/`); primary provider Cloudflare Workers AI; optional fallback provider GroqCloud; automatic provider routing (`AIRouter`) with bounded failover; model catalogue & selection UI; provider transparency badging; updated vector embeddings.
+- [x] **v1.6.0 — Gemini API Migration**: Complete removal of Cloudflare and GroqCloud dependencies; modular provider architecture (services/providers/gemini.py); Google Gemini Developer API (gemini-3.8-flash) via official google-genai SDK; updated model catalogue; updated vector embeddings (gemini-embedding-001).
 
 ---
 

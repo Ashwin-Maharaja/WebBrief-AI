@@ -31,8 +31,7 @@ from scraper import scrape_article, ScraperError
 from summarizer import summarize_text, SummarizerError, MODES, DEFAULT_MODE
 from byok import (
     has_valid_config,
-    validate_cloudflare_credentials,
-    validate_groq_credentials,
+    validate_gemini_credentials,
     get_active_provider_config,
     save_provider_config_to_env,
     clear_saved_provider_config,
@@ -454,14 +453,12 @@ def attach_vault_credentials():
         return
     stored = _vault_config()
     for key in (
-        "cloudflare_account_id", "cloudflare_api_token", "groq_api_key",
-        "fallback_provider", "fallback_model", "primary_model", "cloudflare_model",
-        "groq_model", "fallback_enabled"
+        "gemini_api_key", "gemini_model", "primary_provider"
     ):
         if not payload.get(key) and stored.get(key):
             payload[key] = stored[key]
     if stored and not payload.get("primary_provider"):
-        payload["primary_provider"] = stored.get("primary_provider", "cloudflare")
+        payload["primary_provider"] = stored.get("primary_provider", "gemini")
 
 
 @app.route("/api/credentials", methods=["POST"])
@@ -476,39 +473,21 @@ def store_temporary_credentials():
     payload = request.get_json(silent=True)
     if not isinstance(payload, dict):
         return jsonify({"error": "JSON object required."}), 400
-    provider = payload.get("primary_provider", "cloudflare")
-    if provider == "cloudflare":
-        valid, msg = validate_cloudflare_credentials(payload.get("cloudflare_account_id", ""), payload.get("cloudflare_api_token", ""))
-    elif provider == "groq":
-        valid, msg = validate_groq_credentials(payload.get("groq_api_key", ""))
-    else:
-        return jsonify({"error": "Unsupported provider."}), 400
+
+    gemini_key = (payload.get("gemini_api_key") or payload.get("api_key") or "").strip()
+    valid, msg = validate_gemini_credentials(gemini_key)
     if not valid:
         return jsonify({"error": f"Provider credentials failed validation: {msg}"}), 400
 
-    # Validate fallback credentials if provided
-    fallback_provider = payload.get("fallback_provider")
-    if fallback_provider:
-        if fallback_provider == "groq":
-            fb_key = payload.get("groq_api_key", "").strip()
-            if fb_key:
-                fb_valid, fb_msg = validate_groq_credentials(fb_key)
-                if not fb_valid:
-                    return jsonify({"error": f"Fallback provider credentials failed validation: {fb_msg}"}), 400
-        elif fallback_provider == "cloudflare":
-            fb_id = payload.get("cloudflare_account_id", "").strip()
-            fb_tok = payload.get("cloudflare_api_token", "").strip()
-            if fb_id or fb_tok:
-                fb_valid, fb_msg = validate_cloudflare_credentials(fb_id, fb_tok)
-                if not fb_valid:
-                    return jsonify({"error": f"Fallback provider credentials failed validation: {fb_msg}"}), 400
-
     allowed = {
-        "primary_provider", "cloudflare_account_id", "cloudflare_api_token",
-        "groq_api_key", "fallback_provider", "fallback_model", "primary_model",
-        "cloudflare_model", "groq_model", "fallback_enabled", "notion_token"
+        "primary_provider", "gemini_api_key", "gemini_model", "notion_token"
     }
     clean = {k: v for k, v in payload.items() if k in allowed and (isinstance(v, str) or isinstance(v, bool))}
+    clean["gemini_api_key"] = gemini_key
+    clean["primary_provider"] = "gemini"
+    if payload.get("gemini_model"):
+        clean["gemini_model"] = payload["gemini_model"].strip()
+
     existing_cfg = _vault_config() or {}
     if "notion_token" in existing_cfg and "notion_token" not in clean:
         clean["notion_token"] = existing_cfg["notion_token"]
@@ -524,10 +503,9 @@ def temporary_credentials_status():
     return jsonify({
         "enabled": _vault is not None,
         "configured": bool(data),
-        "provider": data.get("primary_provider"),
-        "fallback_provider": data.get("fallback_provider"),
-        "primary_model": data.get("primary_model"),
-        "fallback_model": data.get("fallback_model"),
+        "provider": data.get("primary_provider", "gemini") if data else None,
+        "gemini_model": data.get("gemini_model") if data else None,
+        "primary_model": data.get("gemini_model") if data else None,
     })
 
 
@@ -1502,32 +1480,19 @@ def api_provider_models():
 def validate_key():
     """
     Validates submitted provider credentials without consuming generation tokens.
-    Supports Cloudflare Workers AI and GroqCloud.
+    Supports Google Gemini Developer API.
     """
     limit_resp = check_rate_limit("validate_key", max_requests=20, window_seconds=60)
     if limit_resp:
         return limit_resp
     data = request.get_json() or {} if request.is_json else request.form.to_dict()
-    provider = data.get("provider", "").strip().lower()
+    provider = data.get("provider", "gemini").strip().lower()
 
-    # Detect provider if not explicitly given
-    if not provider:
-        if data.get("cloudflare_account_id") or data.get("cloudflare_api_token") or data.get("account_id") or data.get("api_token"):
-            provider = "cloudflare"
-        elif data.get("groq_api_key") or (data.get("api_key", "").startswith("gsk_")):
-            provider = "groq"
-        else:
-            provider = "cloudflare"
-
-    if provider == "cloudflare":
-        account_id = data.get("cloudflare_account_id") or data.get("account_id", "").strip()
-        api_token = data.get("cloudflare_api_token") or data.get("api_token", "").strip()
-        is_valid, message = validate_cloudflare_credentials(account_id, api_token)
-    elif provider == "groq":
-        api_key = data.get("groq_api_key") or data.get("api_key", "").strip()
-        is_valid, message = validate_groq_credentials(api_key)
-    else:
+    if provider not in ("gemini", ""):
         return jsonify({"valid": False, "message": f"Unsupported provider: '{provider}'"}), 400
+
+    api_key = (data.get("gemini_api_key") or data.get("api_key") or "").strip()
+    is_valid, message = validate_gemini_credentials(api_key)
 
     status_code = 200 if is_valid else 400
     return jsonify({"valid": is_valid, "message": message}), status_code
@@ -1548,19 +1513,11 @@ def save_key():
         data = request.form.to_dict()
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
-    primary_provider = data.get("primary_provider", "cloudflare").strip().lower()
     confirm_overwrite = data.get("confirm_overwrite") in (True, "true", "1", 1, "on")
 
-    # Step 1: Validate primary provider credentials
-    if primary_provider == "cloudflare":
-        cf_id = data.get("cloudflare_account_id", "").strip()
-        cf_token = data.get("cloudflare_api_token", "").strip()
-        is_valid, val_msg = validate_cloudflare_credentials(cf_id, cf_token)
-    elif primary_provider == "groq":
-        groq_key = data.get("groq_api_key", "").strip() or data.get("api_key", "").strip()
-        is_valid, val_msg = validate_groq_credentials(groq_key)
-    else:
-        is_valid, val_msg = False, f"Unknown primary provider: '{primary_provider}'"
+    # Step 1: Validate Gemini API key
+    gemini_key = (data.get("gemini_api_key") or data.get("api_key") or "").strip()
+    is_valid, val_msg = validate_gemini_credentials(gemini_key)
 
     if not is_valid:
         if is_ajax:
@@ -1569,45 +1526,13 @@ def save_key():
         env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
         return render_template("settings.html", error=val_msg, is_configured=has_valid_config(session), env_exists=env_exists), 400
 
-    # Step 2: Validate fallback provider credentials if fallback is enabled
-    fallback_enabled = data.get("fallback_enabled") in (True, "true", "1", 1, "on")
-    if fallback_enabled:
-        fallback_provider = data.get("fallback_provider", "").strip().lower()
-        if fallback_provider == primary_provider:
-            err = "Fallback provider cannot be identical to the primary provider."
-            if is_ajax:
-                return jsonify({"success": False, "error": err}), 400
-            return render_template("settings.html", error=err, is_configured=has_valid_config(session)), 400
-
-        if fallback_provider == "cloudflare":
-            fb_id = data.get("cloudflare_account_id", "").strip()
-            fb_token = data.get("cloudflare_api_token", "").strip()
-            fb_valid, fb_msg = validate_cloudflare_credentials(fb_id, fb_token)
-            if not fb_valid:
-                if is_ajax:
-                    return jsonify({"success": False, "error": f"Fallback provider error: {fb_msg}"}), 400
-                return render_template("settings.html", error=f"Fallback provider error: {fb_msg}", is_configured=has_valid_config(session)), 400
-        elif fallback_provider == "groq":
-            fb_key = data.get("groq_api_key", "").strip()
-            fb_valid, fb_msg = validate_groq_credentials(fb_key)
-            if not fb_valid:
-                if is_ajax:
-                    return jsonify({"success": False, "error": f"Fallback provider error: {fb_msg}"}), 400
-                return render_template("settings.html", error=f"Fallback provider error: {fb_msg}", is_configured=has_valid_config(session)), 400
-
     # Hosted serverless mode: do not touch filesystem
     if is_serverless_env():
         if _vault is not None:
             clean_vault = {
-                "primary_provider": primary_provider,
-                "cloudflare_account_id": data.get("cloudflare_account_id", "").strip(),
-                "cloudflare_api_token": data.get("cloudflare_api_token", "").strip(),
-                "cloudflare_model": data.get("cloudflare_model", "").strip(),
-                "groq_api_key": data.get("groq_api_key", "").strip() or data.get("api_key", "").strip(),
-                "groq_model": data.get("groq_model", "").strip(),
-                "fallback_enabled": fallback_enabled,
-                "fallback_provider": data.get("fallback_provider", "").strip().lower() if fallback_enabled else None,
-                "fallback_model": data.get("fallback_model", "").strip() if fallback_enabled else None,
+                "primary_provider": "gemini",
+                "gemini_api_key": gemini_key,
+                "gemini_model": data.get("gemini_model", "").strip(),
             }
             clean_vault = {k: v for k, v in clean_vault.items() if v}
             saved = _vault.save(_vault_sid(), clean_vault)
@@ -1628,8 +1553,11 @@ def save_key():
         return redirect(url_for("home"))
 
     # Local mode: persist to .env
+    save_data = dict(data)
+    save_data["gemini_api_key"] = gemini_key
+    save_data["primary_provider"] = "gemini"
     success, save_message = save_provider_config_to_env(
-        config_dict=data,
+        config_dict=save_data,
         confirm_overwrite=confirm_overwrite
     )
 

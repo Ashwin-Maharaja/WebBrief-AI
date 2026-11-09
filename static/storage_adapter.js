@@ -20,15 +20,9 @@
     let _inMemoryApiKey = '';
     let _vaultActive = false;
     let _inMemoryProviderConfig = {
-        primary_provider: 'cloudflare',
-        cloudflare_account_id: '',
-        cloudflare_api_token: '',
-        cloudflare_model: '@cf/meta/llama-3.1-8b-instruct',
-        groq_api_key: '',
-        groq_model: 'llama-3.1-8b-instant',
-        fallback_enabled: false,
-        fallback_provider: 'groq',
-        fallback_model: 'llama-3.1-8b-instant'
+        primary_provider: 'gemini',
+        gemini_api_key: '',
+        gemini_model: 'gemini-3.8-flash'
     };
 
     // Restore non-sensitive preferences from tab session storage if available
@@ -53,7 +47,10 @@
                 const status = await res.json();
                 if (!status.configured) return;
                 _vaultActive = true;
-                _inMemoryProviderConfig.primary_provider = status.provider || 'cloudflare';
+                _inMemoryProviderConfig.primary_provider = status.provider || 'gemini';
+                if (status.gemini_model || status.primary_model) {
+                    _inMemoryProviderConfig.gemini_model = status.gemini_model || status.primary_model;
+                }
                 const label = document.getElementById('hosted-status-label');
                 if (label) label.textContent = '● Temporary Encrypted Session Active';
                 const clear = document.getElementById('hosted-clear-btn');
@@ -193,22 +190,20 @@
                 _inMemoryProviderConfig = Object.assign({}, _inMemoryProviderConfig, cfg);
                 if (window.__WEBBRIEF_VAULT_ENABLED) {
                     _vaultActive = true;
-                    _inMemoryProviderConfig.cloudflare_api_token = '';
-                    _inMemoryProviderConfig.groq_api_key = '';
+                    _inMemoryProviderConfig.gemini_api_key = '';
                     _inMemoryApiKey = '';
-                } else if (cfg.groq_api_key) _inMemoryApiKey = cfg.groq_api_key;
-                else if (cfg.cloudflare_api_token) _inMemoryApiKey = cfg.cloudflare_api_token;
+                } else if (cfg.gemini_api_key) {
+                    _inMemoryApiKey = cfg.gemini_api_key;
+                } else if (cfg.api_key) {
+                    _inMemoryApiKey = cfg.api_key;
+                }
 
                 // Safely save non-sensitive preferences across tab navigation
                 try {
                     if (window.sessionStorage) {
                         const prefs = {
-                            primary_provider: _inMemoryProviderConfig.primary_provider,
-                            cloudflare_model: _inMemoryProviderConfig.cloudflare_model,
-                            groq_model: _inMemoryProviderConfig.groq_model,
-                            fallback_enabled: _inMemoryProviderConfig.fallback_enabled,
-                            fallback_provider: _inMemoryProviderConfig.fallback_provider,
-                            fallback_model: _inMemoryProviderConfig.fallback_model
+                            primary_provider: _inMemoryProviderConfig.primary_provider || 'gemini',
+                            gemini_model: _inMemoryProviderConfig.gemini_model || 'gemini-3.8-flash'
                         };
                         window.sessionStorage.setItem('webbrief_provider_prefs', JSON.stringify(prefs));
                     }
@@ -219,8 +214,8 @@
         getProviderConfig: function() {
             const cfg = Object.assign({}, _inMemoryProviderConfig);
             if (window.__WEBBRIEF_VAULT_ENABLED) {
-                delete cfg.cloudflare_api_token;
-                delete cfg.groq_api_key;
+                delete cfg.gemini_api_key;
+                delete cfg.api_key;
             }
             return cfg;
         },
@@ -228,20 +223,15 @@
         clearCredentials: function() {
             _vaultActive = false;
             _inMemoryApiKey = '';
-            _inMemoryProviderConfig.cloudflare_account_id = '';
-            _inMemoryProviderConfig.cloudflare_api_token = '';
-            _inMemoryProviderConfig.groq_api_key = '';
+            _inMemoryProviderConfig.gemini_api_key = '';
         },
 
         hasValidCredentials: function() {
             if (window.__WEBBRIEF_VAULT_ENABLED) return _vaultActive;
-            const p = _inMemoryProviderConfig.primary_provider || 'cloudflare';
-            if (p === 'cloudflare') {
-                return Boolean(_inMemoryProviderConfig.cloudflare_account_id && _inMemoryProviderConfig.cloudflare_api_token);
-            } else if (p === 'groq') {
-                return Boolean(_inMemoryProviderConfig.groq_api_key);
-            }
-            return Boolean(_inMemoryApiKey && _inMemoryApiKey.length >= 10);
+            return Boolean(
+                _inMemoryProviderConfig.gemini_api_key ||
+                (_inMemoryApiKey && _inMemoryApiKey.length >= 10)
+            );
         },
 
         /**
@@ -249,16 +239,16 @@
          * In hosted mode: reads from memory.
          * In local mode: checks local override input or returns null (uses server .env).
          */
-        getActiveApiKey: function(fallbackInputId = 'api-key-input') {
+        getActiveApiKey: function(fallbackInputId = 'hosted-gemini-key') {
             if (window.__WEBBRIEF_VAULT_ENABLED) return null;
             if (this.isHosted()) {
                 if (_inMemoryApiKey) return _inMemoryApiKey;
-                const hostedInput = document.getElementById('hosted-api-key-input');
+                const hostedInput = document.getElementById('hosted-gemini-key') || document.getElementById('hosted-api-key-input');
                 if (hostedInput && hostedInput.value.trim()) {
                     return hostedInput.value.trim();
                 }
             }
-            const localInput = document.getElementById(fallbackInputId);
+            const localInput = document.getElementById(fallbackInputId) || document.getElementById('api-key-input');
             if (localInput && localInput.value.trim()) {
                 return localInput.value.trim();
             }

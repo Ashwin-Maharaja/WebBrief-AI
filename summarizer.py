@@ -319,7 +319,7 @@ def summarize_text(
     provider_config: Optional[Dict[str, Any]] = None,
 ):
     """
-    Summarizes webpage text using modular multi-provider AI (Cloudflare Workers AI or GroqCloud).
+    Summarizes webpage text using Google Gemini Developer API.
     Supports single-pass for short content, or chunking & map-reduce for long webpages.
     Supports user-defined custom prompt directives combined harmoniously with the selected mode.
 
@@ -360,16 +360,12 @@ def summarize_text(
         from byok import get_router, has_valid_config
         req_payload = provider_config or {}
         if api_key:
-            # If a single key was passed, handle Groq key or token
-            if api_key.startswith("gsk_"):
-                req_payload["groq_api_key"] = api_key
-                req_payload["primary_provider"] = "groq"
-            else:
-                req_payload["api_key"] = api_key
+            req_payload["gemini_api_key"] = api_key
+            req_payload["primary_provider"] = "gemini"
 
         if not has_valid_config(request_data=req_payload):
             raise SummarizerError(
-                "No AI provider configured. Please configure Cloudflare Workers AI or GroqCloud in Settings or Setup."
+                "No AI provider configured. Please configure Google Gemini API key in Settings."
             )
         router = get_router(request_data=req_payload)
 

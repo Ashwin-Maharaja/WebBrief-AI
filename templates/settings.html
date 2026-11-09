@@ -235,13 +235,7 @@
                     <div class="status-row">
                         <span class="status-label">Primary AI Provider</span>
                         <span class="status-val">
-                            {% if provider_config.primary_provider == 'cloudflare' %}
-                                ⚡ Cloudflare Workers AI
-                            {% elif provider_config.primary_provider == 'groq' %}
-                                🚀 GroqCloud
-                            {% else %}
-                                ⚡ Cloudflare Workers AI
-                            {% endif %}
+                            Google Gemini Developer API
                         </span>
                     </div>
 
@@ -249,11 +243,7 @@
                         <span class="status-label">Active Model</span>
                         <span class="status-val">
                             <code>
-                                {% if provider_config.primary_provider == 'groq' %}
-                                    {{ provider_config.groq_model or 'llama-3.1-8b-instant' }}
-                                {% else %}
-                                    {{ provider_config.cloudflare_model or '@cf/meta/llama-3.1-8b-instruct' }}
-                                {% endif %}
+                                {{ provider_config.gemini_model or 'gemini-3.8-flash' }}
                             </code>
                         </span>
                     </div>
@@ -263,25 +253,12 @@
                         <span class="status-val">
                             {% if is_configured %}
                                 <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #34d399; border: 1px solid rgba(16, 185, 129, 0.3);">
-                                    ● Active & Verified
+                                    ● Active &amp; Verified
                                 </span>
                             {% else %}
                                 <span class="badge" style="background: rgba(239, 68, 68, 0.15); color: #f87171; border: 1px solid rgba(239, 68, 68, 0.3);">
                                     ● Setup Required
                                 </span>
-                            {% endif %}
-                        </span>
-                    </div>
-
-                    <div class="status-row">
-                        <span class="status-label">Automatic Fallback</span>
-                        <span class="status-val">
-                            {% if provider_config.fallback_enabled and provider_config.fallback_provider %}
-                                <span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8;">
-                                    ✓ Enabled ({{ provider_config.fallback_provider|capitalize }})
-                                </span>
-                            {% else %}
-                                <span style="color: var(--text-muted);">Disabled</span>
                             {% endif %}
                         </span>
                     </div>
@@ -312,94 +289,30 @@
                 <!-- Provider Configuration Form -->
                 <div class="provider-config-box">
                     <h4 style="font-size: 0.95rem; font-weight: 700; margin-bottom: 12px; color: var(--text-primary);">
-                        Configure Providers & Routing
+                        Configure Google Gemini API
                     </h4>
 
-                    <!-- Primary Provider Selector -->
                     <div class="form-group">
-                        <label class="form-label">Primary Provider <span class="required">*</span></label>
-                        <div class="provider-tabs">
-                            <button type="button" class="provider-tab-btn {% if (provider_config.primary_provider or 'cloudflare') == 'cloudflare' %}active{% endif %}" id="tab-cf-btn" onclick="selectSettingsProvider('cloudflare')">
-                                ⚡ Cloudflare Workers AI
-                            </button>
-                            <button type="button" class="provider-tab-btn {% if provider_config.primary_provider == 'groq' %}active{% endif %}" id="tab-groq-btn" onclick="selectSettingsProvider('groq')">
-                                🚀 GroqCloud
-                            </button>
-                        </div>
+                        <label for="settings-gemini-key" class="form-label">Google Gemini API Key <span class="required">*</span></label>
+                        <input type="password" id="settings-gemini-key" class="form-control" placeholder="AIzaSy..." value="{{ provider_config.gemini_api_key or '' }}">
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style="color: var(--primary); font-size: 12px; margin-top: 6px; display: inline-block; text-decoration: none; font-weight: 600;">
+                            🔑 Get Gemini API Key at Google AI Studio ↗
+                        </a>
                     </div>
 
-                    <!-- Cloudflare Options -->
-                    <div id="settings-cf-group" style="display: {% if (provider_config.primary_provider or 'cloudflare') == 'cloudflare' %}block{% else %}none{% endif %};">
-                        <div class="form-group">
-                            <label for="settings-cf-id" class="form-label">Cloudflare Account ID</label>
-                            <input type="text" id="settings-cf-id" class="form-control" placeholder="32-character hexadecimal Account ID" value="{{ provider_config.cloudflare_account_id or '' }}">
-                        </div>
-                        <div class="form-group">
-                            <label for="settings-cf-token" class="form-label">Cloudflare API Token</label>
-                            <input type="password" id="settings-cf-token" class="form-control" placeholder="Workers AI Read/Edit API Token" value="{{ provider_config.cloudflare_api_token or '' }}">
-                        </div>
-                        <div class="form-group">
-                            <label for="settings-cf-model" class="form-label">Cloudflare Model</label>
-                            <select id="settings-cf-model" class="form-control">
-                                {% for m in provider_catalogue.cloudflare.models %}
-                                    <option value="{{ m.id }}" {% if provider_config.cloudflare_model == m.id or (not provider_config.cloudflare_model and m.recommended) %}selected{% endif %}>
+                    <div class="form-group">
+                        <label for="settings-gemini-model" class="form-label">Active Model <span class="required">*</span></label>
+                        <select id="settings-gemini-model" class="form-control">
+                            {% if provider_catalogue and provider_catalogue.gemini %}
+                                {% for m in provider_catalogue.gemini.models %}
+                                    <option value="{{ m.id }}" {% if provider_config.gemini_model == m.id or (not provider_config.gemini_model and m.recommended) %}selected{% endif %}>
                                         {{ m.name }}
                                     </option>
                                 {% endfor %}
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Groq Options -->
-                    <div id="settings-groq-group" style="display: {% if provider_config.primary_provider == 'groq' %}block{% else %}none{% endif %};">
-                        <div class="form-group">
-                            <label for="settings-groq-key" class="form-label">Groq API Key</label>
-                            <input type="password" id="settings-groq-key" class="form-control" placeholder="gsk_..." value="{{ provider_config.groq_api_key or '' }}">
-                        </div>
-                        <div class="form-group">
-                            <label for="settings-groq-model" class="form-label">Groq Model</label>
-                            <select id="settings-groq-model" class="form-control">
-                                {% for m in provider_catalogue.groq.models %}
-                                    <option value="{{ m.id }}" {% if provider_config.groq_model == m.id or (not provider_config.groq_model and m.recommended) %}selected{% endif %}>
-                                        {{ m.name }}
-                                    </option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                    </div>
-
-                    <!-- Fallback Configuration Box -->
-                    <div style="margin-top: 1.25rem; padding-top: 1rem; border-top: 1px solid var(--border-color);">
-                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-                            <label class="form-label" style="margin-bottom: 0;">Optional Fallback Provider</label>
-                            <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.88rem;">
-                                <input type="checkbox" id="settings-fallback-toggle" {% if provider_config.fallback_enabled %}checked{% endif %} onchange="toggleSettingsFallback()">
-                                Enable Fallback Routing
-                            </label>
-                        </div>
-
-                        <div id="settings-fallback-details" style="display: {% if provider_config.fallback_enabled %}block{% else %}none{% endif %}; margin-top: 10px;">
-                            <div class="form-group">
-                                <label for="settings-fallback-provider" class="form-label">Fallback Provider</label>
-                                <select id="settings-fallback-provider" class="form-control" onchange="onSettingsFallbackProviderChange()">
-                                    <option value="groq" {% if provider_config.fallback_provider == 'groq' %}selected{% endif %}>GroqCloud</option>
-                                    <option value="cloudflare" {% if provider_config.fallback_provider == 'cloudflare' %}selected{% endif %}>Cloudflare Workers AI</option>
-                                </select>
-                            </div>
-                            <div class="form-group">
-                                <label for="settings-fallback-model" class="form-label">Fallback Model</label>
-                                <select id="settings-fallback-model" class="form-control">
-                                    <option value="llama-3.1-8b-instant" {% if provider_config.fallback_model == 'llama-3.1-8b-instant' or (not provider_config.fallback_model and provider_config.fallback_provider == 'groq') %}selected{% endif %}>Llama 3.1 8B Instant (Groq)</option>
-                                    <option value="openai/gpt-oss-120b" {% if provider_config.fallback_model == 'openai/gpt-oss-120b' %}selected{% endif %}>GPT-OSS 120B (Groq)</option>
-                                    <option value="openai/gpt-oss-20b" {% if provider_config.fallback_model == 'openai/gpt-oss-20b' %}selected{% endif %}>GPT-OSS 20B (Groq)</option>
-                                    <option value="qwen/qwen3.8-27b" {% if provider_config.fallback_model == 'qwen/qwen3.8-27b' %}selected{% endif %}>Qwen 3.8 27B (Groq)</option>
-                                    <option value="@cf/meta/llama-3.1-8b-instruct" {% if provider_config.fallback_model == '@cf/meta/llama-3.1-8b-instruct' or (not provider_config.fallback_model and provider_config.fallback_provider == 'cloudflare') %}selected{% endif %}>Llama 3.1 8B Instruct (Cloudflare)</option>
-                                    <option value="@cf/meta/llama-3.3-70b-instruct-fp8-fast" {% if provider_config.fallback_model == '@cf/meta/llama-3.3-70b-instruct-fp8-fast' %}selected{% endif %}>Llama 3.3 70B Instruct Fast (Cloudflare)</option>
-                                    <option value="@cf/mistral/mistral-7b-instruct-v0.1" {% if provider_config.fallback_model == '@cf/mistral/mistral-7b-instruct-v0.1' %}selected{% endif %}>Mistral 7B Instruct (Cloudflare)</option>
-                                    <option value="llama-3.3-70b-versatile" {% if provider_config.fallback_model == 'llama-3.3-70b-versatile' %}selected{% endif %}>Llama 3.3 70B Versatile (Groq Tier 1+)</option>
-                                </select>
-                            </div>
-                        </div>
+                            {% else %}
+                                <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Recommended)</option>
+                            {% endif %}
+                        </select>
                     </div>
 
                     <!-- Feedback Alert -->
@@ -417,45 +330,9 @@
                 </div>
             </div>
 
-            <!-- 2. Default Summarization Preferences -->
-            <div class="settings-section">
-                <div class="section-header">
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M12 20h9"/>
-                        <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/>
-                    </svg>
-                    <h3>Summary Preferences</h3>
-                </div>
-                <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 0.75rem;">
-                    Choose your preferred default summarization mode when loading the app.
-                </p>
 
-                <div class="pref-grid" id="mode-pref-grid">
-                    {% for m_key, m_info in modes.items() %}
-                    <div class="pref-card" data-mode="{{ m_key }}" onclick="setDefaultMode('{{ m_key }}')">
-                        <div style="font-size: 1.25rem;">
-                            {% if m_key == 'quick' %}⚡
-                            {% elif m_key == 'detailed' %}📖
-                            {% elif m_key == 'bullet' %}📋
-                            {% elif m_key == 'technical' %}⚙️
-                            {% endif %}
-                        </div>
-                        <div>
-                            <strong style="color: var(--text-primary); font-size: 0.92rem; display: block;">{{ m_info.name }}</strong>
-                            <span style="font-size: 0.78rem; color: var(--text-muted);">
-                                {% if m_key == 'quick' %}Concise highlights
-                                {% elif m_key == 'detailed' %}Comprehensive depth
-                                {% elif m_key == 'bullet' %}Clean bullet points
-                                {% elif m_key == 'technical' %}Technical precision
-                                {% endif %}
-                            </span>
-                        </div>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
 
-            <!-- 3. Theme Preferences -->
+            <!-- 2. Theme Preferences -->
             <div class="settings-section">
                 <div class="section-header">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -483,7 +360,7 @@
                 </div>
             </div>
 
-            <!-- 4. Custom Prompt Directives (v1.2) -->
+            <!-- 3. Custom Prompt Directives -->
             <div class="settings-section">
                 <div class="section-header">
                     <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -576,7 +453,7 @@
                     </div>
                     <div class="status-row">
                         <span class="status-label">Embedding Engine</span>
-                        <span class="status-val">Cloudflare Workers AI / Deterministic Hash</span>
+                        <span class="status-val">Google Gemini / Deterministic Hash</span>
                     </div>
                     <div class="status-row">
                         <span class="status-label">Indexing Cache</span>
@@ -615,45 +492,6 @@
     </main>
 
     <script>
-        let currentPrimary = "{{ provider_config.primary_provider or 'cloudflare' }}";
-
-        function selectSettingsProvider(providerId) {
-            currentPrimary = providerId;
-            const cfBtn = document.getElementById("tab-cf-btn");
-            const groqBtn = document.getElementById("tab-groq-btn");
-            const cfGroup = document.getElementById("settings-cf-group");
-            const groqGroup = document.getElementById("settings-groq-group");
-            const fbSelect = document.getElementById("settings-fallback-provider");
-
-            if (providerId === "cloudflare") {
-                cfBtn.classList.add("active");
-                groqBtn.classList.remove("active");
-                cfGroup.style.display = "block";
-                groqGroup.style.display = "none";
-                if (fbSelect) fbSelect.value = "groq";
-            } else {
-                groqBtn.classList.add("active");
-                cfBtn.classList.remove("active");
-                groqGroup.style.display = "block";
-                cfGroup.style.display = "none";
-                if (fbSelect) fbSelect.value = "cloudflare";
-            }
-        }
-
-        function toggleSettingsFallback() {
-            const toggle = document.getElementById("settings-fallback-toggle");
-            const details = document.getElementById("settings-fallback-details");
-            if (details) details.style.display = toggle.checked ? "block" : "none";
-        }
-
-        function onSettingsFallbackProviderChange() {
-            const fbSelect = document.getElementById("settings-fallback-provider");
-            if (fbSelect && fbSelect.value === currentPrimary) {
-                alert("Primary and fallback providers cannot be identical.");
-                fbSelect.value = currentPrimary === "cloudflare" ? "groq" : "cloudflare";
-            }
-        }
-
         async function testCurrentConnection() {
             const alertBox = document.getElementById("settings-config-alert");
             const testBtn = document.getElementById("test-connection-btn");
@@ -661,13 +499,16 @@
             alertBox.style.display = "block";
             alertBox.style.background = "rgba(99, 102, 241, 0.15)";
             alertBox.style.color = "var(--primary)";
-            alertBox.textContent = `Testing connection to ${currentPrimary === 'cloudflare' ? 'Cloudflare Workers AI' : 'GroqCloud'}...`;
+            alertBox.textContent = "Testing connection to Google Gemini API...";
+
+            const key = document.getElementById("settings-gemini-key").value.trim();
+            const model = document.getElementById("settings-gemini-model").value;
 
             const payload = {
-                provider: currentPrimary,
-                cloudflare_account_id: document.getElementById("settings-cf-id").value.trim(),
-                cloudflare_api_token: document.getElementById("settings-cf-token").value.trim(),
-                groq_api_key: document.getElementById("settings-groq-key").value.trim(),
+                provider: "gemini",
+                gemini_api_key: key,
+                api_key: key,
+                gemini_model: model,
             };
 
             try {
@@ -704,16 +545,14 @@
             alertBox.style.color = "var(--primary)";
             alertBox.textContent = "Validating and saving configuration...";
 
+            const key = document.getElementById("settings-gemini-key").value.trim();
+            const model = document.getElementById("settings-gemini-model").value;
+
             const payload = {
-                primary_provider: currentPrimary,
-                cloudflare_account_id: document.getElementById("settings-cf-id").value.trim(),
-                cloudflare_api_token: document.getElementById("settings-cf-token").value.trim(),
-                cloudflare_model: document.getElementById("settings-cf-model").value,
-                groq_api_key: document.getElementById("settings-groq-key").value.trim(),
-                groq_model: document.getElementById("settings-groq-model").value,
-                fallback_enabled: document.getElementById("settings-fallback-toggle").checked,
-                fallback_provider: document.getElementById("settings-fallback-provider") ? document.getElementById("settings-fallback-provider").value : null,
-                fallback_model: document.getElementById("settings-fallback-model") ? document.getElementById("settings-fallback-model").value : null,
+                primary_provider: "gemini",
+                gemini_api_key: key,
+                api_key: key,
+                gemini_model: model,
                 confirm_overwrite: true,
             };
 
@@ -726,10 +565,8 @@
                 const data = await res.json();
                 if (res.ok && data.success) {
                     if (window.__WEBBRIEF_VAULT_ENABLED) {
-                        const tokenInput = document.getElementById("settings-cf-token");
-                        const groqInput = document.getElementById("settings-groq-key");
-                        if (tokenInput) tokenInput.value = "";
-                        if (groqInput) groqInput.value = "";
+                        const keyInput = document.getElementById("settings-gemini-key");
+                        if (keyInput) keyInput.value = "";
                     }
                     if (window.StorageAdapter) {
                         StorageAdapter.setProviderConfig(payload);
@@ -743,7 +580,7 @@
                         } else {
                             window.location.reload();
                         }
-                    }, 1200);
+                    }, 1000);
                 } else {
                     alertBox.style.background = "rgba(239, 68, 68, 0.15)";
                     alertBox.style.color = "#f87171";
@@ -755,164 +592,6 @@
                 alertBox.textContent = "✗ Network error saving configuration.";
             } finally {
                 saveBtn.disabled = false;
-            }
-        }
-
-        // Custom Directives management
-        const directiveInput = document.getElementById("custom-directive-input");
-        const directiveToggle = document.getElementById("directive-toggle-checkbox");
-        const saveDirectiveBtn = document.getElementById("save-directive-btn");
-        const resetDirectiveBtn = document.getElementById("reset-directive-btn");
-        const directiveFeedback = document.getElementById("directive-feedback");
-        const directiveCharCount = document.getElementById("directive-char-count");
-
-        function updateDirectiveCharCount() {
-            if (directiveInput && directiveCharCount) {
-                directiveCharCount.textContent = `${directiveInput.value.length} / {{ max_directive_length }}`;
-            }
-        }
-
-        if (directiveInput) {
-            directiveInput.addEventListener("input", updateDirectiveCharCount);
-            updateDirectiveCharCount();
-        }
-
-        if (saveDirectiveBtn) {
-            saveDirectiveBtn.addEventListener("click", async () => {
-                const directive = directiveInput.value.trim();
-                const enabled = directiveToggle.checked;
-
-                saveDirectiveBtn.disabled = true;
-                directiveFeedback.textContent = "Saving...";
-                directiveFeedback.style.color = "var(--primary)";
-
-                try {
-                    const res = await fetch("/api/preferences", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ custom_directive: directive, custom_directive_enabled: enabled })
-                    });
-                    const data = await res.json();
-                    if (res.ok && data.success) {
-                        directiveFeedback.textContent = "✓ Saved!";
-                        directiveFeedback.style.color = "#10b981";
-                    } else {
-                        directiveFeedback.textContent = data.message || "Failed to save.";
-                        directiveFeedback.style.color = "var(--error-text)";
-                    }
-                } catch (err) {
-                    directiveFeedback.textContent = "Network error.";
-                    directiveFeedback.style.color = "var(--error-text)";
-                } finally {
-                    saveDirectiveBtn.disabled = false;
-                }
-            });
-        }
-
-        if (resetDirectiveBtn) {
-            resetDirectiveBtn.addEventListener("click", async () => {
-                if (!confirm("Reset custom instructions to default?")) return;
-                try {
-                    await fetch("/api/preferences/reset", { method: "POST" });
-                    directiveInput.value = "";
-                    directiveToggle.checked = false;
-                    updateDirectiveCharCount();
-                    directiveFeedback.textContent = "✓ Reset to default.";
-                    directiveFeedback.style.color = "#10b981";
-                } catch (err) {
-                    directiveFeedback.textContent = "Network error.";
-                }
-            });
-        }
-
-        // Notion Integration management
-        async function checkNotionStatus() {
-            const badge = document.getElementById("notion-status-badge");
-            const connectedView = document.getElementById("notion-connected-view");
-            const connectView = document.getElementById("notion-connect-view");
-
-            try {
-                const res = await fetch("/api/notion/status");
-                const data = await res.json();
-                if (data.configured) {
-                    badge.textContent = "✓ Connected";
-                    badge.style.background = "rgba(16, 185, 129, 0.15)";
-                    badge.style.color = "#34d399";
-                    connectedView.style.display = "block";
-                    connectView.style.display = "none";
-                } else {
-                    badge.textContent = "Not Connected";
-                    badge.style.background = "rgba(255, 255, 255, 0.08)";
-                    badge.style.color = "var(--text-muted)";
-                    connectedView.style.display = "none";
-                    connectView.style.display = "block";
-                }
-            } catch (err) {
-                badge.textContent = "Offline";
-                connectView.style.display = "block";
-            }
-        }
-
-        async function connectNotion() {
-            const input = document.getElementById("notion-token-input");
-            const feedback = document.getElementById("notion-connect-feedback");
-            const btn = document.getElementById("notion-connect-btn");
-            const token = input.value.trim();
-
-            if (!token) {
-                feedback.textContent = "Please enter your Notion secret token.";
-                feedback.style.color = "var(--error-text)";
-                return;
-            }
-
-            btn.disabled = true;
-            feedback.textContent = "Connecting to Notion...";
-            feedback.style.color = "var(--primary)";
-
-            try {
-                const res = await fetch("/api/notion/connect", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ token: token })
-                });
-                const data = await res.json();
-                if (data.success) {
-                    feedback.textContent = "✓ Connected successfully!";
-                    feedback.style.color = "#10b981";
-                    input.value = "";
-                    setTimeout(checkNotionStatus, 800);
-                } else {
-                    feedback.textContent = data.error || "Failed to connect to Notion.";
-                    feedback.style.color = "var(--error-text)";
-                }
-            } catch (err) {
-                feedback.textContent = "Network error connecting to Notion.";
-                feedback.style.color = "var(--error-text)";
-            } finally {
-                btn.disabled = false;
-            }
-        }
-
-        async function disconnectNotion() {
-            if (!confirm("Are you sure you want to disconnect your Notion integration?")) return;
-            try {
-                await fetch("/api/notion/disconnect", { method: "POST" });
-                checkNotionStatus();
-            } catch (err) {
-                alert("Failed to disconnect Notion.");
-            }
-        }
-
-        async function loadVectorStats() {
-            try {
-                const res = await fetch("/api/search/stats");
-                const data = await res.json();
-                const display = document.getElementById("indexed-count-display");
-                if (display) {
-                    display.textContent = `${data.indexed_count || 0} summaries indexed (${data.model || '@cf/baai/bge-base-en-v1.5'})`;
-                }
-            } catch (err) {
-                console.warn("Could not load vector stats", err);
             }
         }
 
@@ -957,20 +636,11 @@
             document.getElementById("theme-light-card").classList.toggle("selected", theme === "light");
         }
 
-        function setDefaultMode(mode) {
-            localStorage.setItem("webbrief_default_mode", mode);
-            document.querySelectorAll("#mode-pref-grid .pref-card").forEach(el => {
-                el.classList.toggle("selected", el.dataset.mode === mode);
-            });
-        }
-
         document.addEventListener("DOMContentLoaded", () => {
             checkNotionStatus();
             loadVectorStats();
             const currentTheme = localStorage.getItem("webbrief_theme") || "dark";
             setTheme(currentTheme);
-            const currentMode = localStorage.getItem("webbrief_default_mode") || "quick";
-            setDefaultMode(currentMode);
         });
     </script>
 </body>

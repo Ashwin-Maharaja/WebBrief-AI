@@ -27,13 +27,13 @@ class BaseProvider(ABC):
     @property
     @abstractmethod
     def provider_id(self) -> str:
-        """Machine identifier (e.g. 'cloudflare' or 'groq')."""
+        """Machine identifier (e.g. 'gemini')."""
         pass
 
     @property
     @abstractmethod
     def provider_name(self) -> str:
-        """Human-readable display name (e.g. 'Cloudflare Workers AI')."""
+        """Human-readable display name (e.g. 'Google Gemini')."""
         pass
 
     @property

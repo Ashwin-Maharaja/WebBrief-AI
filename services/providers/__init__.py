@@ -1,5 +1,5 @@
 """
-WebBrief AI Multi-Provider AI Architecture Package (v1.6.0).
+WebBrief AI — Google Gemini Provider Package.
 """
 
 from .exceptions import (
@@ -13,9 +13,8 @@ from .exceptions import (
     ProviderTimeoutError,
 )
 from .base import BaseProvider
-from .cloudflare import CloudflareProvider
-from .groq import GroqProvider
-from .router import AIRouter
+from .gemini import GeminiProvider
+from .router import AIRouter, RouterResult
 from .catalogue import PROVIDER_CATALOGUE, get_models_for_provider, get_default_model
 
 __all__ = [
@@ -28,9 +27,9 @@ __all__ = [
     "ProviderUnavailableError",
     "ProviderTimeoutError",
     "BaseProvider",
-    "CloudflareProvider",
-    "GroqProvider",
+    "GeminiProvider",
     "AIRouter",
+    "RouterResult",
     "PROVIDER_CATALOGUE",
     "get_models_for_provider",
     "get_default_model",

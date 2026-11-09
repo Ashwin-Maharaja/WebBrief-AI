@@ -109,26 +109,21 @@
                     </span>
                 </div>
 
-                <div class="hosted-key-row">
-                    <select id="hosted-provider-select" class="form-control" onchange="onHostedProviderChange()">
-                        <option value="cloudflare">⚡ Cloudflare AI</option>
-                        <option value="groq">🚀 GroqCloud</option>
-                    </select>
-                    <select id="hosted-model-select" class="form-control" onchange="onHostedModelChange()" title="Active AI Model">
-                        {% if provider_catalogue and provider_catalogue.cloudflare %}
-                            {% for m in provider_catalogue.cloudflare.models %}
-                                <option value="{{ m.id }}" {% if m.recommended %}selected{% endif %}>{{ m.name }}</option>
-                            {% endfor %}
-                        {% else %}
-                            <option value="@cf/meta/llama-3.1-8b-instruct" selected>Llama 3.1 8B Instruct (Recommended)</option>
-                        {% endif %}
-                    </select>
-                    <div id="hosted-cf-inputs">
-                        <input type="text" id="hosted-cf-id" class="form-control" placeholder="Account ID">
-                        <input type="password" id="hosted-cf-token" class="form-control" placeholder="API Token">
+                <div class="hosted-key-row" style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <input type="hidden" id="hosted-provider-select" value="gemini">
+                    <div style="min-width: 200px; flex: 1;">
+                        <select id="hosted-model-select" class="form-control" onchange="onHostedModelChange()" title="Active Google Gemini Model">
+                            {% if provider_catalogue and provider_catalogue.gemini %}
+                                {% for m in provider_catalogue.gemini.models %}
+                                    <option value="{{ m.id }}" {% if m.recommended %}selected{% endif %}>{{ m.name }}</option>
+                                {% endfor %}
+                            {% else %}
+                                <option value="gemini-3.8-flash" selected>Gemini 3.8 Flash (Recommended)</option>
+                            {% endif %}
+                        </select>
                     </div>
-                    <div id="hosted-groq-inputs" style="display: none;">
-                        <input type="password" id="hosted-api-key-input" class="form-control" placeholder="Groq API Key (gsk_...)">
+                    <div style="min-width: 260px; flex: 2;">
+                        <input type="password" id="hosted-gemini-key" class="form-control" placeholder="Google Gemini API Key (AIza...)">
                     </div>
                     <button type="button" class="btn btn-secondary" id="hosted-verify-btn" onclick="verifyHostedKey()">
                         Verify & Use
@@ -140,11 +135,8 @@
                 <div id="hosted-key-alert" style="display: none; font-size: 12px; margin-top: 6px; font-weight: 600;"></div>
                 <div style="margin-top: 8px; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 6px; font-size: 12px;">
                     <div style="display: flex; gap: 12px;">
-                        <a href="https://dash.cloudflare.com/profile/api-tokens" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; font-weight: 600;">
-                            ⚡ Get Cloudflare Token ↗
-                        </a>
-                        <a href="https://console.groq.com/keys" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; font-weight: 600;">
-                            🚀 Get Groq API Key ↗
+                        <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none; font-weight: 600;">
+                            🔑 Get Gemini API Key ↗
                         </a>
                     </div>
                     <span style="color: var(--text-muted); font-size: 11.5px;">Free tier compatible</span>
@@ -320,63 +312,7 @@
                     </div>
                 </div>
 
-                <!-- Failover / Fallback Model Container (Between BYOK & Summarizer Mode) -->
-                <div class="card fallback-config-container" id="fallback-config-container" style="margin-bottom: 24px; padding: 14px 18px; border: 1.5px solid var(--border-color); background: var(--bg-card); border-radius: 10px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
-                        <div style="display: flex; align-items: center; gap: 8px;">
-                            <span style="font-size: 15px;">🔄</span>
-                            <span style="font-weight: 600; font-size: 13.5px; color: var(--text-color);">Failover / Fallback Model</span>
-                            <span class="badge" style="background: rgba(14, 165, 233, 0.15); color: #38bdf8; font-size: 11px;">Automatic Routing</span>
-                        </div>
-                        <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 500; margin-bottom: 0;">
-                            <input type="checkbox" id="enable-fallback-toggle" onchange="toggleFallbackConfig()">
-                            <span>Enable Fallback Model</span>
-                        </label>
-                    </div>
 
-                    <div id="fallback-controls-row" style="display: none; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border-color);">
-                        <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px; line-height: 1.45;">
-                            If your primary model encounters rate limits (429), quota exhaustion, or service outages (5xx), WebBrief AI will automatically route the request to this secondary model seamlessly.
-                        </p>
-                        <div class="fallback-inputs-grid">
-                            <div style="flex: 1; min-width: 140px;">
-                                <label for="fallback-provider-select" class="form-label" style="font-size: 11.5px; margin-bottom: 4px;">Fallback Provider</label>
-                                <select id="fallback-provider-select" class="form-control" style="font-size: 13px; width: 100%;" onchange="onFallbackProviderChange()">
-                                    <option value="groq">🚀 GroqCloud</option>
-                                    <option value="cloudflare">⚡ Cloudflare AI</option>
-                                </select>
-                            </div>
-                            <div style="flex: 1.5; min-width: 180px;">
-                                <label for="fallback-model-select" class="form-label" style="font-size: 11.5px; margin-bottom: 4px;">Fallback Model</label>
-                                <select id="fallback-model-select" class="form-control" style="font-size: 13px; width: 100%;" onchange="onFallbackModelChange()">
-                                    {% if provider_catalogue and provider_catalogue.groq %}
-                                        {% for m in provider_catalogue.groq.models %}
-                                            <option value="{{ m.id }}" {% if m.recommended %}selected{% endif %}>{{ m.name }}</option>
-                                        {% endfor %}
-                                    {% else %}
-                                        <option value="llama-3.1-8b-instant" selected>Llama 3.1 8B Instant (Recommended)</option>
-                                    {% endif %}
-                                </select>
-                            </div>
-                            {% if is_hosted_mode %}
-                            <div id="fallback-groq-inputs" style="flex: 2; min-width: 180px; display: block;">
-                                <label for="fallback-groq-key" class="form-label" style="font-size: 11.5px; margin-bottom: 4px;">Fallback Groq API Key</label>
-                                <input type="password" id="fallback-groq-key" class="form-control" placeholder="gsk_..." style="font-size: 12px; width: 100%;" onchange="onFallbackCredentialsChange()">
-                            </div>
-                            <div id="fallback-cf-inputs" style="flex: 2; min-width: 220px; display: none; gap: 6px;">
-                                <div style="flex: 1;">
-                                    <label for="fallback-cf-id" class="form-label" style="font-size: 11.5px; margin-bottom: 4px;">Fallback CF Account ID</label>
-                                    <input type="text" id="fallback-cf-id" class="form-control" placeholder="Account ID" style="font-size: 12px; width: 100%;" onchange="onFallbackCredentialsChange()">
-                                </div>
-                                <div style="flex: 1;">
-                                    <label for="fallback-cf-token" class="form-label" style="font-size: 11.5px; margin-bottom: 4px;">Fallback CF Token</label>
-                                    <input type="password" id="fallback-cf-token" class="form-control" placeholder="API Token" style="font-size: 12px; width: 100%;" onchange="onFallbackCredentialsChange()">
-                                </div>
-                            </div>
-                            {% endif %}
-                        </div>
-                    </div>
-                </div>
 
                 <!-- Summarization Mode Selector -->
                 <div class="form-group">
@@ -446,7 +382,7 @@
                             id="api-key-input"
                             name="api_key"
                             class="form-control"
-                            placeholder="Groq key (gsk_...) or Cloudflare token"
+                            placeholder="Google Gemini API Key (AIza...)"
                             autocomplete="off"
                             spellcheck="false"
                         >
@@ -579,10 +515,7 @@
                         </span>
                         <span id="analysis-type-badge" class="badge">Structured Brief</span>
                         <span id="result-provider-badge" class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3);">
-                            Provider: <span id="summary-provider-name">{{ summary.provider_name if summary and summary.provider_name else 'Cloudflare Workers AI' }}</span> (<span id="summary-model-name">{{ summary.model if summary and summary.model else '@cf/meta/llama-3.1-8b-instruct' }}</span>)
-                        </span>
-                        <span id="result-fallback-badge" class="badge" style="background: rgba(245, 158, 11, 0.15); color: #fbbf24; border: 1px solid rgba(245, 158, 11, 0.3); display: {% if summary and summary.switched_to_fallback %}inline-flex{% else %}none{% endif %};">
-                            ⚠️ Switched to Fallback
+                            Provider: <span id="summary-provider-name">{{ summary.provider_name if summary and summary.provider_name else 'Google Gemini' }}</span> (<span id="summary-model-name">{{ summary.model if summary and summary.model else 'gemini-3.8-flash' }}</span>)
                         </span>
                     </div>
 
@@ -726,7 +659,7 @@
                             Dual Source Synthesis
                         </span>
                         <span id="compare-provider-badge" class="badge" style="background: rgba(99, 102, 241, 0.15); color: #818cf8; border: 1px solid rgba(99, 102, 241, 0.3);">
-                            Provider: <span id="compare-provider-name">Cloudflare Workers AI</span> (<span id="compare-model-name">@cf/meta/llama-3.1-8b-instruct</span>)
+                            Provider: <span id="compare-provider-name">Google Gemini</span> (<span id="compare-model-name">gemini-3.8-flash</span>)
                         </span>
                     </div>
                 </div>
@@ -1044,205 +977,82 @@
             });
         };
 
-        window.updateFallbackModelOptions = function(fbProvider, selectedModel) {
-            const modelSel = document.getElementById("fallback-model-select");
-            if (!modelSel || !window.__WEBBRIEF_CATALOGUE) return;
-            const provData = window.__WEBBRIEF_CATALOGUE[fbProvider];
-            if (!provData || !provData.models) return;
-            const curVal = selectedModel || modelSel.value;
-            modelSel.innerHTML = "";
-            provData.models.forEach(m => {
-                const opt = document.createElement("option");
-                opt.value = m.id;
-                opt.textContent = m.name;
-                if (curVal ? m.id === curVal : m.recommended) {
-                    opt.selected = true;
-                }
-                modelSel.appendChild(opt);
-            });
-        };
+        window.updateFallbackModelOptions = function() {};
+        window.toggleFallbackConfig = function() {};
+        window.onFallbackProviderChange = function() {};
+        window.onFallbackModelChange = function() {};
+        window.onFallbackCredentialsChange = function() {};
 
         window.onHostedModelChange = function() {
-            const provSel = document.getElementById("hosted-provider-select");
             const modelSel = document.getElementById("hosted-model-select");
-            if (!provSel || !modelSel) return;
-            const p = provSel.value;
+            if (!modelSel) return;
             if (window.StorageAdapter) {
-                if (p === "cloudflare") {
-                    StorageAdapter.setProviderConfig({ cloudflare_model: modelSel.value });
-                } else {
-                    StorageAdapter.setProviderConfig({ groq_model: modelSel.value });
-                }
-            }
-        };
-
-        window.toggleFallbackConfig = function() {
-            const toggle = document.getElementById("enable-fallback-toggle");
-            const row = document.getElementById("fallback-controls-row");
-            if (row) row.style.display = toggle && toggle.checked ? "block" : "none";
-            if (window.StorageAdapter && toggle) {
-                StorageAdapter.setProviderConfig({ fallback_enabled: toggle.checked });
-            }
-        };
-
-        window.onFallbackProviderChange = function() {
-            const primarySel = document.getElementById("hosted-provider-select");
-            const fbSel = document.getElementById("fallback-provider-select");
-            if (!fbSel) return;
-            if (primarySel && fbSel.value === primarySel.value) {
-                fbSel.value = primarySel.value === "cloudflare" ? "groq" : "cloudflare";
-            }
-            const fbVal = fbSel.value;
-            window.updateFallbackModelOptions(fbVal);
-            const groqCreds = document.getElementById("fallback-groq-inputs");
-            const cfCreds = document.getElementById("fallback-cf-inputs");
-            if (groqCreds && cfCreds) {
-                if (fbVal === "groq") {
-                    groqCreds.style.display = "block";
-                    cfCreds.style.display = "none";
-                } else {
-                    groqCreds.style.display = "none";
-                    cfCreds.style.display = "flex";
-                }
-            }
-            if (window.StorageAdapter) {
-                const modelSel = document.getElementById("fallback-model-select");
                 StorageAdapter.setProviderConfig({
-                    fallback_provider: fbVal,
-                    fallback_model: modelSel ? modelSel.value : null
+                    primary_provider: "gemini",
+                    gemini_model: modelSel.value
                 });
             }
         };
 
-        window.onFallbackModelChange = function() {
-            const modelSel = document.getElementById("fallback-model-select");
-            if (window.StorageAdapter && modelSel) {
-                StorageAdapter.setProviderConfig({ fallback_model: modelSel.value });
-            }
-        };
-
-        window.onFallbackCredentialsChange = function() {
-            if (!window.StorageAdapter) return;
-            const groqKey = document.getElementById("fallback-groq-key")?.value.trim() || "";
-            const cfId = document.getElementById("fallback-cf-id")?.value.trim() || "";
-            const cfToken = document.getElementById("fallback-cf-token")?.value.trim() || "";
-            StorageAdapter.setProviderConfig({
-                fallback_groq_api_key: groqKey,
-                fallback_cloudflare_account_id: cfId,
-                fallback_cloudflare_api_token: cfToken
-            });
-        };
-
         window.getFullProviderConfigPayload = function() {
             const baseConfig = (window.StorageAdapter ? window.StorageAdapter.getProviderConfig() : {}) || {};
-            const provSel = document.getElementById("hosted-provider-select");
             const modelSel = document.getElementById("hosted-model-select");
-            const fbToggle = document.getElementById("enable-fallback-toggle");
-            const fbProvSel = document.getElementById("fallback-provider-select");
-            const fbModelSel = document.getElementById("fallback-model-select");
+            const geminiKeyInput = document.getElementById("hosted-gemini-key") || document.getElementById("hosted-api-key-input");
+            const overrideInput = document.getElementById("api-key-input");
 
-            const primaryProvider = provSel ? provSel.value : (baseConfig.primary_provider || "cloudflare");
-            const primaryModel = modelSel ? modelSel.value : (primaryProvider === "cloudflare" ? baseConfig.cloudflare_model : baseConfig.groq_model);
-            const fallbackEnabled = fbToggle ? fbToggle.checked : Boolean(baseConfig.fallback_enabled);
-            const fallbackProvider = fbProvSel ? fbProvSel.value : (baseConfig.fallback_provider || (primaryProvider === "cloudflare" ? "groq" : "cloudflare"));
-            const fallbackModel = fbModelSel ? fbModelSel.value : baseConfig.fallback_model;
+            const key = (geminiKeyInput && geminiKeyInput.value.trim()) ||
+                        (overrideInput && overrideInput.value.trim()) ||
+                        baseConfig.gemini_api_key || "";
+            const model = (modelSel && modelSel.value.trim()) || baseConfig.gemini_model || "gemini-3.8-flash";
 
-            const payload = Object.assign({}, baseConfig, {
-                primary_provider: primaryProvider,
-                fallback_enabled: fallbackEnabled,
-                fallback_provider: fallbackProvider,
-                fallback_model: fallbackModel
+            return Object.assign({}, baseConfig, {
+                primary_provider: "gemini",
+                gemini_api_key: key,
+                gemini_model: model,
+                primary_model: model
             });
-
-            if (primaryProvider === "cloudflare") {
-                payload.cloudflare_model = primaryModel;
-            } else {
-                payload.groq_model = primaryModel;
-            }
-
-            const fbGroqKey = document.getElementById("fallback-groq-key")?.value.trim();
-            const fbCfId = document.getElementById("fallback-cf-id")?.value.trim();
-            const fbCfToken = document.getElementById("fallback-cf-token")?.value.trim();
-            if (fbGroqKey) payload.fallback_groq_api_key = fbGroqKey;
-            if (fbCfId) payload.fallback_cloudflare_account_id = fbCfId;
-            if (fbCfToken) payload.fallback_cloudflare_api_token = fbCfToken;
-
-            return payload;
         };
 
         window.onHostedProviderChange = function() {
-            const sel = document.getElementById("hosted-provider-select");
-            const cfInputs = document.getElementById("hosted-cf-inputs");
-            const groqInputs = document.getElementById("hosted-groq-inputs");
-            if (!sel) return;
-            if (sel.value === "cloudflare") {
-                if (cfInputs) cfInputs.style.display = "flex";
-                if (groqInputs) groqInputs.style.display = "none";
-            } else {
-                if (cfInputs) cfInputs.style.display = "none";
-                if (groqInputs) groqInputs.style.display = "flex";
-            }
-            window.updateHostedModelOptions(sel.value);
-            // Keep fallback provider distinct from primary
-            const fbSel = document.getElementById("fallback-provider-select");
-            if (fbSel && fbSel.value === sel.value) {
-                fbSel.value = sel.value === "cloudflare" ? "groq" : "cloudflare";
-                window.onFallbackProviderChange();
-            }
             if (window.StorageAdapter) {
                 const modelSel = document.getElementById("hosted-model-select");
-                const update = { primary_provider: sel.value };
-                if (sel.value === "cloudflare") update.cloudflare_model = modelSel?.value;
-                else update.groq_model = modelSel?.value;
-                StorageAdapter.setProviderConfig(update);
+                StorageAdapter.setProviderConfig({
+                    primary_provider: "gemini",
+                    gemini_model: modelSel?.value || "gemini-3.8-flash"
+                });
             }
         };
 
         window.verifyHostedKey = async function() {
-            const providerSel = document.getElementById("hosted-provider-select");
-            const provider = providerSel ? providerSel.value : "cloudflare";
             const alertBox = document.getElementById("hosted-key-alert");
             const clearBtn = document.getElementById("hosted-clear-btn");
             const statusLabel = document.getElementById("hosted-status-label");
             const modelSel = document.getElementById("hosted-model-select");
-            const activeModel = modelSel ? modelSel.value : null;
+            const activeModel = modelSel ? modelSel.value : "gemini-3.8-flash";
+            const keyInput = document.getElementById("hosted-gemini-key") || document.getElementById("hosted-api-key-input");
+            const geminiKey = keyInput?.value.trim() || "";
 
-            let payload = { provider: provider };
-            if (provider === "cloudflare") {
-                const cfId = document.getElementById("hosted-cf-id")?.value.trim() || "";
-                const cfToken = document.getElementById("hosted-cf-token")?.value.trim() || "";
-                if (!cfId || !cfToken) {
-                    if (alertBox) {
-                        alertBox.style.display = "block";
-                        alertBox.style.color = "var(--error-text)";
-                        alertBox.textContent = "Please enter both Cloudflare Account ID and API Token.";
-                    }
-                    return;
+            if (!geminiKey) {
+                if (alertBox) {
+                    alertBox.style.display = "block";
+                    alertBox.style.color = "var(--error-text)";
+                    alertBox.textContent = "Please enter your Google Gemini API key.";
                 }
-                payload.cloudflare_account_id = cfId;
-                payload.cloudflare_api_token = cfToken;
-                payload.cloudflare_model = activeModel;
-            } else {
-                const groqKey = document.getElementById("hosted-api-key-input")?.value.trim() || "";
-                if (!groqKey) {
-                    if (alertBox) {
-                        alertBox.style.display = "block";
-                        alertBox.style.color = "var(--error-text)";
-                        alertBox.textContent = "Please enter your Groq API key.";
-                    }
-                    return;
-                }
-                payload.groq_api_key = groqKey;
-                payload.groq_model = activeModel;
+                return;
             }
 
             if (alertBox) {
                 alertBox.style.display = "block";
                 alertBox.style.color = "var(--primary)";
-                alertBox.textContent = "Verifying credentials with provider...";
+                alertBox.textContent = "Verifying credentials with Google Gemini API...";
             }
 
             try {
+                const payload = {
+                    provider: "gemini",
+                    gemini_api_key: geminiKey,
+                    gemini_model: activeModel
+                };
                 const res = await fetch("/api/validate-key", {
                     method: "POST",
                     headers: { "Content-Type": "application/json" },
@@ -1254,30 +1064,21 @@
                         const stored = await fetch("/api/credentials", {
                             method: "POST",
                             headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify(Object.assign({ primary_provider: provider, primary_model: activeModel }, payload))
+                            body: JSON.stringify({
+                                primary_provider: "gemini",
+                                gemini_api_key: geminiKey,
+                                gemini_model: activeModel,
+                                primary_model: activeModel
+                            })
                         });
                         if (!stored.ok) throw new Error("Could not save temporary credentials");
+                        if (keyInput) keyInput.value = "";
                     }
-                    if (window.__WEBBRIEF_VAULT_ENABLED) {
-                        const tokenInput = document.getElementById("hosted-cf-token");
-                        const groqInput = document.getElementById("hosted-api-key-input");
-                        if (tokenInput) tokenInput.value = "";
-                        if (groqInput) groqInput.value = "";
-                    }
-                    if (provider === "cloudflare") {
-                        StorageAdapter.setProviderConfig({
-                            primary_provider: "cloudflare",
-                            cloudflare_account_id: payload.cloudflare_account_id,
-                            cloudflare_api_token: payload.cloudflare_api_token,
-                            cloudflare_model: activeModel
-                        });
-                    } else {
-                        StorageAdapter.setProviderConfig({
-                            primary_provider: "groq",
-                            groq_api_key: payload.groq_api_key,
-                            groq_model: activeModel
-                        });
-                    }
+                    StorageAdapter.setProviderConfig({
+                        primary_provider: "gemini",
+                        gemini_api_key: geminiKey,
+                        gemini_model: activeModel
+                    });
                     if (alertBox) {
                         alertBox.style.color = "#10b981";
                         alertBox.textContent = window.__WEBBRIEF_VAULT_ENABLED
@@ -1295,7 +1096,7 @@
                     StorageAdapter.clearCredentials();
                     if (alertBox) {
                         alertBox.style.color = "var(--error-text)";
-                        alertBox.textContent = data.message || "Invalid credentials.";
+                        alertBox.textContent = data.message || "Invalid Google Gemini API key.";
                     }
                 }
             } catch (err) {
@@ -1313,18 +1114,8 @@
             if (window.StorageAdapter) {
                 StorageAdapter.clearCredentials();
             }
-            const cfId = document.getElementById("hosted-cf-id");
-            const cfToken = document.getElementById("hosted-cf-token");
-            const groqKey = document.getElementById("hosted-api-key-input");
-            const fbGroqKey = document.getElementById("fallback-groq-key");
-            const fbCfId = document.getElementById("fallback-cf-id");
-            const fbCfToken = document.getElementById("fallback-cf-token");
-            if (cfId) cfId.value = "";
-            if (cfToken) cfToken.value = "";
-            if (groqKey) groqKey.value = "";
-            if (fbGroqKey) fbGroqKey.value = "";
-            if (fbCfId) fbCfId.value = "";
-            if (fbCfToken) fbCfToken.value = "";
+            const keyInput = document.getElementById("hosted-gemini-key") || document.getElementById("hosted-api-key-input");
+            if (keyInput) keyInput.value = "";
             const clearBtn = document.getElementById("hosted-clear-btn");
             if (clearBtn) clearBtn.style.display = "none";
             const alertBox = document.getElementById("hosted-key-alert");
@@ -1339,40 +1130,9 @@
 
         window.initHostedModelAndFallback = function() {
             const cfg = (window.StorageAdapter ? window.StorageAdapter.getProviderConfig() : {}) || {};
-            const provSel = document.getElementById("hosted-provider-select");
             const modelSel = document.getElementById("hosted-model-select");
-            const fbToggle = document.getElementById("enable-fallback-toggle");
-            const fbProvSel = document.getElementById("fallback-provider-select");
-            const fbModelSel = document.getElementById("fallback-model-select");
-
-            if (provSel) {
-                if (cfg.primary_provider) {
-                    provSel.value = cfg.primary_provider;
-                }
-                const selectedModel = cfg.primary_provider === "groq" ? cfg.groq_model : cfg.cloudflare_model;
-                window.updateHostedModelOptions(provSel.value, selectedModel);
-                window.onHostedProviderChange();
-            }
-
-            if (fbToggle) {
-                fbToggle.checked = Boolean(cfg.fallback_enabled);
-                window.toggleFallbackConfig();
-            }
-            if (fbProvSel) {
-                const desiredFb = cfg.fallback_provider || (provSel && provSel.value === "cloudflare" ? "groq" : "cloudflare");
-                fbProvSel.value = desiredFb;
-                window.updateFallbackModelOptions(desiredFb, cfg.fallback_model);
-                const groqCreds = document.getElementById("fallback-groq-inputs");
-                const cfCreds = document.getElementById("fallback-cf-inputs");
-                if (groqCreds && cfCreds) {
-                    if (desiredFb === "groq") {
-                        groqCreds.style.display = "block";
-                        cfCreds.style.display = "none";
-                    } else {
-                        groqCreds.style.display = "none";
-                        cfCreds.style.display = "flex";
-                    }
-                }
+            if (modelSel && cfg.gemini_model) {
+                modelSel.value = cfg.gemini_model;
             }
         };
 
@@ -1553,11 +1313,6 @@
                     if (modeSelector) modeSelector.style.display = "none";
                     if (btnText) btnText.textContent = "🔍 Search Knowledge Base";
                     document.getElementById("semantic-query-input")?.focus();
-                }
-
-                const fbContainer = document.getElementById("fallback-config-container");
-                if (fbContainer) {
-                    fbContainer.style.display = (tab === 'search') ? "none" : "block";
                 }
             };
 
@@ -2084,17 +1839,10 @@
                 const provBadge = document.getElementById("result-provider-badge");
                 const provNameSpan = document.getElementById("summary-provider-name");
                 const modelNameSpan = document.getElementById("summary-model-name");
-                const fallbackBadge = document.getElementById("result-fallback-badge");
                 if (provBadge && (data.provider_name || data.provider)) {
                     if (provNameSpan) provNameSpan.textContent = data.provider_name || data.provider;
                     if (modelNameSpan) modelNameSpan.textContent = data.model || "";
                     provBadge.style.display = "inline-flex";
-                }
-                if (fallbackBadge) {
-                    fallbackBadge.style.display = data.switched_to_fallback ? "inline-flex" : "none";
-                    if (data.switched_to_fallback && data.fallback_reason) {
-                        fallbackBadge.title = `Primary unavailable (${data.fallback_reason}). Switched to fallback.`;
-                    }
                 }
 
                 // Overview

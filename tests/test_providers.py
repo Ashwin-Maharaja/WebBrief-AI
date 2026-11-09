@@ -1,6 +1,7 @@
 """
-WebBrief AI — v1.6.0 Multi-Provider & Automatic Fallback Routing Test Suite.
-Validates all 20 test specifications from Phase 10 with mocked HTTP interactions.
+WebBrief AI — Google Gemini API Migration Test Suite.
+Validates GeminiProvider, AIRouter, BYOK validation, structured summarization,
+batch processing, comparative analysis, and vector embeddings using mocked genai.Client.
 """
 
 import os
@@ -12,13 +13,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import unittest
 from unittest.mock import patch, MagicMock
 import json
-import requests
 
 # Set test environment
 os.environ["FLASK_ENV"] = "development"
 
-from services.providers.cloudflare import CloudflareProvider
-from services.providers.groq import GroqProvider
+from services.providers.gemini import GeminiProvider
 from services.providers.router import AIRouter, RouterResult
 from services.providers.exceptions import (
     ProviderError,
@@ -30,468 +29,404 @@ from services.providers.exceptions import (
     ProviderUnavailableError,
     ProviderTimeoutError,
 )
-from services.providers.catalogue import PROVIDER_CATALOGUE, get_models_for_provider
+from services.providers.catalogue import (
+    PROVIDER_CATALOGUE,
+    get_models_for_provider,
+    get_default_model,
+)
 from summarizer import summarize_text, parse_and_validate_summary
 from comparative_analyzer import compare_articles
 from batch_processor import execute_batch
 from byok import (
-    validate_cloudflare_credentials,
-    validate_groq_credentials,
+    validate_gemini_credentials,
     get_active_provider_config,
     has_valid_config,
     redact_credentials,
-    is_serverless_env,
+    save_provider_config_to_env,
+    clear_saved_provider_config,
 )
+from vector_store import generate_embedding
 from app import app
 
 
-class TestV160MultiProvider(unittest.TestCase):
+class TestGeminiProvider(unittest.TestCase):
 
     def setUp(self):
         self.app = app
         self.app.config["TESTING"] = True
         self.client = self.app.test_client()
-        self.dns_patcher = patch("socket.getaddrinfo", return_value=[(2, 1, 6, "", ("93.184.216.34", 0))])
-        self.dns_patcher.start()
-
-    def tearDown(self):
-        self.dns_patcher.stop()
 
     # -------------------------------------------------------------
-    # 1. Cloudflare Successful Request
+    # 1. Gemini Successful Completion Request
     # -------------------------------------------------------------
-    @patch("requests.post")
-    def test_01_cloudflare_successful_request(self, mock_post):
+    @patch("services.providers.gemini.genai.Client")
+    def test_01_gemini_successful_completion(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
         mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "success": True,
-            "result": {"response": "This is a concise Cloudflare Workers AI summary."},
-            "errors": [],
-            "messages": []
-        }
-        mock_post.return_value = mock_resp
+        mock_resp.text = json.dumps({"title": "Test Title", "overview": "Test Overview"})
+        mock_client.models.generate_content.return_value = mock_resp
 
-        provider = CloudflareProvider(account_id="dummy_cf_account", api_token="dummy_cf_token")
-        res = provider.generate_completion(messages=[{"role": "user", "content": "Summarize this"}])
+        provider = GeminiProvider(api_key="AIzaSyTestKey12345678901234567890")
+        res = provider.generate_completion(messages=[{"role": "user", "content": "Summarize"}])
 
-        self.assertEqual(res, "This is a concise Cloudflare Workers AI summary.")
-        self.assertTrue(mock_post.called)
-        call_url = mock_post.call_args[0][0]
-        self.assertIn("api.cloudflare.com/client/v4/accounts/dummy_cf_account/ai/run", call_url)
+        self.assertIn("Test Overview", res)
+        self.assertTrue(mock_client.models.generate_content.called)
 
     # -------------------------------------------------------------
-    # 2. Groq Successful Request
+    # 2. Gemini Zero-Token Verification
     # -------------------------------------------------------------
-    @patch("requests.post")
-    def test_02_groq_successful_request(self, mock_post):
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.json.return_value = {
-            "choices": [{"message": {"content": "This is a blazing fast GroqCloud summary."}}]
-        }
-        mock_post.return_value = mock_resp
+    @patch("services.providers.gemini.genai.Client")
+    def test_02_gemini_verify_credentials_success(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.get.return_value = MagicMock(name="gemini-3.8-flash")
 
-        provider = GroqProvider(api_key="gsk_dummy_groq_test_key_123456789")
-        res = provider.generate_completion(messages=[{"role": "user", "content": "Summarize this"}])
+        provider = GeminiProvider(api_key="AIzaSyTestKey12345678901234567890")
+        valid, msg = provider.test_connection()
 
-        self.assertEqual(res, "This is a blazing fast GroqCloud summary.")
-        self.assertTrue(mock_post.called)
-        call_url = mock_post.call_args[0][0]
-        self.assertEqual(call_url, "https://api.groq.com/openai/v1/chat/completions")
+        self.assertTrue(valid)
+        self.assertIn("verified", msg.lower())
+        mock_client.models.get.assert_called_with(model="gemini-3.8-flash")
 
     # -------------------------------------------------------------
-    # 3. Primary Provider Success
+    # 3. Gemini Authentication Failure
     # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    def test_03_primary_provider_success(self, mock_cf):
-        mock_cf.return_value = "Primary success output."
+    @patch("services.providers.gemini.genai.Client")
+    def test_03_gemini_auth_error(self, mock_client_cls):
+        from google.genai import errors
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        api_err = errors.APIError(401, {"error": {"message": "API_KEY_INVALID"}}, None)
+        mock_client.models.generate_content.side_effect = api_err
 
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        res = router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertEqual(res.content, "Primary success output.")
-        self.assertEqual(res.provider_id, "cloudflare")
-        self.assertFalse(res.switched_to_fallback)
-
-    # -------------------------------------------------------------
-    # 4. Primary 429 Followed by Fallback Success
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_04_primary_429_followed_by_fallback_success(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderRateLimitError("Rate limit reached (429)", provider="cloudflare")
-        mock_groq.return_value = "Fallback Groq recovered output."
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        res = router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertEqual(res.content, "Fallback Groq recovered output.")
-        self.assertEqual(res.provider_id, "groq")
-        self.assertTrue(res.switched_to_fallback)
-        self.assertIn("Rate limit reached", res.fallback_reason)
-
-    # -------------------------------------------------------------
-    # 5. Primary Quota Exhaustion Followed by Fallback Success
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_05_primary_quota_exhaustion_followed_by_fallback_success(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderQuotaError("Neuron daily quota exhausted", provider="cloudflare")
-        mock_groq.return_value = "Recovered via Groq after Cloudflare quota exhaustion."
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        res = router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertEqual(res.content, "Recovered via Groq after Cloudflare quota exhaustion.")
-        self.assertEqual(res.provider_id, "groq")
-        self.assertTrue(res.switched_to_fallback)
-
-    # -------------------------------------------------------------
-    # 6. Primary 503 Followed by Fallback Success
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_06_primary_503_followed_by_fallback_success(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderUnavailableError("Cloudflare service outage (HTTP 503)", provider="cloudflare")
-        mock_groq.return_value = "Recovered via Groq after 503."
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        res = router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertEqual(res.content, "Recovered via Groq after 503.")
-        self.assertTrue(res.switched_to_fallback)
-
-    # -------------------------------------------------------------
-    # 7. Invalid Primary Key Without Automatic Fallback
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_07_invalid_primary_key_without_automatic_fallback(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderAuthError("Invalid API token (401)", provider="cloudflare")
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        # Authentication errors MUST NOT automatically fall back
+        provider = GeminiProvider(api_key="AIzaSyBadKey12345")
         with self.assertRaises(ProviderAuthError):
-            router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        # Verify fallback was NEVER called
-        self.assertFalse(mock_groq.called)
+            provider.generate_completion(messages=[{"role": "user", "content": "Hello"}])
 
     # -------------------------------------------------------------
-    # 8. Invalid Fallback Credentials
+    # 4. Gemini Invalid Model Failure
     # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_08_invalid_fallback_credentials(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderRateLimitError("Cloudflare 429", provider="cloudflare")
-        mock_groq.side_effect = ProviderAuthError("Groq 401 unauthorized", provider="groq")
+    @patch("services.providers.gemini.genai.Client")
+    def test_04_gemini_invalid_model_error(self, mock_client_cls):
+        from google.genai import errors
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        api_err = errors.APIError(404, {"error": {"message": "NOT_FOUND: model not found"}}, None)
+        mock_client.models.generate_content.side_effect = api_err
 
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "invalid_groq_key"},
-        )
-        with self.assertRaises(ProviderError) as ctx:
-            router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertIn("All configured providers failed", str(ctx.exception))
-
-    # -------------------------------------------------------------
-    # 9. Both Providers Unavailable
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_09_both_providers_unavailable(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderUnavailableError("Cloudflare 503 Service Unavailable", provider="cloudflare")
-        mock_groq.side_effect = ProviderUnavailableError("Groq 503 Service Unavailable", provider="groq")
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        with self.assertRaises(ProviderError) as ctx:
-            router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertIn("All configured providers failed", str(ctx.exception))
-
-    # -------------------------------------------------------------
-    # 10. Fallback Disabled
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_10_fallback_disabled(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderRateLimitError("Rate limit reached", provider="cloudflare")
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=False,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        with self.assertRaises(ProviderRateLimitError):
-            router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertFalse(mock_groq.called)
-
-    # -------------------------------------------------------------
-    # 11. No Fallback Configured
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    def test_11_no_fallback_configured(self, mock_cf):
-        mock_cf.side_effect = ProviderRateLimitError("Rate limit reached", provider="cloudflare")
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=False,
-            fallback_provider=None,
-        )
-        self.assertIsNone(router.fallback)
-        with self.assertRaises(ProviderRateLimitError):
-            router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-    # -------------------------------------------------------------
-    # 12. Invalid Model Selection
-    # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_12_invalid_model_selection(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderInvalidModelError("Model '@cf/invalid/nonexistent' not found", provider="cloudflare")
-
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
-        )
-        # Invalid model MUST NOT fall back
+        provider = GeminiProvider(api_key="AIzaSyTestKey", model="nonexistent-model")
         with self.assertRaises(ProviderInvalidModelError):
-            router.generate_completion(messages=[{"role": "user", "content": "test"}])
-
-        self.assertFalse(mock_groq.called)
+            provider.generate_completion(messages=[{"role": "user", "content": "Hello"}])
 
     # -------------------------------------------------------------
-    # 13. Timeout Handling
+    # 5. Gemini Rate Limit (429) Handling
     # -------------------------------------------------------------
-    @patch("services.providers.cloudflare.CloudflareProvider.generate_completion")
-    @patch("services.providers.groq.GroqProvider.generate_completion")
-    def test_13_timeout_handling(self, mock_groq, mock_cf):
-        mock_cf.side_effect = ProviderTimeoutError("Inference request timed out after 45s", provider="cloudflare")
-        mock_groq.return_value = "Recovered after primary timeout."
+    @patch("services.providers.gemini.genai.Client")
+    def test_05_gemini_rate_limit_error(self, mock_client_cls):
+        from google.genai import errors
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        api_err = errors.APIError(429, {"error": {"message": "RESOURCE_EXHAUSTED: Rate limit exceeded"}}, None)
+        mock_client.models.generate_content.side_effect = api_err
 
-        router = AIRouter(
-            primary_provider="cloudflare",
-            primary_credentials={"account_id": "cf_id", "api_token": "cf_token"},
-            fallback_enabled=True,
-            fallback_provider="groq",
-            fallback_credentials={"api_key": "gsk_123"},
+        provider = GeminiProvider(api_key="AIzaSyTestKey")
+        with self.assertRaises((ProviderRateLimitError, ProviderQuotaError)):
+            provider.generate_completion(messages=[{"role": "user", "content": "Hello"}])
+
+    # -------------------------------------------------------------
+    # 6. Gemini Timeout Handling
+    # -------------------------------------------------------------
+    @patch("services.providers.gemini.genai.Client")
+    def test_06_gemini_timeout_error(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.generate_content.side_effect = TimeoutError("Request timed out")
+
+        provider = GeminiProvider(api_key="AIzaSyTestKey")
+        with self.assertRaises(ProviderTimeoutError):
+            provider.generate_completion(messages=[{"role": "user", "content": "Hello"}])
+
+    # -------------------------------------------------------------
+    # 7. Gemini Embedding Generation
+    # -------------------------------------------------------------
+    @patch("services.providers.gemini.genai.Client")
+    def test_07_gemini_embed_text(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_res = MagicMock()
+        mock_embedding = MagicMock()
+        mock_embedding.values = [0.1, 0.2, 0.3, 0.4]
+        mock_res.embeddings = [mock_embedding]
+        mock_client.models.embed_content.return_value = mock_res
+
+        provider = GeminiProvider(api_key="AIzaSyTestKey")
+        vec = provider.embed_text("Sample article text")
+
+        self.assertEqual(vec, [0.1, 0.2, 0.3, 0.4])
+        mock_client.models.embed_content.assert_called_with(
+            model="gemini-embedding-001",
+            contents="Sample article text"
         )
-        res = router.generate_completion(messages=[{"role": "user", "content": "test"}])
-        self.assertEqual(res.content, "Recovered after primary timeout.")
-        self.assertTrue(res.switched_to_fallback)
 
     # -------------------------------------------------------------
-    # 14. Credential Isolation
+    # 8. AIRouter Dispatches to GeminiProvider
     # -------------------------------------------------------------
-    def test_14_credential_isolation(self):
-        with patch.dict(os.environ, {"VERCEL": "1", "GROQ_API_KEY": "gsk_server_dev_key_should_not_leak"}):
-            # In serverless/hosted mode, server-side environment credentials must NOT be exposed to visitors
-            cfg = get_active_provider_config()
-            self.assertEqual(cfg["groq_api_key"], "")
-            self.assertFalse(has_valid_config())
+    @patch("services.providers.gemini.genai.Client")
+    def test_08_ai_router_gemini_execution(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.text = '{"title": "Summary", "overview": "Overview"}'
+        mock_client.models.generate_content.return_value = mock_resp
 
-            # Only per-request visitor credentials can be used
-            req_cfg = get_active_provider_config(request_data={"groq_api_key": "gsk_visitor_key_1234567890", "primary_provider": "groq"})
-            self.assertEqual(req_cfg["groq_api_key"], "gsk_visitor_key_1234567890")
-            self.assertTrue(has_valid_config(request_data=req_cfg))
+        provider = GeminiProvider(api_key="AIzaSyTestKey123")
+        router = AIRouter(primary_provider=provider)
+        result = router.generate_completion(messages=[{"role": "user", "content": "Test"}])
 
-    # -------------------------------------------------------------
-    # 15. No Credentials in Logs or Errors
-    # -------------------------------------------------------------
-    def test_15_no_credentials_in_logs(self):
-        raw_error = "Error connecting to Groq with key gsk_abc12345678901234567890 and Cloudflare token sk-proj-1234567890abcdef"
-        sanitized = redact_credentials(raw_error)
-        self.assertNotIn("gsk_abc12345678901234567890", sanitized)
-        self.assertNotIn("sk-proj-1234567890abcdef", sanitized)
-        self.assertIn("gsk_...", sanitized)
-        self.assertIn("sk-...", sanitized)
+        self.assertIsInstance(result, RouterResult)
+        self.assertEqual(result.provider_id, "gemini")
+        self.assertEqual(result.provider_name, "Google Gemini")
+        self.assertEqual(result.model, "gemini-3.8-flash")
+        self.assertFalse(result.switched_to_fallback)
 
     # -------------------------------------------------------------
-    # 16. No Credentials in Browser Persistent Storage
+    # 9. BYOK Credential Validation Function
     # -------------------------------------------------------------
-    def test_16_no_credentials_in_browser_storage(self):
-        # Read storage_adapter.js to verify it does not write credentials to localStorage or cookies
-        with open("static/storage_adapter.js", "r", encoding="utf-8") as f:
-            code = f.read()
+    @patch("services.providers.gemini.genai.Client")
+    def test_09_validate_gemini_credentials(self, mock_client_cls):
+        # Empty key rejection
+        valid, msg = validate_gemini_credentials("")
+        self.assertFalse(valid)
+        self.assertIn("enter", msg.lower())
 
-        # Check for forbidden localStorage key storage
-        self.assertNotIn("localStorage.setItem('webbrief_api_key'", code)
-        self.assertNotIn("localStorage.setItem('groq_api_key'", code)
-        self.assertNotIn("localStorage.setItem('cloudflare_token'", code)
-        self.assertNotIn("document.cookie = `webbrief_api_key", code)
+        # Short key rejection
+        valid, msg = validate_gemini_credentials("short")
+        self.assertFalse(valid)
+        self.assertIn("invalid", msg.lower())
+
+        # Mocked valid verification
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_client.models.get.return_value = MagicMock()
+
+        valid, msg = validate_gemini_credentials("AIzaSyValidTestKey1234567890")
+        self.assertTrue(valid)
 
     # -------------------------------------------------------------
-    # 17. Existing Summarization Functionality
+    # 10. Provider Catalogue Verification
     # -------------------------------------------------------------
-    @patch("services.providers.router.AIRouter.generate_structured_json")
-    def test_17_existing_summarization_functionality(self, mock_json):
-        mock_json.return_value = RouterResult(
-            content={
-                "title": "Quantum Computing Breakthrough",
-                "overview": "Scientists achieve quantum supremacy in error correction.",
-                "key_points": ["Point 1", "Point 2"],
-                "important_details": ["Detail 1"],
-                "conclusion": "Commercial viability expected by 2030."
-            },
-            provider_id="cloudflare",
-            provider_name="Cloudflare Workers AI",
-            model="@cf/meta/llama-3.1-8b-instruct",
-            switched_to_fallback=False
-        )
+    def test_10_catalogue_gemini_models(self):
+        self.assertIn("gemini", PROVIDER_CATALOGUE)
+        self.assertNotIn("cloudflare", PROVIDER_CATALOGUE)
+        self.assertNotIn("groq", PROVIDER_CATALOGUE)
+
+        models = get_models_for_provider("gemini")
+        self.assertGreater(len(models), 0)
+        default_model = get_default_model("gemini")
+        self.assertEqual(default_model, "gemini-3.8-flash")
+
+        model_ids = [m["id"] for m in models]
+        self.assertIn("gemini-3.8-flash", model_ids)
+        self.assertIn("gemini-3.5-flash-lite", model_ids)
+        self.assertNotIn("gemini-4-argon", model_ids)
+
+    # -------------------------------------------------------------
+    # 11. Parse & Validate Structured JSON Summary
+    # -------------------------------------------------------------
+    def test_11_parse_and_validate_summary(self):
+        sample_json = json.dumps({
+            "title": "Quantum Leap in AI",
+            "overview": "Scientists report new breakthroughs in quantum artificial intelligence.",
+            "key_points": ["10x speedup", "Lower energy consumption"],
+            "core_summary": ["Detailed explanation of qubit stabilization."]
+        })
+
+        parsed = parse_and_validate_summary(sample_json)
+        self.assertEqual(parsed["title"], "Quantum Leap in AI")
+        self.assertIn("breakthroughs", parsed["overview"])
+        self.assertEqual(len(parsed["key_points"]), 2)
+
+    # -------------------------------------------------------------
+    # 12. Full Summarization Workflow Integration
+    # -------------------------------------------------------------
+    @patch("services.providers.gemini.genai.Client")
+    def test_12_summarize_text_workflow(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps({
+            "title": "Automated Summary",
+            "overview": "A clear overview of the article.",
+            "key_takeaways": ["Point 1", "Point 2"],
+            "core_summary": ["Important detail"]
+        })
+        mock_client.models.generate_content.return_value = mock_resp
 
         res = summarize_text(
-            article_text="Quantum computing article text " * 10,
-            provider_config={"cloudflare_account_id": "test_id", "cloudflare_api_token": "test_token", "primary_provider": "cloudflare"},
-            mode="detailed"
+            "This is article text to summarize.",
+            mode="quick",
+            provider_config={"gemini_api_key": "AIzaSyTestKey12345", "gemini_model": "gemini-3.8-flash"}
         )
 
-        self.assertEqual(res["title"], "Quantum Computing Breakthrough")
-        self.assertEqual(res["mode"], "detailed")
-        self.assertEqual(res["provider"], "cloudflare")
-        self.assertEqual(res["model"], "@cf/meta/llama-3.1-8b-instruct")
+        self.assertEqual(res["title"], "Automated Summary")
+        self.assertEqual(res["provider"], "gemini")
+        self.assertEqual(res["model"], "gemini-3.8-flash")
 
     # -------------------------------------------------------------
-    # 18. Existing Batch Processing
+    # 13. Comparative Analysis Workflow Integration
     # -------------------------------------------------------------
-    @patch("batch_processor.validate_safe_url", side_effect=lambda u: u)
-    @patch("batch_processor.scrape_article")
-    @patch("services.providers.router.AIRouter.generate_structured_json")
-    def test_18_existing_batch_processing(self, mock_router_json, mock_scrape, mock_val):
-        mock_scrape.return_value = "Article content for testing batch processing " * 5
-        mock_router_json.return_value = RouterResult(
-            content={
-                "title": "Batch Article",
-                "overview": "Overview of batch article",
-                "key_points": ["Point A"],
-                "important_details": ["Detail A"],
-                "conclusion": "Done"
-            },
-            provider_id="groq",
-            provider_name="GroqCloud",
-            model="llama-3.3-70b-versatile",
-            switched_to_fallback=False
-        )
-
-        batch_res = execute_batch(
-            raw_urls=["https://example.com/page1", "https://example.com/page2"],
-            provider_config={"groq_api_key": "gsk_12345678901234567890", "primary_provider": "groq"}
-        )
-
-        self.assertEqual(len(batch_res["results"]), 2)
-        self.assertEqual(batch_res["completed"], 2)
-        self.assertEqual(batch_res["results"][0]["status"], "completed")
-
-    # -------------------------------------------------------------
-    # 19. Existing Comparative Summarization
-    # -------------------------------------------------------------
-    @patch("comparative_analyzer.validate_safe_url", side_effect=lambda u: u)
     @patch("comparative_analyzer.scrape_article")
-    @patch("services.providers.router.AIRouter.generate_structured_json")
-    def test_19_existing_comparative_summarization(self, mock_router_json, mock_scrape, mock_val):
-        mock_scrape.side_effect = [
-            "Source A detailed text on electric vehicles " * 10,
-            "Source B detailed text on hydrogen vehicles " * 10,
-        ]
-        mock_router_json.return_value = RouterResult(
-            content={
-                "title": "EVs vs Hydrogen Fuel Cells",
-                "article_a": {"title": "Source A", "url": "https://example.com/a", "overview": "Overview A"},
-                "article_b": {"title": "Source B", "url": "https://example.com/b", "overview": "Overview B"},
-                "common_points": ["Both are zero direct emissions"],
-                "contradictions": ["Cost vs infrastructure requirements"],
-                "differing_perspectives": ["Battery density vs charging speed"],
-                "key_facts_claims": [],
-                "unique_to_a": ["Battery recycling innovations"],
-                "unique_to_b": ["Fuel cell stack durability"],
-                "conclusions_comparison": {
-                    "article_a_conclusion": "EVs dominate consumer market",
-                    "article_b_conclusion": "Hydrogen excels for heavy haul",
-                    "comparison_note": "Complementary use cases"
-                },
-                "synthesis": "Both technologies serve distinct segments."
-            },
-            provider_id="cloudflare",
-            provider_name="Cloudflare Workers AI",
-            model="@cf/meta/llama-3.1-8b-instruct",
-            switched_to_fallback=False
+    @patch("services.providers.gemini.genai.Client")
+    def test_13_compare_articles_workflow(self, mock_client_cls, mock_scrape):
+        long_text_a = "Source A article content on solar energy. " * 15
+        long_text_b = "Source B article content on solar energy advancements. " * 15
+        mock_scrape.side_effect = [long_text_a, long_text_b]
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps({
+            "title": "Solar Energy Comparison",
+            "article_a": {"title": "Solar A", "overview": "Source A overview"},
+            "article_b": {"title": "Solar B", "overview": "Source B overview"},
+            "common_points": ["Solar is clean energy"],
+            "differing_perspectives": ["Source A emphasizes cost, Source B efficiency"],
+            "key_facts_claims": [],
+            "synthesis": "Both agree solar is expanding."
+        })
+        mock_client.models.generate_content.return_value = mock_resp
+
+        res = compare_articles(
+            url_a="https://example.com/solar-a",
+            url_b="https://example.com/solar-b",
+            provider_config={"gemini_api_key": "AIzaSyTestKey12345"}
         )
 
-        comp_res = compare_articles(
-            url_a="https://example.com/ev",
-            url_b="https://example.com/hydrogen",
-            provider_config={"cloudflare_account_id": "test_id", "cloudflare_api_token": "test_token"}
+        self.assertEqual(res["title"], "Solar Energy Comparison")
+        self.assertEqual(res["provider"], "gemini")
+
+    # -------------------------------------------------------------
+    # 14. Batch Processing Workflow Integration
+    # -------------------------------------------------------------
+    @patch("batch_processor.scrape_article")
+    @patch("services.providers.gemini.genai.Client")
+    def test_14_batch_processor_workflow(self, mock_client_cls, mock_scrape):
+        mock_scrape.return_value = "Article content for batch processing."
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps({
+            "title": "Batch Item",
+            "overview": "Item overview",
+            "key_takeaways": ["Takeaway 1"]
+        })
+        mock_client.models.generate_content.return_value = mock_resp
+
+        res = execute_batch(
+            raw_urls=["https://example.com/item1"],
+            mode="quick",
+            provider_config={"gemini_api_key": "AIzaSyTestKey12345"}
         )
 
-        self.assertEqual(comp_res["title"], "EVs vs Hydrogen Fuel Cells")
-        self.assertEqual(comp_res["provider"], "cloudflare")
-        self.assertEqual(len(comp_res["common_points"]), 1)
+        self.assertEqual(res["total"], 1)
+        self.assertEqual(res["completed"], 1)
+        self.assertEqual(res["results"][0]["status"], "completed")
 
     # -------------------------------------------------------------
-    # 20. Local and Hosted Configuration Compatibility
+    # 15. Vector Store Embedding Integration
     # -------------------------------------------------------------
-    def test_20_local_and_hosted_configuration_compatibility(self):
-        # In local mode: has_valid_config reads from environment
-        with patch.dict(os.environ, {"PRIMARY_PROVIDER": "cloudflare", "CLOUDFLARE_ACCOUNT_ID": "local_id", "CLOUDFLARE_API_TOKEN": "local_token"}, clear=False):
-            self.assertTrue(has_valid_config())
+    @patch("services.providers.gemini.genai.Client")
+    def test_15_vector_store_embedding(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_res = MagicMock()
+        mock_emb = MagicMock()
+        mock_emb.values = [0.05] * 768
+        mock_res.embeddings = [mock_emb]
+        mock_client.models.embed_content.return_value = mock_res
 
-        # In hosted mode: environment variables are ignored for visitors
-        with patch.dict(os.environ, {"VERCEL": "1", "CLOUDFLARE_ACCOUNT_ID": "local_id", "CLOUDFLARE_API_TOKEN": "local_token"}):
-            self.assertFalse(has_valid_config())
-            # But per-request visitor payload succeeds
-            visitor_payload = {
-                "primary_provider": "cloudflare",
-                "cloudflare_account_id": "visitor_id",
-                "cloudflare_api_token": "visitor_token"
-            }
-            self.assertTrue(has_valid_config(request_data=visitor_payload))
+        vec = generate_embedding(
+            "Test text to embed into vector space",
+            provider_config={"gemini_api_key": "AIzaSyTestKey12345"}
+        )
+
+        self.assertEqual(len(vec), 768)
+
+    # -------------------------------------------------------------
+    # 16. Vector Store Offline Deterministic Fallback
+    # -------------------------------------------------------------
+    def test_16_vector_store_deterministic_fallback(self):
+        # When no API key is supplied, deterministic hash is generated
+        vec = generate_embedding("Deterministic text without credentials", provider_config={})
+        self.assertEqual(len(vec), 768)
+        self.assertIsInstance(vec[0], float)
+
+    # -------------------------------------------------------------
+    # 17. API Endpoint: /api/validate-key
+    # -------------------------------------------------------------
+    @patch("app.validate_gemini_credentials", return_value=(True, "Google Gemini credentials successfully verified."))
+    def test_17_api_validate_key(self, mock_val):
+        with self.client.session_transaction() as sess:
+            csrf = sess.get("_csrf_token", "test_csrf")
+            sess["_csrf_token"] = csrf
+
+        res = self.client.post(
+            "/api/validate-key",
+            json={"provider": "gemini", "gemini_api_key": "AIzaSyTestKey123"},
+            headers={"X-CSRF-Token": csrf}
+        )
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertTrue(data["valid"])
+
+    # -------------------------------------------------------------
+    # 18. API Endpoint: /api/providers/models
+    # -------------------------------------------------------------
+    def test_18_api_provider_models(self):
+        res = self.client.get("/api/providers/models?provider=gemini")
+        self.assertEqual(res.status_code, 200)
+        data = res.get_json()
+        self.assertEqual(data["provider"], "gemini")
+        self.assertEqual(data["default_model"], "gemini-3.8-flash")
+        self.assertGreater(len(data["models"]), 0)
+
+    # -------------------------------------------------------------
+    # 19. BYOK Environment Save & Clear Logic
+    # -------------------------------------------------------------
+    def test_19_save_and_clear_provider_config(self):
+        test_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env.test_tmp")
+        try:
+            success, msg = save_provider_config_to_env(
+                config_dict={"gemini_api_key": "AIzaSyTestSaveKey12345", "gemini_model": "gemini-3.8-flash"},
+                env_path=test_env_path,
+                confirm_overwrite=True
+            )
+            self.assertTrue(success)
+
+            with open(test_env_path, "r", encoding="utf-8") as f:
+                content = f.read()
+            self.assertIn("GEMINI_API_KEY=AIzaSyTestSaveKey12345", content)
+            self.assertIn("GEMINI_DEFAULT_MODEL=gemini-3.8-flash", content)
+
+            # Clear
+            clear_saved_provider_config(env_path=test_env_path)
+            with open(test_env_path, "r", encoding="utf-8") as f:
+                cleared_content = f.read()
+            self.assertNotIn("AIzaSyTestSaveKey12345", cleared_content)
+        finally:
+            if os.path.exists(test_env_path):
+                os.remove(test_env_path)
+
+    # -------------------------------------------------------------
+    # 20. Active Provider Config Resolution
+    # -------------------------------------------------------------
+    def test_20_get_active_provider_config(self):
+        cfg = get_active_provider_config(
+            request_data={"gemini_api_key": "AIzaSyExplicitOverride", "gemini_model": "gemini-3.5-flash-lite"}
+        )
+        self.assertEqual(cfg["gemini_api_key"], "AIzaSyExplicitOverride")
+        self.assertEqual(cfg["gemini_model"], "gemini-3.5-flash-lite")
+        self.assertEqual(cfg["primary_provider"], "gemini")
 
 
 if __name__ == "__main__":

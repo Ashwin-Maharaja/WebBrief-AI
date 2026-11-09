@@ -8,3 +8,4 @@ reportlab>=4.0.0
 redis>=5.0,<9
 Flask-Session>=0.8,<1
 cryptography>=43,<51
+google-genai>=1.0.0

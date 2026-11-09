@@ -81,11 +81,11 @@ class TestCredentialRedaction(unittest.TestCase):
         from byok import redact_credentials
         self.redact = redact_credentials
 
-    def test_groq_key_redaction(self):
-        text = "Failed with key gsk_abcdef1234567890abcdef1234567890 in request"
+    def test_gemini_key_redaction(self):
+        text = "Failed with key AIzaSyD92hXk290aLkjs9210Akd_201k901 in request"
         redacted = self.redact(text)
-        self.assertNotIn("gsk_abcdef1234567890abcdef1234567890", redacted)
-        self.assertIn("gsk_...", redacted)
+        self.assertNotIn("AIzaSyD92hXk290aLkjs9210Akd_201k901", redacted)
+        self.assertIn("[gemini_key_masked]", redacted)
 
     def test_legacy_sk_redaction(self):
         text = "Key sk-proj-1234567890abcdef1234567890 was rejected"
@@ -104,12 +104,6 @@ class TestCredentialRedaction(unittest.TestCase):
         redacted = self.redact(text)
         self.assertNotIn("abcdef1234567890xyz12345", redacted)
         self.assertIn("Bearer [token_masked]", redacted)
-
-    def test_cloudflare_account_id_redaction(self):
-        text = "Endpoint /accounts/0123456789abcdef0123456789abcdef/ai/run"
-        redacted = self.redact(text)
-        self.assertNotIn("0123456789abcdef0123456789abcdef", redacted)
-        self.assertIn("[account_id_masked]", redacted)
 
 
 class TestHealthCheckEndpoint(unittest.TestCase):
@@ -150,7 +144,7 @@ class TestCSRFProtection(unittest.TestCase):
 
     def test_post_without_csrf_token_rejected(self):
         """POST request without CSRF token must return 403 Forbidden."""
-        response = self.client.post("/api/save-config", json={"primary_provider": "cloudflare"})
+        response = self.client.post("/api/save-config", json={"primary_provider": "gemini"})
         self.assertEqual(response.status_code, 403)
         data = response.get_json()
         self.assertEqual(data.get("code"), "CSRF_VERIFICATION_FAILED")
@@ -163,7 +157,7 @@ class TestCSRFProtection(unittest.TestCase):
         response = self.client.post(
             "/api/save-config",
             headers={"X-CSRF-Token": "wrong_token_value"},
-            json={"primary_provider": "cloudflare"}
+            json={"primary_provider": "gemini"}
         )
         self.assertEqual(response.status_code, 403)
 
@@ -535,7 +529,7 @@ class TestRateLimiting(unittest.TestCase):
         for _ in range(20):
             res = self.client.post(
                 "/api/validate-key",
-                json={"provider": "groq", "groq_api_key": "gsk_test"},
+                json={"provider": "gemini", "gemini_api_key": "AIzaSy_test"},
                 headers={"X-CSRF-Token": self.csrf}
             )
             self.assertNotEqual(res.status_code, 429)
@@ -543,7 +537,7 @@ class TestRateLimiting(unittest.TestCase):
         # 21st request triggers rate limit 429
         res = self.client.post(
             "/api/validate-key",
-            json={"provider": "groq", "groq_api_key": "gsk_test"},
+            json={"provider": "gemini", "gemini_api_key": "AIzaSy_test"},
             headers={"X-CSRF-Token": self.csrf}
         )
         self.assertEqual(res.status_code, 429)

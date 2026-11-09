@@ -235,28 +235,17 @@ class TestUIResponsiveness(unittest.TestCase):
             self.assertEqual(resp.status_code, 301)
             self.assertIn("/settings", resp.headers.get("Location", ""))
 
-    def test_hosted_model_select_and_fallback_container(self):
-        """Ensure index.html contains the hosted BYOK model dropdown and fallback container."""
+    def test_hosted_model_select_and_key_input(self):
+        """Ensure index.html contains the hosted BYOK model dropdown and Gemini key input."""
         index_html = self.templates["index"]
         self.assertIn('id="hosted-model-select"', index_html)
-        self.assertIn('id="fallback-config-container"', index_html)
-        self.assertIn('id="enable-fallback-toggle"', index_html)
-        self.assertIn('id="fallback-provider-select"', index_html)
-        self.assertIn('id="fallback-model-select"', index_html)
+        self.assertIn('id="hosted-gemini-key"', index_html)
 
-        # Fallback container must appear before the summarizer mode selector
-        fb_pos = index_html.find('id="fallback-config-container"')
-        mode_pos = index_html.find('class="mode-selector-grid"')
-        self.assertGreater(fb_pos, 0)
-        self.assertGreater(mode_pos, 0)
-        self.assertLess(fb_pos, mode_pos, "Fallback container must appear before the summarizer mode selector.")
-
-    def test_fallback_container_responsive_rules(self):
-        """Ensure 640px media query contains responsive rules for hosted model select and fallback inputs."""
+    def test_hosted_model_select_responsive_rules(self):
+        """Ensure 640px media query contains responsive rules for hosted model select."""
         mq_640 = self._extract_media_query("640px")
         self.assertIsNotNone(mq_640)
         self.assertIn("#hosted-model-select", mq_640)
-        self.assertIn(".fallback-inputs-grid", mq_640)
 
     # --------------------------------------------------------------------------
     # Helper Methods

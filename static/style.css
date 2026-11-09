@@ -1592,13 +1592,7 @@ pre, code {
     font-size: 13px;
 }
 
-#hosted-groq-inputs {
-    display: none;
-    flex: 1;
-    min-width: 0;
-}
-
-#hosted-api-key-input {
+#hosted-gemini-key {
     font-size: 13px;
     font-family: monospace;
     width: 100%;
@@ -1726,15 +1720,7 @@ pre, code {
         min-width: 100% !important;
     }
 
-    #hosted-cf-inputs,
-    #hosted-groq-inputs {
-        flex-direction: column;
-        width: 100%;
-    }
-
-    #hosted-cf-id,
-    #hosted-cf-token,
-    #hosted-api-key-input {
+    #hosted-gemini-key {
         width: 100% !important;
         min-width: 100% !important;
     }

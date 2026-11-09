@@ -1,8 +1,8 @@
 """
 WebBrief AI — Local Knowledge Retrieval & Vector Store Engine (v1.6.0).
 Provides SQLite binary float vector indexing and semantic retrieval.
-Uses Cloudflare Workers AI embeddings when configured, with a zero-cost deterministic
-hashing fallback for Groq-only or offline environments.
+Uses Google Gemini embeddings when configured, with a zero-cost deterministic
+hashing fallback for unauthenticated or offline environments.
 """
 
 import hashlib
@@ -22,7 +22,7 @@ from history import get_db_connection, init_db, get_history, get_history_entry, 
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-DEFAULT_EMBEDDING_MODEL = "@cf/baai/bge-base-en-v1.5"
+DEFAULT_EMBEDDING_MODEL = "gemini-embedding-001"
 EMBEDDING_DIMENSIONS = 768
 DEFAULT_SEARCH_LIMIT = 5
 DEFAULT_SIMILARITY_THRESHOLD = 0.35
@@ -180,7 +180,7 @@ def compute_content_hash(text: str) -> str:
 def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIMENSIONS) -> List[float]:
     """
     Generates a deterministic L2-normalized 768-dim semantic hash representation.
-    Used when no Cloudflare credentials are configured (e.g. Groq-only mode).
+    Used when no Gemini credentials are configured (e.g. offline mode).
     """
     words = re.findall(r"\w+", text.lower())
     if not words:
@@ -220,7 +220,7 @@ def generate_embedding(
     provider_config: Optional[Dict[str, Any]] = None,
 ) -> List[float]:
     """
-    Generates a vector embedding for the input text using Cloudflare Workers AI
+    Generates a vector embedding for the input text using Google Gemini
     or deterministic semantic hashing fallback.
     """
     if not text or not str(text).strip():
@@ -229,17 +229,18 @@ def generate_embedding(
     from byok import get_active_provider_config
     cfg = provider_config or get_active_provider_config()
 
-    cf_id = cfg.get("cloudflare_account_id")
-    cf_token = cfg.get("cloudflare_api_token")
+    gemini_key = api_key or cfg.get("gemini_api_key") or cfg.get("api_key")
 
-    # If Cloudflare credentials exist, attempt Cloudflare Workers AI embedding
-    if cf_id and cf_token:
+    # If Gemini credentials exist, attempt Google Gemini embedding
+    if gemini_key:
         try:
-            from services.providers.cloudflare import CloudflareProvider
-            cf = CloudflareProvider(account_id=cf_id, api_token=cf_token)
-            return cf.generate_embedding(text=text, model=model)
+            from services.providers.gemini import GeminiProvider
+            gp = GeminiProvider(api_key=gemini_key)
+            vec = gp.embed_text(text=text)
+            if vec:
+                return vec
         except Exception as e:
-            logger.warning("Cloudflare embedding call failed; using deterministic hash fallback: %s", str(e))
+            logger.warning("Gemini embedding call failed; using deterministic hash fallback: %s", str(e))
 
     # Deterministic feature hashing fallback
     return _deterministic_hash_vector(text, dim=EMBEDDING_DIMENSIONS)
