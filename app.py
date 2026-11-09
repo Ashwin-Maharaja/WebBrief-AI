@@ -163,7 +163,15 @@ def resolve_flask_secret(is_production: bool) -> str:
 
 
 is_prod = is_serverless_env() or os.getenv("FLASK_ENV") == "production" or os.getenv("ENVIRONMENT") == "production"
-app.secret_key = resolve_flask_secret(is_prod)
+
+_startup_error = None
+try:
+    app.secret_key = resolve_flask_secret(is_prod)
+except Exception as exc:
+    _startup_error = str(exc)
+    # Temporary fallback key so Flask internals can safely function to serve configuration error responses
+    app.secret_key = secrets.token_hex(32)
+    logger.critical("Startup configuration error: %s", _startup_error)
 
 # Session Cookie Hardening (SEC-02)
 is_secure_cookie = os.getenv("SESSION_COOKIE_SECURE", "true" if is_prod else "false").lower() in ("true", "1")
@@ -182,19 +190,24 @@ from credential_vault import TemporaryCredentialVault
 
 _vault = None
 _redis = None
-if os.getenv("REDIS_URL") and os.getenv("CREDENTIAL_ENCRYPTION_KEY"):
-    from redis import Redis
-    from flask_session import Session
-    _redis = Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=3, socket_timeout=3)
-    app.config.update(
-        SESSION_TYPE="redis", SESSION_REDIS=_redis,
-        SESSION_PERMANENT=True, SESSION_REFRESH_EACH_REQUEST=True,
-        SESSION_KEY_PREFIX="webbrief:session:",
-    )
-    Session(app)
-    _vault = TemporaryCredentialVault(_redis, os.environ["CREDENTIAL_ENCRYPTION_KEY"])
-elif is_prod and (os.getenv("REDIS_URL") or os.getenv("CREDENTIAL_ENCRYPTION_KEY")):
-    raise RuntimeError("Temporary BYOK vault requires both REDIS_URL and CREDENTIAL_ENCRYPTION_KEY")
+try:
+    if os.getenv("REDIS_URL") and os.getenv("CREDENTIAL_ENCRYPTION_KEY"):
+        from redis import Redis
+        from flask_session import Session
+        _redis = Redis.from_url(os.environ["REDIS_URL"], socket_connect_timeout=3, socket_timeout=3)
+        app.config.update(
+            SESSION_TYPE="redis", SESSION_REDIS=_redis,
+            SESSION_PERMANENT=True, SESSION_REFRESH_EACH_REQUEST=True,
+            SESSION_KEY_PREFIX="webbrief:session:",
+        )
+        Session(app)
+        _vault = TemporaryCredentialVault(_redis, os.environ["CREDENTIAL_ENCRYPTION_KEY"])
+    elif is_prod and (os.getenv("REDIS_URL") or os.getenv("CREDENTIAL_ENCRYPTION_KEY")):
+        raise RuntimeError("Temporary BYOK vault requires both REDIS_URL and CREDENTIAL_ENCRYPTION_KEY in production.")
+except Exception as exc:
+    if not _startup_error:
+        _startup_error = str(exc)
+    logger.critical("Startup configuration error: %s", str(exc))
 
 
 class InMemoryRateLimiter:
@@ -281,6 +294,146 @@ def _vault_config():
     if _vault is None or "_vault_sid" not in session:
         return {}
     return _vault.load(session["_vault_sid"])
+
+
+@app.before_request
+def check_startup_configuration():
+    """Fails safely with an informative HTTP 500 response if production configuration is missing."""
+    if _startup_error:
+        if request.path in ("/health", "/api/health"):
+            return jsonify({
+                "status": "error",
+                "code": "CONFIGURATION_REQUIRED",
+                "message": _startup_error,
+                "version": APP_VERSION,
+            }), 500
+        if request.path.startswith("/api/") or request.is_json:
+            return jsonify({
+                "status": "error",
+                "code": "CONFIGURATION_REQUIRED",
+                "message": _startup_error,
+            }), 500
+        return f"""<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebBrief AI — Configuration Required</title>
+    <style>
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            background: #0f172a;
+            color: #f8fafc;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 24px;
+        }}
+        .card {{
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 16px;
+            padding: 36px;
+            max-width: 640px;
+            width: 100%;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.4);
+        }}
+        .header {{
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 20px;
+        }}
+        .icon {{
+            width: 40px;
+            height: 40px;
+            border-radius: 10px;
+            background: rgba(239, 68, 68, 0.15);
+            color: #ef4444;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            font-weight: bold;
+        }}
+        h1 {{
+            font-size: 1.35rem;
+            color: #f8fafc;
+            font-weight: 600;
+        }}
+        p {{
+            color: #94a3b8;
+            font-size: 0.95rem;
+            line-height: 1.6;
+            margin-bottom: 16px;
+        }}
+        .alert {{
+            background: rgba(239, 68, 68, 0.1);
+            border: 1px solid rgba(239, 68, 68, 0.25);
+            border-radius: 8px;
+            padding: 12px 16px;
+            color: #fca5a5;
+            font-size: 0.9rem;
+            margin-bottom: 20px;
+        }}
+        .steps {{
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 18px 20px 18px 36px;
+            color: #cbd5e1;
+            font-size: 0.9rem;
+            line-height: 1.8;
+            margin-bottom: 20px;
+        }}
+        code {{
+            background: rgba(255, 255, 255, 0.08);
+            color: #38bdf8;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.88em;
+        }}
+        pre {{
+            background: #030712;
+            border: 1px solid #1f2937;
+            border-radius: 6px;
+            padding: 10px 14px;
+            color: #38bdf8;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+            font-size: 0.85em;
+            margin: 8px 0;
+            overflow-x: auto;
+        }}
+    </style>
+</head>
+<body>
+    <div class="card">
+        <div class="header">
+            <div class="icon">!</div>
+            <h1>Configuration Required in Production</h1>
+        </div>
+        <div class="alert">
+            WebBrief AI is deployed in production mode, but <code>FLASK_SECRET_KEY</code> is not configured in your environment variables.
+        </div>
+        <p>To prevent session invalidation across serverless instances and cold starts, production deployments strictly require an explicitly configured <code>FLASK_SECRET_KEY</code>.</p>
+        <p><strong>Steps to configure on Vercel:</strong></p>
+        <ol class="steps">
+            <li>Generate a secure 32-byte secret key:
+                <pre>python -c "import secrets; print(secrets.token_hex(32))"</pre>
+            </li>
+            <li>Open your <strong>Vercel Dashboard &rarr; Project Settings &rarr; Environment Variables</strong>.</li>
+            <li>Add a new variable:
+                <br>Key: <code>FLASK_SECRET_KEY</code>
+                <br>Value: <em>[your generated 64-hex-character string]</em>
+            </li>
+            <li>Save and redeploy the project in Vercel.</li>
+        </ol>
+    </div>
+</body>
+</html>""", 500
 
 
 @app.before_request
