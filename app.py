@@ -766,7 +766,7 @@ def setup():
 
 @app.route("/settings")
 def settings():
-    """Multi-provider settings, model selection, custom directives, and management page."""
+    """Application settings, appearance, custom directives, and integrations page."""
     is_conf = has_valid_config(session_dict=session)
     is_serv = is_serverless_env()
     history_entries = [] if is_serv else get_history(limit=50)

@@ -247,6 +247,22 @@ class TestUIResponsiveness(unittest.TestCase):
         self.assertIsNotNone(mq_640)
         self.assertIn("#hosted-model-select", mq_640)
 
+    def test_settings_page_streamlined(self):
+        """Ensure settings.html is named Settings, first segment is Appearance & Theme, and has no legacy setup blocks."""
+        settings_html = self.templates["settings"]
+        self.assertRegex(settings_html, r"<title>WebBrief AI\s*[—–-]\s*Settings</title>")
+        self.assertIn("<h3>Appearance & Theme</h3>", settings_html)
+        self.assertNotIn('<div class="settings-header">', settings_html)
+        self.assertNotIn("AI Provider & Multi-Provider BYOK", settings_html)
+        self.assertNotIn("Configure Google Gemini API", settings_html)
+        self.assertNotIn("Remove Saved Credentials", settings_html)
+        self.assertNotIn("setup wizard", settings_html.lower())
+
+        # Verify index.html navigation links cleanly to 'Settings'
+        index_html = self.templates["index"]
+        self.assertNotIn("BYOK Settings", index_html)
+        self.assertIn("<span>⚙️ Settings</span>", index_html)
+
     # --------------------------------------------------------------------------
     # Helper Methods
     # --------------------------------------------------------------------------

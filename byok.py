@@ -215,16 +215,6 @@ def clear_saved_provider_config(env_path: Optional[str] = None) -> Tuple[bool, s
     managed_keys = [
         ENV_GEMINI_API_KEY,
         ENV_GEMINI_MODEL,
-        # Also clean up legacy keys if lingering
-        "PRIMARY_PROVIDER",
-        "CLOUDFLARE_ACCOUNT_ID",
-        "CLOUDFLARE_API_TOKEN",
-        "CLOUDFLARE_DEFAULT_MODEL",
-        "GROQ_API_KEY",
-        "GROQ_DEFAULT_MODEL",
-        "FALLBACK_ENABLED",
-        "FALLBACK_PROVIDER",
-        "FALLBACK_MODEL",
     ]
 
     for k in managed_keys:
