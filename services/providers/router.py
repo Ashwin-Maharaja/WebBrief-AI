@@ -3,6 +3,8 @@ WebBrief AI — Automatic Provider Router (v1.6.0).
 Coordinates primary provider execution, error classification, and optional fallback.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
 import logging
 from typing import Dict, Any, List, Optional, Tuple

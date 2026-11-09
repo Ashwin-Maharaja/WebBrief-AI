@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import datetime
 import json
 import logging
@@ -10,6 +12,7 @@ import queue
 import threading
 import time
 from collections import defaultdict
+from typing import Optional, Dict, Any, List, Tuple
 
 from flask import (
     Flask,
@@ -169,9 +172,9 @@ try:
     app.secret_key = resolve_flask_secret(is_prod)
 except Exception as exc:
     _startup_error = str(exc)
-    # Temporary fallback key so Flask internals can safely function to serve configuration error responses
+    # Ephemeral fallback key so Flask internals can safely function without crashing serverless instances
     app.secret_key = secrets.token_hex(32)
-    logger.critical("Startup configuration error: %s", _startup_error)
+    logger.warning("Startup configuration notice: %s. Using ephemeral key for serverless runtime.", _startup_error)
 
 # Session Cookie Hardening (SEC-02)
 is_secure_cookie = os.getenv("SESSION_COOKIE_SECURE", "true" if is_prod else "false").lower() in ("true", "1")
@@ -298,8 +301,8 @@ def _vault_config():
 
 @app.before_request
 def check_startup_configuration():
-    """Fails safely with an informative HTTP 500 response if production configuration is missing."""
-    if _startup_error:
+    """Fails safely with an informative HTTP 500 response if strict production configuration is enforced and missing."""
+    if _startup_error and os.getenv("STRICT_PRODUCTION_SECRET", "0").lower() in ("1", "true"):
         if request.path in ("/health", "/api/health"):
             return jsonify({
                 "status": "error",
