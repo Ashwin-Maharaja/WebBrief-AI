@@ -152,6 +152,34 @@
             margin-bottom: 12px;
             opacity: 0.5;
         }
+        @media (max-width: 640px) {
+            .history-card {
+                padding: 20px 16px;
+            }
+            .history-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            .history-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 12px;
+            }
+            .history-info {
+                width: 100%;
+                padding-right: 0;
+            }
+            .history-actions {
+                width: 100%;
+                justify-content: flex-end;
+                border-top: 1px solid var(--border-color);
+                padding-top: 8px;
+            }
+            .history-url {
+                max-width: 100%;
+            }
+        }
     </style>
 </head>
 <body>

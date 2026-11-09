@@ -109,22 +109,22 @@
                     </span>
                 </div>
 
-                <div class="hosted-key-row" style="margin-top: 10px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
-                    <select id="hosted-provider-select" class="form-control" style="width: auto; max-width: 190px; font-size: 13px;" onchange="onHostedProviderChange()">
+                <div class="hosted-key-row">
+                    <select id="hosted-provider-select" class="form-control" onchange="onHostedProviderChange()">
                         <option value="cloudflare">⚡ Cloudflare AI</option>
                         <option value="groq">🚀 GroqCloud</option>
                     </select>
-                    <div id="hosted-cf-inputs" style="display: flex; gap: 8px; flex: 1; flex-wrap: wrap;">
-                        <input type="text" id="hosted-cf-id" class="form-control" placeholder="Account ID" style="flex: 1; min-width: 140px; font-size: 13px;">
-                        <input type="password" id="hosted-cf-token" class="form-control" placeholder="API Token" style="flex: 1; min-width: 140px; font-size: 13px;">
+                    <div id="hosted-cf-inputs">
+                        <input type="text" id="hosted-cf-id" class="form-control" placeholder="Account ID">
+                        <input type="password" id="hosted-cf-token" class="form-control" placeholder="API Token">
                     </div>
-                    <div id="hosted-groq-inputs" style="display: none; flex: 1;">
-                        <input type="password" id="hosted-api-key-input" class="form-control" placeholder="Groq API Key (gsk_...)" style="font-size: 13px; font-family: monospace;">
+                    <div id="hosted-groq-inputs">
+                        <input type="password" id="hosted-api-key-input" class="form-control" placeholder="Groq API Key (gsk_...)">
                     </div>
-                    <button type="button" class="btn btn-secondary" id="hosted-verify-btn" onclick="verifyHostedKey()" style="padding: 9px 16px; font-size: 13px;">
+                    <button type="button" class="btn btn-secondary" id="hosted-verify-btn" onclick="verifyHostedKey()">
                         Verify & Use
                     </button>
-                    <button type="button" class="btn btn-secondary" id="hosted-clear-btn" onclick="clearHostedKey()" style="padding: 9px 12px; font-size: 13px; display: none; color: #f87171;">
+                    <button type="button" class="btn btn-secondary" id="hosted-clear-btn" onclick="clearHostedKey()">
                         Clear
                     </button>
                 </div>
@@ -236,7 +236,7 @@
                     <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 12px;">
                         Submit two articles to generate an objective side-by-side comparative analysis, highlighting shared ground, key factual claims, contradictions, and divergent conclusions.
                     </p>
-                    <div class="compare-inputs-grid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px;">
+                    <div class="compare-inputs-grid">
                         <div class="form-group" style="margin-bottom: 0;">
                             <label for="compare-url-a" class="form-label" style="display: flex; justify-content: space-between; align-items: center;">
                                 <span>Source Article A</span>
@@ -298,7 +298,7 @@
                     </div>
 
                     <!-- Search Controls: Filter Type & Relevance Threshold Slider -->
-                    <div class="search-controls-row" style="display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 16px; align-items: center; justify-content: space-between;">
+                    <div class="search-controls-row">
                         <div class="filter-group" style="display: flex; gap: 8px; align-items: center;">
                             <label class="form-label" style="margin-bottom: 0; font-size: 13px;">Filter:</label>
                             <select id="search-filter-type" class="form-control" style="width: auto; padding: 6px 12px; font-size: 13px;">
@@ -785,7 +785,7 @@
                             <h3 class="section-title">Unique Information</h3>
                         </div>
                     </div>
-                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px;" class="compare-sources-grid">
+                    <div class="compare-sources-grid">
                         <div style="background: var(--bg-card); border: 1px solid var(--border-color); border-radius: 8px; padding: 12px 16px;">
                             <strong style="color: var(--primary); font-size: 13px; display: block; margin-bottom: 6px;" id="label-unique-a">Unique to Source A:</strong>
                             <ul id="compare-unique-a-list" class="points-list" style="margin-bottom: 0;"></ul>
