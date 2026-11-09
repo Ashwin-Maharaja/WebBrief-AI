@@ -34,10 +34,10 @@ def get_notion_key(
 ) -> Optional[str]:
     """
     Retrieves the Notion integration token.
-    If provided directly in request parameters (e.g. hosted in-memory submission), uses it.
-    If present in temporary vault configuration or session context, uses it.
-    Otherwise in local self-hosted mode, reads strictly from process environment.
-    Never exposes credentials in client session cookies.
+    1. If provided directly in request parameters (e.g. per-request in-memory submission), uses it.
+    2. If present in temporary encrypted Redis vault configuration, uses it.
+    3. Otherwise in local self-hosted mode, reads strictly from process environment (NOTION_API_KEY/NOTION_TOKEN).
+    Never exposes or reads credentials from Flask client-side cookie sessions.
     """
     if provided_token and str(provided_token).strip():
         token = str(provided_token).strip()
@@ -48,11 +48,6 @@ def get_notion_key(
         v_tok = vault_config.get("notion_token") or vault_config.get("notion_api_key")
         if v_tok and str(v_tok).strip():
             return str(v_tok).strip()
-
-    if session_dict and isinstance(session_dict, dict):
-        s_tok = session_dict.get("_notion_token") or session_dict.get("notion_api_key")
-        if s_tok and str(s_tok).strip():
-            return str(s_tok).strip()
 
     token = os.getenv("NOTION_API_KEY") or os.getenv("NOTION_TOKEN")
     if token and str(token).strip():
@@ -79,8 +74,8 @@ def save_notion_key_to_env(
 ) -> Tuple[bool, str]:
     """
     Persists the Notion integration token.
-    In hosted / serverless mode: does not write to ephemeral filesystem;
-    stores in session/vault context and returns a success confirmation.
+    In hosted / serverless mode: requires the encrypted Redis vault. Does not write to ephemeral
+    filesystem and NEVER stores tokens in unencrypted Flask client-side session cookies.
     In local self-hosted mode: writes NOTION_API_KEY to local .env configuration file.
     Never exposes raw tokens in return messages.
     """
@@ -91,11 +86,9 @@ def save_notion_key_to_env(
     if len(cleaned_key) < 10:
         return False, "Notion integration token is too short."
 
-    # Hosted serverless mode: do not touch filesystem
+    # Hosted serverless mode: do not write to disk and never store credentials in Flask client session
     if is_hosted:
-        if session_dict is not None:
-            session_dict["_notion_token"] = cleaned_key
-        return True, "Notion token configured for active temporary session."
+        return False, "Persistent hosted Notion integration requires the secure encrypted Redis vault. Please configure REDIS_URL and CREDENTIAL_ENCRYPTION_KEY, or supply token per-request."
 
     # Local mode: persist to .env
     if not env_file_path:
@@ -131,7 +124,7 @@ def clear_saved_notion_key(session_dict: Optional[Dict[str, Any]] = None, env_fi
     """
     Removes the Notion token from session, process environment, and local .env.
     """
-    if session_dict is not None:
+    if session_dict is not None and isinstance(session_dict, dict):
         session_dict.pop("_notion_token", None)
         session_dict.pop("notion_api_key", None)
 

@@ -47,9 +47,9 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 ## 2. What's New in v1.6.4 (Stability, Security & Reliability Patch)
 
 - **Flask Production Secret Enforcement**: In production environments, strictly enforces an explicit, high-entropy `FLASK_SECRET_KEY` (minimum 32 characters / 16 bytes). Startup fails safely (`RuntimeError`) if missing or set to insecure placeholders.
-- **Playwright SSRF & Response-Size Hardening**: Fixed the route abort accounting bug in dynamic scraping; enforces a cumulative 5 MB streaming limit, a 50-request subrequest budget, and independent SSRF verification on all subresources and redirects.
+- **Playwright SSRF & Response-Size Hardening**: Enforces a cumulative 5 MB streaming limit with true network body accounting (handling missing or inaccurate `Content-Length` headers), valid Playwright abort codes, a 50-request subrequest budget, and independent SSRF verification on all subresources and redirects.
 - **Redis Credential Vault Atomic Confirmation**: Ensures `/api/save-config` checks vault write results atomically, returning HTTP 503 if Redis persistence fails and preserving entered user inputs.
-- **Notion Integration Contract & Hosted Isolation**: Aligned function signatures to return a `Tuple[bool, str]` contract, cleanly separating hosted in-memory/vault sessions from local `.env` persistence without touching the serverless filesystem.
+- **Notion Integration Security & Hosted Isolation**: Completely removed Notion token storage from client-side Flask session cookies. In hosted mode, persistent connection strictly requires the encrypted Redis vault (or per-request browser-memory submission), with function signatures standardized to a `Tuple[bool, str]` contract.
 - **Frontend DOM Injection Prevention**: Replaced raw template string interpolation in Notion page selection and batch URL rows with safe DOM construction (`document.createElement`, `.value`, `.textContent`), eliminating XSS vectors.
 - **Shared Serverless Rate Limiting**: Added support for atomic Redis-backed rate limiting (`INCR` + `EXPIRE`) across serverless Lambda instances when Redis is configured, with graceful fallback to process-local in-memory limiting.
 

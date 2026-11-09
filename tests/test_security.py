@@ -57,6 +57,22 @@ class TestSecretKeyHandling(unittest.TestCase):
             resolved = resolve_flask_secret(is_production=False)
             self.assertEqual(resolved, valid_key)
 
+    def test_production_startup_blocks_when_secret_key_missing(self):
+        """In production mode, missing FLASK_SECRET_KEY safely blocks application functionality with HTTP 500."""
+        from app import app
+        client = app.test_client()
+        with patch("app._startup_error", "CRITICAL: Production requires an explicitly configured, secure FLASK_SECRET_KEY"):
+            # HTML request
+            res_html = client.get("/")
+            self.assertEqual(res_html.status_code, 500)
+            self.assertIn("Configuration Required", res_html.get_data(as_text=True))
+
+            # API request
+            res_api = client.get("/api/environment")
+            self.assertEqual(res_api.status_code, 500)
+            data = res_api.get_json()
+            self.assertEqual(data.get("code"), "CONFIGURATION_REQUIRED")
+
 
 class TestCredentialRedaction(unittest.TestCase):
     """Test credential masking and sanitization."""
@@ -312,6 +328,129 @@ class TestSSRFHardening(unittest.TestCase):
                 mock_context.close.assert_called_once()
                 mock_browser.close.assert_called_once()
 
+    def test_playwright_missing_content_length_oversized_response_interception(self):
+        """Playwright route_handler intercepts oversized responses even when Content-Length is missing."""
+        from unittest.mock import MagicMock
+        from scraper import scrape_with_browser, ScraperError
+
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+        mock_browser = MagicMock()
+        mock_browser.new_context.return_value = mock_context
+        mock_pw = MagicMock()
+        mock_pw.chromium.launch.return_value = mock_browser
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_pw
+
+        # Capture the route_handler passed to page.route
+        registered_handler = None
+        def mock_route_fn(pattern, handler):
+            nonlocal registered_handler
+            registered_handler = handler
+        mock_page.route.side_effect = mock_route_fn
+
+        # When goto executes, simulate a route firing with missing Content-Length and 6MB body
+        def mock_goto(url, **kwargs):
+            if registered_handler:
+                mock_route = MagicMock()
+                mock_req = MagicMock()
+                mock_req.resource_type = "document"
+                mock_req.url = "https://example.com/stream"
+                mock_route.request = mock_req
+
+                mock_resp = MagicMock()
+                mock_resp.headers = {}  # Missing Content-Length!
+                mock_resp.body.return_value = b"X" * (6 * 1024 * 1024)
+                mock_route.fetch.return_value = mock_resp
+
+                registered_handler(mock_route)
+                mock_route.abort.assert_called_with("aborted")
+
+        mock_page.goto.side_effect = mock_goto
+        mock_page.url = "https://example.com/stream"
+
+        with patch("playwright.sync_api.sync_playwright", return_value=mock_cm):
+            with patch("scraper.validate_safe_url", return_value="https://example.com/stream"):
+                with self.assertRaises(ScraperError) as ctx:
+                    scrape_with_browser("https://example.com/stream")
+                self.assertIn("exceeds maximum allowed size", str(ctx.exception))
+                mock_context.close.assert_called_once()
+                mock_browser.close.assert_called_once()
+
+    def test_playwright_inaccurate_content_length_oversized_response_interception(self):
+        """Playwright route_handler inspects actual body bytes when Content-Length is underreported."""
+        from unittest.mock import MagicMock
+        from scraper import scrape_with_browser, ScraperError
+
+        mock_page = MagicMock()
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+        mock_browser = MagicMock()
+        mock_browser.new_context.return_value = mock_context
+        mock_pw = MagicMock()
+        mock_pw.chromium.launch.return_value = mock_browser
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_pw
+
+        registered_handler = None
+        def mock_route_fn(pattern, handler):
+            nonlocal registered_handler
+            registered_handler = handler
+        mock_page.route.side_effect = mock_route_fn
+
+        def mock_goto(url, **kwargs):
+            if registered_handler:
+                mock_route = MagicMock()
+                mock_req = MagicMock()
+                mock_req.resource_type = "document"
+                mock_req.url = "https://example.com/fake-cl"
+                mock_route.request = mock_req
+
+                mock_resp = MagicMock()
+                mock_resp.headers = {"content-length": "100"}  # Inaccurate declared size!
+                mock_resp.body.return_value = b"Y" * (6 * 1024 * 1024)  # Actual 6 MB
+                mock_route.fetch.return_value = mock_resp
+
+                registered_handler(mock_route)
+                mock_route.abort.assert_called_with("aborted")
+
+        mock_page.goto.side_effect = mock_goto
+        mock_page.url = "https://example.com/fake-cl"
+
+        with patch("playwright.sync_api.sync_playwright", return_value=mock_cm):
+            with patch("scraper.validate_safe_url", return_value="https://example.com/fake-cl"):
+                with self.assertRaises(ScraperError) as ctx:
+                    scrape_with_browser("https://example.com/fake-cl")
+                self.assertIn("exceeds maximum allowed size", str(ctx.exception))
+                mock_context.close.assert_called_once()
+                mock_browser.close.assert_called_once()
+
+    def test_playwright_cleanup_on_browser_timeout(self):
+        """Browser and context are reliably closed when Playwright navigation encounters timeout."""
+        from unittest.mock import MagicMock
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+        from scraper import scrape_with_browser, ScraperError
+
+        mock_page = MagicMock()
+        mock_page.goto.side_effect = PlaywrightTimeoutError("Navigation timeout")
+        mock_context = MagicMock()
+        mock_context.new_page.return_value = mock_page
+        mock_browser = MagicMock()
+        mock_browser.new_context.return_value = mock_context
+        mock_pw = MagicMock()
+        mock_pw.chromium.launch.return_value = mock_browser
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_pw
+
+        with patch("playwright.sync_api.sync_playwright", return_value=mock_cm):
+            with patch("scraper.validate_safe_url", return_value="https://example.com/timeout"):
+                with self.assertRaises(ScraperError) as ctx:
+                    scrape_with_browser("https://example.com/timeout")
+                self.assertIn("timed out", str(ctx.exception))
+                mock_context.close.assert_called_once()
+                mock_browser.close.assert_called_once()
+
 
 class TestRateLimiting(unittest.TestCase):
     """Test built-in sliding-window rate limiting on sensitive routes."""
@@ -401,17 +540,19 @@ class TestNotionIntegration(unittest.TestCase):
         self.assertFalse(res_short[0])
         self.assertIn("too short", res_short[1])
 
-    def test_hosted_notion_storage_does_not_touch_filesystem(self):
-        """In hosted mode, Notion key is stored in session context without writing to .env."""
-        import tempfile
+    def test_hosted_notion_storage_does_not_leak_to_session_or_filesystem(self):
+        """In hosted mode without Redis vault, Notion token is rejected and never enters Flask session or .env."""
         from notion_service import save_notion_key_to_env, get_notion_key
         dummy_session = {}
         fake_token = "secret_" + "a" * 32
         success, msg = save_notion_key_to_env(fake_token, session_dict=dummy_session, is_hosted=True)
-        self.assertTrue(success)
-        self.assertEqual(dummy_session.get("_notion_token"), fake_token)
-        retrieved = get_notion_key(session_dict=dummy_session)
-        self.assertEqual(retrieved, fake_token)
+        self.assertFalse(success)
+        self.assertIn("requires the secure encrypted Redis vault", msg)
+        self.assertNotIn("_notion_token", dummy_session)
+        # get_notion_key must ignore any session_dict keys
+        with patch.dict(os.environ, {"NOTION_API_KEY": "", "NOTION_TOKEN": ""}, clear=False):
+            retrieved = get_notion_key(session_dict={"_notion_token": fake_token, "notion_api_key": fake_token})
+            self.assertIsNone(retrieved)
 
     def test_local_notion_storage_persists_to_env_safely(self):
         """In local mode, Notion key writes to specified .env file."""
@@ -438,8 +579,8 @@ class TestNotionIntegration(unittest.TestCase):
             if os.path.exists(temp_path):
                 os.remove(temp_path)
 
-    def test_notion_endpoints_confidentiality(self):
-        """Notion endpoints return connection metadata but never expose raw credentials."""
+    def test_notion_endpoints_hosted_vault_isolation(self):
+        """In hosted mode, /api/notion/connect saves to encrypted vault when configured; never exposes raw tokens."""
         from app import app
         client = app.test_client()
         client.get("/")
@@ -447,19 +588,39 @@ class TestNotionIntegration(unittest.TestCase):
             csrf = sess.get("_csrf_token", "")
 
         fake_token = "secret_" + "c" * 32
+        mock_vault = MagicMock()
+        mock_vault.save.return_value = True
+
         with patch("app.validate_notion_token", return_value=(True, "")):
             with patch("app.get_accessible_pages", return_value=[{"id": "p1", "title": "Dashboard", "icon": "📄"}]):
                 with patch("app.is_serverless_env", return_value=True):
-                    res = client.post(
-                        "/api/notion/connect",
-                        json={"token": fake_token},
-                        headers={"X-CSRF-Token": csrf}
-                    )
-                    self.assertEqual(res.status_code, 200)
-                    data = res.get_json()
-                    self.assertTrue(data.get("success"))
-                    self.assertNotIn(fake_token, str(data))
-                    self.assertEqual(len(data.get("pages", [])), 1)
+                    # Without vault: returns 400 VAULT_REQUIRED
+                    with patch("app._vault", None):
+                        res = client.post(
+                            "/api/notion/connect",
+                            json={"token": fake_token},
+                            headers={"X-CSRF-Token": csrf}
+                        )
+                        self.assertEqual(res.status_code, 400)
+                        self.assertEqual(res.get_json().get("code"), "VAULT_REQUIRED")
+
+                    # With vault: returns 200 and stores in vault
+                    with patch("app._vault", mock_vault):
+                        res2 = client.post(
+                            "/api/notion/connect",
+                            json={"token": fake_token},
+                            headers={"X-CSRF-Token": csrf}
+                        )
+                        self.assertEqual(res2.status_code, 200)
+                        data = res2.get_json()
+                        self.assertTrue(data.get("success"))
+                        self.assertNotIn(fake_token, str(data))
+                        mock_vault.save.assert_called()
+
+                        # Verify cookie session did not receive raw notion token
+                        with client.session_transaction() as sess2:
+                            self.assertNotIn("_notion_token", sess2)
+                            self.assertNotIn("notion_api_key", sess2)
 
 
 if __name__ == "__main__":

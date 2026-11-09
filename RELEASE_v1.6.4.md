@@ -15,7 +15,8 @@ WebBrief AI v1.6.4 is a focused security, reliability, and stability maintenance
 - **Zero Information Leakage**: Secrets are never derived from deployment IDs or commit hashes, and are never emitted in logs or error traces.
 
 ### 2. Playwright SSRF Defense & Response-Size Enforcement (`scraper.py`)
-- **Response-Size Interception Bug Fixed**: Eliminated invalid `route_handler(None)` calls. Implemented explicit state tracking (`size_exceeded`) and active route abortion (`route.abort("contentlength")`) when cumulative response bytes exceed `MAX_RESPONSE_BYTES` (5 MB).
+- **True Network Body Accounting**: Network response sizes are measured by fetching response bodies directly in route interception, enforcing the 5 MB limit regardless of whether `Content-Length` is present, omitted, chunked, or inaccurate.
+- **Valid Abort Error Codes**: Replaced non-standard abort codes with standard Playwright abort codes (`"aborted"` and `"blockedbyclient"`).
 - **Subresource & Redirect SSRF Hardening**: Every intercepted subresource and redirect destination is validated against `resolve_and_validate_safe_url()`. Any requests to loopback, private RFC 1918 subnets, CGNAT (`100.64.0.0/10`), cloud metadata endpoints (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`), non-standard ports, or unsupported schemes (`file://`, `data:`, etc.) are aborted immediately.
 - **Resource Budget & Process Teardown**: Enforces a strict 50-subrequest budget and 15-second navigation timeout. Browser processes and contexts are guaranteed to terminate cleanly in `finally` blocks.
 
@@ -23,9 +24,10 @@ WebBrief AI v1.6.4 is a focused security, reliability, and stability maintenance
 - **Atomic Persistence Check in `/api/save-config`**: Checked the return value of `_vault.save()` during hosted configuration saving. If Redis fails or is unreachable, the endpoint returns an HTTP 503 error rather than falsely reporting success.
 - **Frontend Input Preservation**: The user's input fields in Settings and Setup forms are preserved if the backend fails to persist credentials, allowing retry without losing entered keys.
 
-### 4. Notion Integration Contract & Hosted Separation (`notion_service.py`, `app.py`)
+### 4. Notion Integration Contract & Hosted Security (`notion_service.py`, `app.py`)
+- **Elimination of Session Cookie Storage**: Completely removed Notion token storage in client-side Flask session cookies. In hosted mode, persistent connection strictly requires the encrypted Redis vault; otherwise users supply tokens per-request in browser memory.
 - **Signature & Return Contract Aligned**: Updated `save_notion_key_to_env()` to return a consistent `Tuple[bool, str]` contract across all execution paths.
-- **Hosted vs Local Separation**: In hosted serverless mode (Vercel), Notion credentials are never written to the read-only/ephemeral filesystem. They are stored securely in the user's temporary encrypted session vault or session context. In local self-hosted mode, `NOTION_API_KEY` persists safely to `.env`.
+- **Hosted vs Local Separation**: In hosted serverless mode (Vercel), Notion credentials are never written to the read-only/ephemeral filesystem. In local self-hosted mode, `NOTION_API_KEY` persists safely to `.env`.
 - **Confidentiality Guaranteed**: Notion integration tokens are never returned in JSON payloads, exposed in client-readable session cookies, or logged.
 
 ### 5. Frontend DOM Injection Hardening (`templates/index.html`)
@@ -42,14 +44,14 @@ WebBrief AI v1.6.4 is a focused security, reliability, and stability maintenance
 
 ## Release Verification
 
-- Full test suite: **57 tests executed, 0 failures, 0 errors**.
+- Full test suite: **73 tests executed across all test suites, 0 failures, 0 errors**.
 - Tests cover:
-  - Secret key production vs development resolution.
+  - Secret key production vs development resolution and production configuration failure blocking.
   - SSRF protection (CGNAT, loopback, private ranges, cloud metadata, mixed-IP DNS rebinding).
-  - Scraper limits (static & Playwright 5 MB bounds, subrequest limits).
+  - Scraper limits (static & Playwright 5 MB bounds, missing/inaccurate Content-Length headers, subrequest limits, process teardown).
   - Redis vault lifecycle (encryption, expiration, session isolation, failure recovery).
   - Rate limiting (in-memory sliding window, Redis atomic pipeline, graceful fallback).
-  - Notion integration (tuple contract, hosted filesystem avoidance, confidentiality).
+  - Notion integration (tuple contract, hosted Redis vault requirement, session cookie exclusion, confidentiality).
   - Frontend DOM injection resistance.
   - Multi-provider AI summarization & fallback routing.
 

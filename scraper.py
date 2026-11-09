@@ -412,14 +412,14 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
 
         # Resource optimization & SSRF interception handler
         def route_handler(route):
-            nonlocal subrequest_count, size_exceeded
+            nonlocal subrequest_count, total_downloaded_bytes, size_exceeded
             if size_exceeded:
-                route.abort("contentlength")
+                route.abort("aborted")
                 return
 
             subrequest_count += 1
             if subrequest_count > MAX_SUBREQUESTS:
-                route.abort("budgetexceeded")
+                route.abort("aborted")
                 return
 
             req = route.request
@@ -446,7 +446,31 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
                 route.abort("blockedbyclient")
                 return
 
-            route.continue_()
+            # Response-size accounting: fetch the response to inspect true network body size
+            # regardless of whether Content-Length header is present, missing, chunked, or inaccurate.
+            try:
+                resp = route.fetch()
+                cl = resp.headers.get("content-length")
+                if cl and cl.isdigit() and (total_downloaded_bytes + int(cl)) > MAX_RESPONSE_BYTES:
+                    size_exceeded = True
+                    route.abort("aborted")
+                    return
+
+                body = resp.body()
+                actual_bytes = len(body)
+                if (total_downloaded_bytes + actual_bytes) > MAX_RESPONSE_BYTES:
+                    size_exceeded = True
+                    route.abort("aborted")
+                    return
+
+                total_downloaded_bytes += actual_bytes
+                route.fulfill(response=resp, body=body)
+            except Exception:
+                try:
+                    route.abort("aborted")
+                except Exception:
+                    pass
+                return
 
         page.route("**/*", route_handler)
 

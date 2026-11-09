@@ -301,8 +301,8 @@ def _vault_config():
 
 @app.before_request
 def check_startup_configuration():
-    """Fails safely with an informative HTTP 500 response if strict production configuration is enforced and missing."""
-    if _startup_error and os.getenv("STRICT_PRODUCTION_SECRET", "0").lower() in ("1", "true"):
+    """Fails safely with an informative HTTP 500 response if production configuration is missing."""
+    if _startup_error:
         if request.path in ("/health", "/api/health"):
             return jsonify({
                 "status": "error",
@@ -1250,7 +1250,7 @@ def compare_export_pdf():
 @app.route("/api/notion/status", methods=["GET"])
 def api_notion_status():
     v_cfg = _vault_config() if _vault else None
-    configured = has_notion_config(session_dict=session, vault_config=v_cfg)
+    configured = has_notion_config(vault_config=v_cfg)
     return jsonify({
         "configured": configured,
         "is_hosted": is_serverless_env(),
@@ -1278,15 +1278,13 @@ def api_notion_connect():
                 return jsonify({"error": "Failed to store Notion token in temporary vault."}), 503
             success, save_msg = True, "Notion connected for active temporary session."
         else:
-            success, save_msg = save_notion_key_to_env(
-                token,
-                session_dict=session,
-                is_hosted=True,
-            )
+            return jsonify({
+                "error": "Persistent hosted Notion integration requires the secure encrypted Redis vault. Please configure REDIS_URL and CREDENTIAL_ENCRYPTION_KEY in your deployment environment variables, or supply token per-request in browser memory.",
+                "code": "VAULT_REQUIRED"
+            }), 400
     else:
         success, save_msg = save_notion_key_to_env(
             token,
-            session_dict=session,
             is_hosted=False,
         )
 
@@ -1315,7 +1313,7 @@ def api_notion_disconnect():
 @app.route("/api/notion/pages", methods=["GET"])
 def api_notion_pages():
     v_cfg = _vault_config() if _vault else None
-    token = get_notion_key(session_dict=session, vault_config=v_cfg)
+    token = get_notion_key(provided_token=request.args.get("token"), vault_config=v_cfg)
     if not token:
         return jsonify({"error": "Notion is not connected."}), 401
     pages = get_accessible_pages(api_key=token)
@@ -1326,7 +1324,7 @@ def api_notion_pages():
 def api_notion_export():
     v_cfg = _vault_config() if _vault else None
     data = request.get_json() or {}
-    token = get_notion_key(provided_token=data.get("notion_token"), session_dict=session, vault_config=v_cfg)
+    token = get_notion_key(provided_token=data.get("notion_token"), vault_config=v_cfg)
     if not token:
         return jsonify({"error": "Notion is not connected. Please connect in Settings."}), 401
 
