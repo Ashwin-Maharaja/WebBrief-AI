@@ -741,13 +741,13 @@ def enforce_byok_onboarding():
 
         if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return jsonify({
-                "error": "AI provider credentials not configured. Please complete setup wizard.",
-                "redirect": url_for("setup")
+                "error": "AI provider credentials not configured. Please configure your credentials in Settings.",
+                "redirect": url_for("settings")
             }), 401
 
-        return redirect(url_for("setup"))
+        return redirect(url_for("settings"))
 
-    return redirect(url_for("setup"))
+    return redirect(url_for("settings"))
 
 
 @app.route("/health", methods=["GET"])
@@ -782,24 +782,8 @@ def home():
 
 @app.route("/setup")
 def setup():
-    """First-run setup wizard and provider configuration page."""
-    mode = request.args.get("mode", "").strip().lower()
-    is_conf = has_valid_config(session_dict=session)
-    workspace_dir = os.path.dirname(os.path.abspath(__file__))
-    env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
-
-    if is_conf and mode != "change":
-        return redirect(url_for("settings"))
-
-    provider_config = get_active_provider_config(session_dict=session)
-    return render_template(
-        "setup.html",
-        is_configured=is_conf,
-        env_exists=env_exists,
-        mode=mode,
-        provider_config=provider_config,
-        provider_catalogue=PROVIDER_CATALOGUE,
-    )
+    """Redirect deprecated setup wizard to settings."""
+    return redirect(url_for("settings"), code=301)
 
 
 @app.route("/settings")
@@ -1135,8 +1119,8 @@ def compare_articles_route():
 
     if not has_valid_config(session_dict=session, request_data=data):
         return jsonify({
-            "error": "AI provider credentials not configured. Please complete setup wizard.",
-            "redirect": url_for("setup")
+            "error": "AI provider credentials not configured. Please configure your credentials in Settings.",
+            "redirect": url_for("settings")
         }), 401
 
     directives = get_custom_directives()
@@ -1395,7 +1379,7 @@ def api_search_semantic():
     if not has_valid_config(session_dict=session, request_data=data):
         return jsonify({
             "error": "AI provider credentials required to embed search queries. Please configure your credentials in Settings.",
-            "redirect": url_for("setup")
+            "redirect": url_for("settings")
         }), 401
 
     try:
@@ -1452,7 +1436,7 @@ def api_search_rebuild_index():
     if not has_valid_config(session_dict=session, request_data=data):
         return jsonify({
             "error": "AI provider credentials required to generate embeddings. Please configure your credentials in Settings.",
-            "redirect": url_for("setup")
+            "redirect": url_for("settings")
         }), 401
 
     try:
@@ -1583,7 +1567,7 @@ def save_key():
             return jsonify({"success": False, "error": val_msg}), 400
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
-        return render_template("setup.html", error=val_msg, is_configured=has_valid_config(session), env_exists=env_exists), 400
+        return render_template("settings.html", error=val_msg, is_configured=has_valid_config(session), env_exists=env_exists), 400
 
     # Step 2: Validate fallback provider credentials if fallback is enabled
     fallback_enabled = data.get("fallback_enabled") in (True, "true", "1", 1, "on")
@@ -1593,7 +1577,7 @@ def save_key():
             err = "Fallback provider cannot be identical to the primary provider."
             if is_ajax:
                 return jsonify({"success": False, "error": err}), 400
-            return render_template("setup.html", error=err, is_configured=has_valid_config(session)), 400
+            return render_template("settings.html", error=err, is_configured=has_valid_config(session)), 400
 
         if fallback_provider == "cloudflare":
             fb_id = data.get("cloudflare_account_id", "").strip()
@@ -1602,14 +1586,14 @@ def save_key():
             if not fb_valid:
                 if is_ajax:
                     return jsonify({"success": False, "error": f"Fallback provider error: {fb_msg}"}), 400
-                return render_template("setup.html", error=f"Fallback provider error: {fb_msg}", is_configured=has_valid_config(session)), 400
+                return render_template("settings.html", error=f"Fallback provider error: {fb_msg}", is_configured=has_valid_config(session)), 400
         elif fallback_provider == "groq":
             fb_key = data.get("groq_api_key", "").strip()
             fb_valid, fb_msg = validate_groq_credentials(fb_key)
             if not fb_valid:
                 if is_ajax:
                     return jsonify({"success": False, "error": f"Fallback provider error: {fb_msg}"}), 400
-                return render_template("setup.html", error=f"Fallback provider error: {fb_msg}", is_configured=has_valid_config(session)), 400
+                return render_template("settings.html", error=f"Fallback provider error: {fb_msg}", is_configured=has_valid_config(session)), 400
 
     # Hosted serverless mode: do not touch filesystem
     if is_serverless_env():
@@ -1631,7 +1615,7 @@ def save_key():
                 err_msg = "Failed to store provider credentials in temporary vault."
                 if is_ajax:
                     return jsonify({"success": False, "error": err_msg}), 503
-                return render_template("setup.html", error=err_msg, is_configured=False), 503
+                return render_template("settings.html", error=err_msg, is_configured=False), 503
 
         if is_ajax:
             return jsonify({
@@ -1654,7 +1638,7 @@ def save_key():
             return jsonify({"success": False, "error": save_message}), 400
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
-        return render_template("setup.html", error=save_message, is_configured=has_valid_config(session), env_exists=env_exists), 400
+        return render_template("settings.html", error=save_message, is_configured=has_valid_config(session), env_exists=env_exists), 400
 
     if is_ajax:
         return jsonify({"success": True, "message": save_message, "redirect": url_for("home")})
@@ -1666,7 +1650,7 @@ def save_key():
 def clear_key():
     """Removes stored provider credentials and routing configuration."""
     clear_saved_provider_config()
-    return redirect(url_for("setup"))
+    return redirect(url_for("settings"))
 
 
 # -------------------------------------------------------------
@@ -1702,9 +1686,9 @@ def summarize():
         return render_template("index.html", error=error_msg, url="", mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
 
     if not has_valid_config(session_dict=session, request_data=data):
-        error_msg = "AI provider credentials not configured. Please complete setup wizard."
+        error_msg = "AI provider credentials not configured. Please configure your credentials in Settings."
         if is_ajax:
-            return jsonify({"error": error_msg, "redirect": url_for("setup")}), 401
+            return jsonify({"error": error_msg, "redirect": url_for("settings")}), 401
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=False), 401
 
     try:

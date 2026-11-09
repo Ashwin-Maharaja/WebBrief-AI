@@ -244,6 +244,22 @@ def extract_readable_content(html: str) -> tuple[str, str]:
         if text:
             article_text += text + "\n\n"
 
+    # If <p> tags yielded insufficient text, extract from broader content blocks
+    # (handles modern HTML structures using div, section, li, blockquote, headings)
+    if len(article_text.strip()) < MIN_SUFFICIENT_LENGTH:
+        blocks = []
+        for el in container.find_all(["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "div"]):
+            # Skip parent containers whose children are already processed
+            if el.name == "div" and el.find(["p", "div", "article", "section"]):
+                continue
+            txt = el.get_text(strip=True)
+            if txt and len(txt) > 25 and txt not in blocks:
+                blocks.append(txt)
+        if blocks:
+            fallback_text = "\n\n".join(blocks)
+            if len(fallback_text.strip()) > len(article_text.strip()):
+                article_text = fallback_text
+
     return page_title, article_text.strip()
 
 
@@ -394,7 +410,15 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
                 ],
             )
         except Exception as e:
-            raise ScraperError(f"Failed to start headless browser engine: {str(e)}")
+            err_str = str(e)
+            if "Executable doesn't exist" in err_str or "playwright install" in err_str or "cannot find chromium" in err_str.lower():
+                raise ScraperError(
+                    "Headless browser engine (Chromium) is not installed in this environment. "
+                    "Dynamic browser rendering is unavailable on serverless hosting."
+                )
+            clean_err = re.sub(r"/[a-zA-Z0-9_\-\.\/]+", "[path]", err_str)
+            clean_err = clean_err.split("╔")[0].strip()
+            raise ScraperError(f"Failed to start headless browser engine: {clean_err}")
 
         context = browser.new_context(
             user_agent=(
@@ -595,9 +619,28 @@ def scrape_article(url: str) -> str:
             elif not article_text.strip() and not b_text.strip():
                 raise ScraperError("Could not extract readable article text from this webpage.")
         except Exception as be:
-            # If both methods failed, report clear error
-            if not article_text.strip():
-                if static_error:
+            # If dynamic browser fallback failed, check if browser is missing
+            is_browser_missing = (
+                "Headless browser engine" in str(be)
+                or "Executable doesn't exist" in str(be)
+                or "playwright install" in str(be)
+            )
+            # If static extraction got some content, use it rather than failing
+            if article_text.strip():
+                pass
+            else:
+                if is_browser_missing:
+                    if static_error:
+                        raise ScraperError(
+                            f"Unable to extract content: Static extraction failed ({static_error}), "
+                            "and dynamic browser rendering is unavailable in this hosted serverless environment."
+                        )
+                    else:
+                        raise ScraperError(
+                            "Unable to extract content: This webpage requires client-side JavaScript execution, "
+                            "but dynamic browser rendering is unavailable in this hosted serverless environment."
+                        )
+                elif static_error:
                     raise ScraperError(
                         f"Static extraction failed ({static_error}) and dynamic browser fallback failed: {str(be)}"
                     )

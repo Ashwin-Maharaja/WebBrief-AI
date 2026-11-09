@@ -25,7 +25,6 @@ class TestUIResponsiveness(unittest.TestCase):
             "result": os.path.join(TEMPLATES_DIR, "result.html"),
             "history": os.path.join(TEMPLATES_DIR, "history.html"),
             "settings": os.path.join(TEMPLATES_DIR, "settings.html"),
-            "setup": os.path.join(TEMPLATES_DIR, "setup.html"),
         }
         cls.templates = {}
         for name, path in cls.template_files.items():
@@ -219,6 +218,22 @@ class TestUIResponsiveness(unittest.TestCase):
         self.assertIn(".tab-btn", mq_480)
         self.assertIn(".claims-table", mq_480)
         self.assertIn(".stat-pills-row", mq_480)
+
+    def test_setup_page_and_button_removed(self):
+        """Ensure the setup wizard template and button are completely removed and route redirects."""
+        setup_template_path = os.path.join(TEMPLATES_DIR, "setup.html")
+        self.assertFalse(os.path.exists(setup_template_path), "templates/setup.html must be removed.")
+
+        # Ensure index.html does not contain the setup button
+        self.assertNotIn('href="{{ url_for(\'setup\') }}"', self.templates["index"])
+        self.assertNotIn("Configure Cloudflare / Groq", self.templates["index"])
+
+        # Ensure /setup route redirects to /settings
+        from app import app
+        with app.test_client() as client:
+            resp = client.get("/setup", follow_redirects=False)
+            self.assertEqual(resp.status_code, 301)
+            self.assertIn("/settings", resp.headers.get("Location", ""))
 
     # --------------------------------------------------------------------------
     # Helper Methods

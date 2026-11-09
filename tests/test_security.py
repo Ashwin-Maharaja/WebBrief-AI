@@ -452,6 +452,72 @@ class TestSSRFHardening(unittest.TestCase):
                 mock_browser.close.assert_called_once()
 
 
+    def test_playwright_missing_executable_error_handling(self):
+        """When Chromium binary is missing in serverless environments, error is cleanly sanitized."""
+        from unittest.mock import MagicMock
+        from scraper import scrape_with_browser, ScraperError
+
+        mock_pw = MagicMock()
+        mock_pw.chromium.launch.side_effect = Exception(
+            "BrowserType.launch: Executable doesn't exist at /home/sbx_user1051/.cache/ms-playwright/chromium\n"
+            "\u2554\u2550\u2550\u2550\n"
+            "\u2551 Looks like Playwright was just installed or updated.\n"
+            "\u255a\u2550\u2550\u2550"
+        )
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_pw
+
+        with patch("playwright.sync_api.sync_playwright", return_value=mock_cm):
+            with patch("scraper.validate_safe_url", return_value="https://example.com/no-browser"):
+                with self.assertRaises(ScraperError) as ctx:
+                    scrape_with_browser("https://example.com/no-browser")
+                err_msg = str(ctx.exception)
+                self.assertIn("Headless browser engine (Chromium) is not installed", err_msg)
+                self.assertNotIn("sbx_user", err_msg)
+                self.assertNotIn("\u2554", err_msg)
+
+    def test_scrape_article_preserves_static_content_when_browser_missing(self):
+        """If static extraction yielded content and dynamic fallback fails due to missing browser, content is preserved."""
+        from unittest.mock import MagicMock
+        from scraper import scrape_article
+
+        mock_pw = MagicMock()
+        mock_pw.chromium.launch.side_effect = Exception("Executable doesn't exist at /home/sbx_user/.cache")
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_pw
+
+        short_html = "<html><head><title>Test Article</title></head><body><p>Short paragraph extracted statically.</p></body></html>"
+
+        with patch("playwright.sync_api.sync_playwright", return_value=mock_cm):
+            with patch("scraper.validate_safe_url", return_value="https://example.com/short"):
+                with patch("scraper.scrape_with_requests", return_value=short_html):
+                    result = scrape_article("https://example.com/short")
+                    self.assertIn("Short paragraph extracted statically.", result)
+                    self.assertIn("Test Article", result)
+
+    def test_scrape_article_clean_error_when_empty_and_browser_missing(self):
+        """If static extraction yielded no content and dynamic fallback fails, a helpful hosted error is raised."""
+        from unittest.mock import MagicMock
+        from scraper import scrape_article, ScraperError
+
+        mock_pw = MagicMock()
+        mock_pw.chromium.launch.side_effect = Exception("Executable doesn't exist at /home/sbx_user/.cache")
+        mock_cm = MagicMock()
+        mock_cm.__enter__.return_value = mock_pw
+
+        empty_html = "<html><head><title>SPA</title></head><body><div id='app'></div></body></html>"
+
+        with patch("playwright.sync_api.sync_playwright", return_value=mock_cm):
+            with patch("scraper.validate_safe_url", return_value="https://example.com/spa"):
+                with patch("scraper.scrape_with_requests", return_value=empty_html):
+                    with self.assertRaises(ScraperError) as ctx:
+                        scrape_article("https://example.com/spa")
+                    err_msg = str(ctx.exception)
+                    self.assertIn("This webpage requires client-side JavaScript execution", err_msg)
+                    self.assertIn("hosted serverless environment", err_msg)
+                    self.assertNotIn("sbx_user", err_msg)
+
+
 class TestRateLimiting(unittest.TestCase):
     """Test built-in sliding-window rate limiting on sensitive routes."""
 

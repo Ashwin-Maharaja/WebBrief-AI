@@ -146,13 +146,7 @@
             </div>
             {% endif %}
 
-            <!-- Friendly Quick Link Chip for Provider Configuration -->
-            <div style="display: flex; justify-content: flex-end; align-items: center; margin-bottom: 8px;">
-                <a href="{{ url_for('setup') }}" style="display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); text-decoration: none; padding: 4px 10px; border-radius: 9999px; background: var(--section-bg); border: 1px solid var(--border-color); transition: all 0.2s;" onmouseover="this.style.color='var(--primary)'; this.style.borderColor='var(--primary)'" onmouseout="this.style.color='var(--text-muted)'; this.style.borderColor='var(--border-color)'">
-                    <span>⚡ Configure Cloudflare / Groq</span>
-                    <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
-                </a>
-            </div>
+
 
             <!-- Mode Switcher Tabs: Single URL vs Batch Summarize vs Compare Articles vs Semantic Search -->
             <div class="tab-bar">
