@@ -42,7 +42,11 @@ from services.providers.catalogue import (
     PROVIDER_CATALOGUE,
     get_models_for_provider,
     get_default_model,
+    get_allowed_models,
+    is_valid_model,
+    validate_model_id,
 )
+from services.providers.exceptions import ProviderInvalidModelError
 from history import (
     add_history_entry,
     get_history,
@@ -474,8 +478,14 @@ def store_temporary_credentials():
     if not isinstance(payload, dict):
         return jsonify({"error": "JSON object required."}), 400
 
+    gemini_model = (payload.get("gemini_model") or payload.get("model") or "").strip()
+    if gemini_model:
+        if not is_valid_model(gemini_model, "gemini"):
+            allowed = get_allowed_models("gemini")
+            return jsonify({"error": f"Unsupported model '{gemini_model}'. Supported models: {', '.join(allowed)}"}), 400
+
     gemini_key = (payload.get("gemini_api_key") or payload.get("api_key") or "").strip()
-    valid, msg = validate_gemini_credentials(gemini_key)
+    valid, msg = validate_gemini_credentials(gemini_key, model=gemini_model or None)
     if not valid:
         return jsonify({"error": f"Provider credentials failed validation: {msg}"}), 400
 
@@ -485,8 +495,8 @@ def store_temporary_credentials():
     clean = {k: v for k, v in payload.items() if k in allowed and (isinstance(v, str) or isinstance(v, bool))}
     clean["gemini_api_key"] = gemini_key
     clean["primary_provider"] = "gemini"
-    if payload.get("gemini_model"):
-        clean["gemini_model"] = payload["gemini_model"].strip()
+    if gemini_model:
+        clean["gemini_model"] = gemini_model
 
     existing_cfg = _vault_config() or {}
     if "notion_token" in existing_cfg and "notion_token" not in clean:
@@ -713,7 +723,16 @@ def enforce_byok_onboarding():
 
     # Handle per-request credentials in hosted mode
     if request.endpoint in ("summarize", "batch_summarize", "compare_articles_route"):
-        payload = request.get_json() if request.is_json else request.form.to_dict()
+        payload = request.get_json(silent=True) if request.is_json else request.form.to_dict()
+        if isinstance(payload, dict):
+            req_model = (payload.get("gemini_model") or payload.get("model") or "").strip()
+            if req_model and not is_valid_model(req_model, "gemini"):
+                allowed = get_allowed_models("gemini")
+                err_msg = f"Unsupported model '{req_model}'. Supported models: {', '.join(allowed)}"
+                if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+                    return jsonify({"error": err_msg}), 400
+                return render_template("index.html", error=err_msg, is_configured=False), 400
+
         if has_valid_config(session_dict=session, request_data=payload):
             return None
 
@@ -726,6 +745,14 @@ def enforce_byok_onboarding():
         return redirect(url_for("settings"))
 
     return redirect(url_for("settings"))
+
+
+@app.errorhandler(ProviderInvalidModelError)
+def handle_provider_invalid_model_error(error):
+    err_msg = redact_credentials(str(error))
+    if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
+        return jsonify({"error": err_msg}), 400
+    return render_template("index.html", error=err_msg, is_configured=False), 400
 
 
 @app.route("/health", methods=["GET"])
@@ -984,6 +1011,11 @@ def batch_summarize():
     if len(cleaned_urls) > MAX_BATCH_URLS:
         cleaned_urls = cleaned_urls[:MAX_BATCH_URLS]
 
+    req_model = (data.get("gemini_model") or data.get("model") or "").strip()
+    if req_model and not is_valid_model(req_model, "gemini"):
+        allowed = get_allowed_models("gemini")
+        return jsonify({"error": f"Unsupported model '{req_model}'. Supported models: {', '.join(allowed)}"}), 400
+
     mode = data.get("mode", DEFAULT_MODE)
     api_key = data.get("api_key")
     custom_directive = data.get("custom_directive")
@@ -1095,6 +1127,11 @@ def compare_articles_route():
     if not url_a or not url_b:
         return jsonify({"error": "Please provide both Article A and Article B URLs for comparison."}), 400
 
+    req_model = (data.get("gemini_model") or data.get("model") or "").strip()
+    if req_model and not is_valid_model(req_model, "gemini"):
+        allowed = get_allowed_models("gemini")
+        return jsonify({"error": f"Unsupported model '{req_model}'. Supported models: {', '.join(allowed)}"}), 400
+
     if not has_valid_config(session_dict=session, request_data=data):
         return jsonify({
             "error": "AI provider credentials not configured. Please configure your credentials in Settings.",
@@ -1152,7 +1189,7 @@ def compare_articles_route():
             "url_b": url_b,
         })
 
-    except ComparisonError as ce:
+    except (ComparisonError, ProviderInvalidModelError) as ce:
         return jsonify({"error": redact_credentials(str(ce))}), 400
     except Exception as e:
         return jsonify({"error": redact_credentials(f"Comparative research failed: {str(e)}")}), 500
@@ -1491,8 +1528,16 @@ def validate_key():
     if provider not in ("gemini", ""):
         return jsonify({"valid": False, "message": f"Unsupported provider: '{provider}'"}), 400
 
+    model = (data.get("gemini_model") or data.get("model") or "").strip()
+    if model and not is_valid_model(model, "gemini"):
+        allowed = get_allowed_models("gemini")
+        return jsonify({
+            "valid": False,
+            "message": f"Unsupported model '{model}'. Supported models: {', '.join(allowed)}"
+        }), 400
+
     api_key = (data.get("gemini_api_key") or data.get("api_key") or "").strip()
-    is_valid, message = validate_gemini_credentials(api_key)
+    is_valid, message = validate_gemini_credentials(api_key, model=model or None)
 
     status_code = 200 if is_valid else 400
     return jsonify({"valid": is_valid, "message": message}), status_code
@@ -1515,9 +1560,20 @@ def save_key():
 
     confirm_overwrite = data.get("confirm_overwrite") in (True, "true", "1", 1, "on")
 
-    # Step 1: Validate Gemini API key
+    # Step 1: Validate model if provided
+    model = (data.get("gemini_model") or data.get("model") or "").strip()
+    if model and not is_valid_model(model, "gemini"):
+        allowed = get_allowed_models("gemini")
+        err_msg = f"Unsupported model '{model}'. Supported models: {', '.join(allowed)}"
+        if is_ajax:
+            return jsonify({"success": False, "error": err_msg}), 400
+        workspace_dir = os.path.dirname(os.path.abspath(__file__))
+        env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
+        return render_template("settings.html", error=err_msg, is_configured=has_valid_config(session), env_exists=env_exists), 400
+
+    # Step 2: Validate Gemini API key
     gemini_key = (data.get("gemini_api_key") or data.get("api_key") or "").strip()
-    is_valid, val_msg = validate_gemini_credentials(gemini_key)
+    is_valid, val_msg = validate_gemini_credentials(gemini_key, model=model or None)
 
     if not is_valid:
         if is_ajax:
@@ -1613,6 +1669,14 @@ def summarize():
             return jsonify({"error": error_msg}), 400
         return render_template("index.html", error=error_msg, url="", mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
 
+    req_model = (data.get("gemini_model") or data.get("model") or "").strip()
+    if req_model and not is_valid_model(req_model, "gemini"):
+        allowed = get_allowed_models("gemini")
+        error_msg = f"Unsupported model '{req_model}'. Supported models: {', '.join(allowed)}"
+        if is_ajax:
+            return jsonify({"error": error_msg}), 400
+        return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
+
     if not has_valid_config(session_dict=session, request_data=data):
         error_msg = "AI provider credentials not configured. Please configure your credentials in Settings."
         if is_ajax:
@@ -1670,6 +1734,12 @@ def summarize():
 
         return render_template("index.html", summary=summary, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session))
 
+    except ProviderInvalidModelError as e:
+        error_msg = redact_credentials(str(e))
+        if is_ajax:
+            return jsonify({"error": error_msg}), 400
+        return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
+
     except ScraperError as e:
         error_msg = redact_credentials(str(e))
         if is_ajax:
@@ -1678,9 +1748,10 @@ def summarize():
 
     except SummarizerError as e:
         error_msg = redact_credentials(str(e))
+        status_code = 400 if (isinstance(getattr(e, "__cause__", None), ProviderInvalidModelError) or "unsupported" in error_msg.lower()) else 500
         if is_ajax:
-            return jsonify({"error": error_msg}), 500
-        return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 500
+            return jsonify({"error": error_msg}), status_code
+        return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), status_code
 
     except Exception as e:
         error_msg = redact_credentials(f"An unexpected error occurred: {str(e)}")

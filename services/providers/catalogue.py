@@ -48,3 +48,38 @@ def get_default_model(provider_id: str = "gemini") -> str:
     if not provider_data:
         provider_data = PROVIDER_CATALOGUE.get("gemini", {})
     return provider_data.get("default_model", "gemini-3.8-flash")
+
+
+def get_allowed_models(provider_id: str = "gemini") -> List[str]:
+    """Returns the list of allowlisted model IDs for the given provider."""
+    models = get_models_for_provider(provider_id)
+    return [m["id"] for m in models if "id" in m]
+
+
+def is_valid_model(model_id: Optional[str], provider_id: str = "gemini") -> bool:
+    """Checks whether the given model_id is allowlisted for the provider."""
+    if not model_id or not isinstance(model_id, str):
+        return False
+    return model_id.strip() in get_allowed_models(provider_id)
+
+
+def validate_model_id(model_id: Optional[str], provider_id: str = "gemini") -> str:
+    """
+    Validates model_id against the provider catalogue.
+    If model_id is None or empty, returns the provider's default model.
+    If model_id is invalid or unsupported, raises ProviderInvalidModelError.
+    Never silently substitutes another model.
+    """
+    if not model_id:
+        return get_default_model(provider_id)
+    clean_id = str(model_id).strip()
+    allowed = get_allowed_models(provider_id)
+    if clean_id not in allowed:
+        from .exceptions import ProviderInvalidModelError
+        raise ProviderInvalidModelError(
+            f"Unsupported or unverified model '{clean_id}' for provider '{provider_id}'. "
+            f"Allowed models: {', '.join(allowed)}",
+            provider=provider_id,
+            model=clean_id,
+        )
+    return clean_id

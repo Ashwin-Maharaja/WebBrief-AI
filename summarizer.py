@@ -367,7 +367,10 @@ def summarize_text(
             raise SummarizerError(
                 "No AI provider configured. Please configure Google Gemini API key in Settings."
             )
-        router = get_router(request_data=req_payload)
+        try:
+            router = get_router(request_data=req_payload)
+        except ProviderInvalidModelError as ime:
+            raise SummarizerError(str(ime)) from ime
 
     # Step 1 & 2: Divide content into manageable chunks
     chunks = chunk_text(article_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
@@ -391,7 +394,7 @@ def summarize_text(
         try:
             router_res = router.generate_structured_json(messages=messages)
         except ProviderError as pe:
-            raise SummarizerError(str(pe))
+            raise SummarizerError(str(pe)) from pe
         except Exception as e:
             raise SummarizerError(f"Summarization failed: {str(e)}")
 
@@ -481,7 +484,7 @@ def summarize_text(
     try:
         final_res = router.generate_structured_json(messages=reduce_messages)
     except ProviderError as pe:
-        raise SummarizerError(str(pe))
+        raise SummarizerError(str(pe)) from pe
     except Exception as e:
         raise SummarizerError(f"Failed to synthesize final summary: {str(e)}")
 

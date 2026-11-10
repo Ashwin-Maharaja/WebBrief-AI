@@ -41,9 +41,16 @@ def get_db_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
         return conn
 
 
+_INITIALIZED_DBS: set = set()
+
+
 def init_db(db_path: Optional[str] = None) -> None:
     """Initializes the database schema if not already present."""
     if is_serverless_env() and db_path is None:
+        return
+
+    target_path = db_path or get_default_db_path()
+    if target_path in _INITIALIZED_DBS:
         return
 
     try:
@@ -83,6 +90,7 @@ def init_db(db_path: Optional[str] = None) -> None:
                 except sqlite3.OperationalError:
                     pass
         conn.close()
+        _INITIALIZED_DBS.add(target_path)
 
         # Initialize vector store table in the same database
         try:

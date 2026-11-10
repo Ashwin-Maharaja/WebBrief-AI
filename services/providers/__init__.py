@@ -15,7 +15,14 @@ from .exceptions import (
 from .base import BaseProvider
 from .gemini import GeminiProvider
 from .router import AIRouter, RouterResult
-from .catalogue import PROVIDER_CATALOGUE, get_models_for_provider, get_default_model
+from .catalogue import (
+    PROVIDER_CATALOGUE,
+    get_models_for_provider,
+    get_default_model,
+    get_allowed_models,
+    is_valid_model,
+    validate_model_id,
+)
 
 __all__ = [
     "ProviderError",
@@ -33,4 +40,7 @@ __all__ = [
     "PROVIDER_CATALOGUE",
     "get_models_for_provider",
     "get_default_model",
+    "get_allowed_models",
+    "is_valid_model",
+    "validate_model_id",
 ]

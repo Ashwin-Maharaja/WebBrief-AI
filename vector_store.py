@@ -33,6 +33,9 @@ class VectorStoreError(Exception):
     pass
 
 
+_INITIALIZED_VECTOR_DBS: set = set()
+
+
 # -------------------------------------------------------------
 # Database Schema Initialization
 # -------------------------------------------------------------
@@ -40,6 +43,11 @@ def init_vector_store(db_path: Optional[str] = None) -> None:
     """Initializes the summary_embeddings table inside the SQLite database."""
     if is_serverless_env() and db_path is None:
         return
+    from history import get_default_db_path
+    target_path = db_path or get_default_db_path()
+    if target_path in _INITIALIZED_VECTOR_DBS:
+        return
+
     init_db(db_path)
     try:
         conn = get_db_connection(db_path)
@@ -59,6 +67,7 @@ def init_vector_store(db_path: Optional[str] = None) -> None:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_model ON summary_embeddings(model)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_hash ON summary_embeddings(content_hash)")
         conn.close()
+        _INITIALIZED_VECTOR_DBS.add(target_path)
     except Exception as e:
         logger.warning("Failed to initialize vector store table: %s", str(e))
 

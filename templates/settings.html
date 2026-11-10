@@ -227,10 +227,6 @@
                 </p>
 
                 <div class="status-box">
-                    <p class="directive-hint" style="font-size: 0.82rem; color: var(--text-muted); margin: 0 0 10px 0; line-height: 1.45;">
-                        💡 <b>Default Hint:</b> Customize how summaries are generated — e.g. <i>"Focus on core architecture, benchmarks, and security trade-offs."</i>
-                    </p>
-
                     <div class="form-group" style="margin-bottom: 0.75rem; padding-top: 4px;">
                         <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
                             <label for="custom-directive-input" class="form-label" style="margin-bottom: 0;">Directives</label>
@@ -244,7 +240,7 @@
                             class="form-control"
                             rows="3"
                             maxlength="{{ max_directive_length }}"
-                            placeholder="💡 Hint: e.g. Highlight revenue growth; focus on developer implications, benchmarks, and actionable insights..."
+                            placeholder="Hint: Highlight revenue growth; focus on developer implications, benchmarks, and actionable insights..."
                             style="resize: vertical; font-size: 0.9rem; padding: 12px; line-height: 1.5; margin-top: 4px;"
                         >{{ custom_directive }}</textarea>
                         <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">
@@ -355,6 +351,30 @@
             updateDirectiveCharCount();
         }
 
+        // Load saved preferences on page open
+        async function loadSavedDirectives() {
+            try {
+                if (window.StorageAdapter) {
+                    const prefs = await window.StorageAdapter.getPreferences();
+                    if (directiveInput && prefs.custom_directive !== undefined) {
+                        directiveInput.value = prefs.custom_directive || "";
+                    }
+                    if (directiveToggle && prefs.custom_directive_enabled !== undefined) {
+                        directiveToggle.checked = Boolean(prefs.custom_directive_enabled);
+                    }
+                    updateDirectiveCharCount();
+                }
+            } catch (err) {
+                console.warn("[WebBrief AI] Failed to load saved directives:", err);
+            }
+        }
+
+        if (document.readyState === "loading") {
+            document.addEventListener("DOMContentLoaded", loadSavedDirectives);
+        } else {
+            loadSavedDirectives();
+        }
+
         if (saveDirectiveBtn) {
             saveDirectiveBtn.addEventListener("click", async () => {
                 const directive = directiveInput.value.trim();
@@ -365,17 +385,27 @@
                 directiveFeedback.style.color = "var(--primary)";
 
                 try {
-                    const res = await fetch("/api/preferences", {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ custom_directive: directive, custom_directive_enabled: enabled })
-                    });
-                    const data = await res.json();
-                    if (res.ok && data.success) {
+                    let result;
+                    if (window.StorageAdapter) {
+                        result = await window.StorageAdapter.savePreferences({
+                            custom_directive: directive,
+                            custom_directive_enabled: enabled
+                        });
+                    } else {
+                        const res = await fetch("/api/preferences", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ custom_directive: directive, custom_directive_enabled: enabled })
+                        });
+                        const data = await res.json();
+                        result = { success: res.ok && data.success, error: data.message };
+                    }
+
+                    if (result && result.success) {
                         directiveFeedback.textContent = "✓ Saved!";
                         directiveFeedback.style.color = "#10b981";
                     } else {
-                        directiveFeedback.textContent = data.message || "Failed to save.";
+                        directiveFeedback.textContent = (result && result.error) || "Failed to save.";
                         directiveFeedback.style.color = "var(--error-text)";
                     }
                 } catch (err) {
@@ -390,15 +420,36 @@
         if (resetDirectiveBtn) {
             resetDirectiveBtn.addEventListener("click", async () => {
                 if (!confirm("Reset custom instructions to default?")) return;
+
+                resetDirectiveBtn.disabled = true;
+                directiveFeedback.textContent = "Resetting...";
+                directiveFeedback.style.color = "var(--primary)";
+
                 try {
-                    await fetch("/api/preferences/reset", { method: "POST" });
-                    directiveInput.value = "";
-                    directiveToggle.checked = false;
-                    updateDirectiveCharCount();
-                    directiveFeedback.textContent = "✓ Reset to default.";
-                    directiveFeedback.style.color = "#10b981";
+                    let result;
+                    if (window.StorageAdapter) {
+                        result = await window.StorageAdapter.resetPreferences();
+                    } else {
+                        const res = await fetch("/api/preferences/reset", { method: "POST" });
+                        const data = await res.json();
+                        result = { success: res.ok && data.success, error: data.message };
+                    }
+
+                    if (result && result.success) {
+                        directiveInput.value = "";
+                        directiveToggle.checked = false;
+                        updateDirectiveCharCount();
+                        directiveFeedback.textContent = "✓ Reset to default.";
+                        directiveFeedback.style.color = "#10b981";
+                    } else {
+                        directiveFeedback.textContent = (result && result.error) || "Failed to reset.";
+                        directiveFeedback.style.color = "var(--error-text)";
+                    }
                 } catch (err) {
                     directiveFeedback.textContent = "Network error.";
+                    directiveFeedback.style.color = "var(--error-text)";
+                } finally {
+                    resetDirectiveBtn.disabled = false;
                 }
             });
         }
@@ -532,14 +583,32 @@
         function setTheme(theme) {
             document.documentElement.setAttribute("data-theme", theme);
             localStorage.setItem("webbrief_theme", theme);
-            document.getElementById("theme-dark-card").classList.toggle("selected", theme === "dark");
-            document.getElementById("theme-light-card").classList.toggle("selected", theme === "light");
+
+            const darkCard = document.getElementById("theme-dark-card");
+            if (darkCard) darkCard.classList.toggle("selected", theme === "dark");
+
+            const lightCard = document.getElementById("theme-light-card");
+            if (lightCard) lightCard.classList.toggle("selected", theme === "light");
+
+            const themeIcon = document.getElementById("theme-icon");
+            if (themeIcon) {
+                themeIcon.textContent = theme === "dark" ? "🌙" : "☀️";
+            }
+        }
+
+        const themeBtn = document.getElementById("theme-toggle-btn");
+        if (themeBtn) {
+            themeBtn.addEventListener("click", () => {
+                const current = document.documentElement.getAttribute("data-theme") || localStorage.getItem("webbrief_theme") || "dark";
+                const next = current === "dark" ? "light" : "dark";
+                setTheme(next);
+            });
         }
 
         document.addEventListener("DOMContentLoaded", () => {
             checkNotionStatus();
             loadVectorStats();
-            const currentTheme = localStorage.getItem("webbrief_theme") || "dark";
+            const currentTheme = localStorage.getItem("webbrief_theme") || document.documentElement.getAttribute("data-theme") || "dark";
             setTheme(currentTheme);
         });
     </script>

@@ -33,6 +33,9 @@ from services.providers.catalogue import (
     PROVIDER_CATALOGUE,
     get_models_for_provider,
     get_default_model,
+    get_allowed_models,
+    is_valid_model,
+    validate_model_id,
 )
 from summarizer import summarize_text, parse_and_validate_summary
 from comparative_analyzer import compare_articles
@@ -115,7 +118,12 @@ class TestGeminiProvider(unittest.TestCase):
         api_err = errors.APIError(404, {"error": {"message": "NOT_FOUND: model not found"}}, None)
         mock_client.models.generate_content.side_effect = api_err
 
-        provider = GeminiProvider(api_key="AIzaSyTestKey", model="nonexistent-model")
+        # Rejection during instantiation for unallowlisted models
+        with self.assertRaises(ProviderInvalidModelError):
+            GeminiProvider(api_key="AIzaSyTestKey", model="nonexistent-model")
+
+        # Rejection during completion if API returns 404 for an allowed model
+        provider = GeminiProvider(api_key="AIzaSyTestKey", model="gemini-3.8-flash")
         with self.assertRaises(ProviderInvalidModelError):
             provider.generate_completion(messages=[{"role": "user", "content": "Hello"}])
 
@@ -164,10 +172,8 @@ class TestGeminiProvider(unittest.TestCase):
         vec = provider.embed_text("Sample article text")
 
         self.assertEqual(vec, [0.1, 0.2, 0.3, 0.4])
-        mock_client.models.embed_content.assert_called_with(
-            model="gemini-embedding-001",
-            contents="Sample article text"
-        )
+        self.assertEqual(mock_client.models.embed_content.call_args.kwargs["model"], "gemini-embedding-001")
+        self.assertEqual(mock_client.models.embed_content.call_args.kwargs["contents"], "Sample article text")
 
     # -------------------------------------------------------------
     # 8. AIRouter Dispatches to GeminiProvider
@@ -427,6 +433,201 @@ class TestGeminiProvider(unittest.TestCase):
         self.assertEqual(cfg["gemini_api_key"], "AIzaSyExplicitOverride")
         self.assertEqual(cfg["gemini_model"], "gemini-3.5-flash-lite")
         self.assertEqual(cfg["primary_provider"], "gemini")
+
+    # -------------------------------------------------------------
+    # 21. Accepted Model IDs
+    # -------------------------------------------------------------
+    @patch("services.providers.gemini.genai.Client")
+    def test_21_accepted_models(self, mock_client_cls):
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps({"title": "Test Title", "overview": "Test Overview"})
+        mock_client.models.generate_content.return_value = mock_resp
+
+        allowed = get_allowed_models("gemini")
+        self.assertIn("gemini-3.8-flash", allowed)
+        self.assertIn("gemini-3.5-flash-lite", allowed)
+
+        for model_id in allowed:
+            self.assertTrue(is_valid_model(model_id, "gemini"))
+            self.assertEqual(validate_model_id(model_id, "gemini"), model_id)
+            provider = GeminiProvider(api_key="AIzaSyTestKey12345678901234567890", model=model_id)
+            self.assertEqual(provider.active_model, model_id)
+            res = provider.generate_completion(messages=[{"role": "user", "content": "Test"}])
+            self.assertIn("Test Overview", res)
+
+    # -------------------------------------------------------------
+    # 22. Rejected Unknown & Deprecated Model IDs
+    # -------------------------------------------------------------
+    def test_22_rejected_unknown_and_deprecated_models(self):
+        rejected_models = [
+            "gemini-4-argon",
+            "gemini-1.5-pro",
+            "gemini-1.5-flash",
+            "gpt-4",
+            "gpt-4o",
+            "claude-3-opus",
+            "llama-3.1-8b",
+            "deepseek-r1",
+            "invalid/model:name",
+        ]
+        for bad_model in rejected_models:
+            self.assertFalse(is_valid_model(bad_model, "gemini"))
+            with self.assertRaises(ProviderInvalidModelError) as ctx:
+                validate_model_id(bad_model, "gemini")
+            self.assertIn(bad_model, str(ctx.exception))
+
+            with self.assertRaises(ProviderInvalidModelError):
+                GeminiProvider(api_key="AIzaSyTestKey12345678901234567890", model=bad_model)
+
+            # Never silently substitute another model during completion
+            provider = GeminiProvider(api_key="AIzaSyTestKey12345678901234567890")
+            with self.assertRaises(ProviderInvalidModelError):
+                provider.generate_completion(
+                    messages=[{"role": "user", "content": "Test"}],
+                    model=bad_model,
+                )
+
+    # -------------------------------------------------------------
+    # 23. Invalid Saved Configurations Rejected
+    # -------------------------------------------------------------
+    def test_23_invalid_saved_configuration_rejected(self):
+        test_env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".env.test_tmp2")
+        try:
+            success, msg = save_provider_config_to_env(
+                config_dict={"gemini_api_key": "AIzaSyTestKey123", "gemini_model": "unsupported-model-99"},
+                env_path=test_env_path,
+                confirm_overwrite=True,
+            )
+            self.assertFalse(success)
+            self.assertIn("Invalid model", msg)
+
+            with self.assertRaises(ProviderInvalidModelError):
+                get_active_provider_config(
+                    request_data={"gemini_api_key": "AIzaSyTestKey123", "gemini_model": "unsupported-model-99"}
+                )
+        finally:
+            if os.path.exists(test_env_path):
+                os.remove(test_env_path)
+
+    # -------------------------------------------------------------
+    # 24. API Endpoints Reject Invalid Model IDs
+    # -------------------------------------------------------------
+    def test_24_api_routes_reject_invalid_model(self):
+        with self.client.session_transaction() as sess:
+            csrf = sess.get("_csrf_token", "test_csrf")
+            sess["_csrf_token"] = csrf
+
+        headers = {"X-CSRF-Token": csrf}
+
+        # /api/validate-key
+        res = self.client.post(
+            "/api/validate-key",
+            json={"provider": "gemini", "gemini_api_key": "AIzaSyTestKey123", "gemini_model": "fake-model"},
+            headers=headers,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Unsupported model", res.get_json()["message"])
+
+        # /api/save-config
+        res = self.client.post(
+            "/api/save-config",
+            json={"gemini_api_key": "AIzaSyTestKey123", "gemini_model": "fake-model"},
+            headers=headers,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Unsupported model", res.get_json()["error"])
+
+        # /api/credentials (with vault enabled)
+        mock_vault = MagicMock()
+        with patch("app._vault", mock_vault):
+            res = self.client.post(
+                "/api/credentials",
+                json={"gemini_api_key": "AIzaSyTestKey123", "gemini_model": "fake-model"},
+                headers=headers,
+            )
+            self.assertEqual(res.status_code, 400)
+            self.assertIn("Unsupported model", res.get_json()["error"])
+
+        # /summarize
+        res = self.client.post(
+            "/summarize",
+            json={"url": "https://example.com/test", "gemini_model": "fake-model"},
+            headers=headers,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Unsupported model", res.get_json()["error"])
+
+        # /batch/summarize
+        res = self.client.post(
+            "/batch/summarize",
+            json={"urls": ["https://example.com/test"], "gemini_model": "fake-model"},
+            headers=headers,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Unsupported model", res.get_json()["error"])
+
+        # /compare
+        res = self.client.post(
+            "/compare",
+            json={"url_a": "https://example.com/a", "url_b": "https://example.com/b", "gemini_model": "fake-model"},
+            headers=headers,
+        )
+        self.assertEqual(res.status_code, 400)
+        self.assertIn("Unsupported model", res.get_json()["error"])
+
+    # -------------------------------------------------------------
+    # 25. HTTP Request Timeout Configuration & Handling
+    # -------------------------------------------------------------
+    @patch("services.providers.gemini.genai.Client")
+    def test_25_http_timeout_options_and_handling(self, mock_client_cls):
+        from google.genai import types
+        mock_client = MagicMock()
+        mock_client_cls.return_value = mock_client
+
+        provider = GeminiProvider(api_key="AIzaSyTestKey12345678901234567890", timeout=20)
+        client = provider._get_client()
+
+        # Check client-level http_options timeout
+        mock_client_cls.assert_called_once()
+        _, kwargs = mock_client_cls.call_args
+        self.assertIn("http_options", kwargs)
+        self.assertEqual(kwargs["http_options"].timeout, 20000)
+
+        # Check call-level timeout config
+        mock_resp = MagicMock()
+        mock_resp.text = json.dumps({"title": "Test", "overview": "Overview"})
+        mock_client.models.generate_content.return_value = mock_resp
+
+        provider.generate_completion(messages=[{"role": "user", "content": "Hi"}], timeout=15)
+        _, call_kwargs = mock_client.models.generate_content.call_args
+        config = call_kwargs["config"]
+        self.assertIsInstance(config.http_options, types.HttpOptions)
+        self.assertEqual(config.http_options.timeout, 15000)
+
+        # Test timeout exception handling
+        mock_client.models.generate_content.side_effect = TimeoutError("Request timed out after 15 seconds")
+        with self.assertRaises(ProviderTimeoutError) as ctx:
+            provider.generate_completion(messages=[{"role": "user", "content": "Hi"}], timeout=15)
+        self.assertIn("timed out after 15s", str(ctx.exception))
+
+    # -------------------------------------------------------------
+    # 26. AIRouter Fallback Parameters Cleanup
+    # -------------------------------------------------------------
+    def test_26_router_fallback_parameters_cleaned(self):
+        import inspect
+        sig = inspect.signature(AIRouter.__init__)
+        params = list(sig.parameters.keys())
+        self.assertNotIn("fallback_enabled", params)
+        self.assertNotIn("fallback_provider", params)
+        self.assertNotIn("fallback_credentials", params)
+        self.assertNotIn("fallback_model", params)
+
+        # Ensure AIRouter rejects unsupported models
+        with self.assertRaises(ProviderInvalidModelError):
+            router = AIRouter(primary_model="unsupported-model-x")
+            router.generate_completion(messages=[{"role": "user", "content": "Hi"}])
 
 
 if __name__ == "__main__":

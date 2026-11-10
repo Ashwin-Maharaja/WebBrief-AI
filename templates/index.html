@@ -100,9 +100,7 @@
                         <span class="badge" style="background: rgba(14, 165, 233, 0.2); color: #38bdf8; font-weight: 700;">
                             ☁️ Hosted BYOK
                         </span>
-                        <span id="hosted-status-label" style="font-size: 13px; color: var(--text-muted);">
-                            Active Session • In-Memory Credentials Only
-                        </span>
+                        <span id="hosted-status-label" style="font-size: 13px; color: var(--text-muted);"></span>
                     </div>
                     <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 11.5px;">
                         📦 Browser IndexedDB Storage
@@ -139,7 +137,6 @@
                             🔑 Get Gemini API Key ↗
                         </a>
                     </div>
-                    <span style="color: var(--text-muted); font-size: 11.5px;">Free tier compatible</span>
                 </div>
                 <p style="font-size: 11.5px; color: var(--text-muted); margin-top: 8px; line-height: 1.45;">
                     🛡️ <b>BYOK Privacy:</b> {% if vault_enabled %}Your keys are encrypted in temporary server-side storage and expire after inactivity. No API keys are stored in browser cookies or localStorage.{% else %}Your keys remain in this tab's memory and are sent over HTTPS only for provider requests. No keys are saved to cookies, localStorage or server disks.{% endif %}
@@ -1191,6 +1188,16 @@
         let renderSummaryObject = null;
 
         document.addEventListener("DOMContentLoaded", () => {
+            // Clean up conflicting legacy localStorage directive keys and initialize preferences
+            try {
+                localStorage.removeItem("webbrief_custom_directive");
+                localStorage.removeItem("webbrief_custom_directive_enabled");
+            } catch (_) {}
+
+            if (window.StorageAdapter) {
+                window.StorageAdapter.loadPreferences();
+            }
+
             // Theme toggle
             const themeBtn = document.getElementById("theme-toggle-btn");
             const themeIcon = document.getElementById("theme-icon");
@@ -1662,10 +1669,11 @@
                     if (body) body.innerHTML = '<p style="font-size: 13px; color: var(--primary);">Retrying scraping & summarization...</p>';
                 }
 
-                const apiKey = apiKeyInput.value.trim();
+                const apiKey = (window.StorageAdapter ? window.StorageAdapter.getActiveApiKey() : null) || (apiKeyInput ? apiKeyInput.value.trim() : "") || null;
                 const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
-                const customDir = localStorage.getItem("webbrief_custom_directive") || "";
-                const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
+                const directives = window.StorageAdapter ? await window.StorageAdapter.getPreferences() : { custom_directive: "", custom_directive_enabled: false };
+                const customDir = directives.custom_directive || "";
+                const customDirEnabled = Boolean(directives.custom_directive_enabled);
 
                 try {
                     const res = await fetch("/summarize", {
@@ -2399,8 +2407,9 @@
 
                 const apiKey = (window.StorageAdapter ? window.StorageAdapter.getActiveApiKey() : null) || (apiKeyInput ? apiKeyInput.value.trim() : "") || null;
                 const selectedMode = document.querySelector('input[name="mode"]:checked')?.value || "quick";
-                const customDir = localStorage.getItem("webbrief_custom_directive") || "";
-                const customDirEnabled = localStorage.getItem("webbrief_custom_directive_enabled") === "1";
+                const directives = window.StorageAdapter ? await window.StorageAdapter.getPreferences() : { custom_directive: "", custom_directive_enabled: false };
+                const customDir = directives.custom_directive || "";
+                const customDirEnabled = Boolean(directives.custom_directive_enabled);
 
                 // Hosted mode check: require visitor's in-memory key
                 if (window.StorageAdapter && window.StorageAdapter.isHosted() && !window.StorageAdapter.hasValidCredentials()) {

@@ -16,7 +16,7 @@ from dotenv import load_dotenv
 from scraper import scrape_article, validate_safe_url, ScraperError
 from summarizer import summarize_text, SummarizerError
 from services.providers.router import AIRouter, RouterResult
-from services.providers.exceptions import ProviderError
+from services.providers.exceptions import ProviderError, ProviderInvalidModelError
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -299,7 +299,10 @@ def compare_articles(
 
         if not has_valid_config(request_data=req_payload):
             raise ComparisonError("No AI provider configured. Please configure credentials in Settings.")
-        router = get_router(request_data=req_payload)
+        try:
+            router = get_router(request_data=req_payload)
+        except ProviderInvalidModelError as ime:
+            raise ComparisonError(str(ime)) from ime
 
     # Step 3: Handle long articles (> 12,000 characters) by summarizing them first
     effective_text_a = text_a
@@ -348,7 +351,7 @@ def compare_articles(
     try:
         router_res = router.generate_structured_json(messages=messages)
     except ProviderError as pe:
-        raise ComparisonError(str(pe))
+        raise ComparisonError(str(pe)) from pe
     except Exception as e:
         raise ComparisonError(f"Comparative analysis failed: {str(e)}")
 

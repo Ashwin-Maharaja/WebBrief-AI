@@ -25,41 +25,41 @@ class ProviderError(Exception):
 
 
 # -------------------------------------------------------------
-# Non-Recoverable / Non-Fallback Exceptions
+# Client-Side / Configuration Exceptions
 # -------------------------------------------------------------
 class ProviderAuthError(ProviderError):
-    """Authentication or authorization failure (HTTP 401, 403, invalid key). Not eligible for fallback."""
+    """Authentication or authorization failure (HTTP 401, 403, invalid key)."""
     pass
 
 
 class ProviderInvalidModelError(ProviderError):
-    """Model not found, deprecated, or unavailable to user account. Not eligible for fallback."""
+    """Model not found, unverified, deprecated, or unavailable to user account."""
     pass
 
 
 class ProviderBadRequestError(ProviderError):
-    """Malformed request payload, invalid parameters, or content-policy refusal. Not eligible for fallback."""
+    """Malformed request payload, invalid parameters, or content-policy refusal."""
     pass
 
 
 # -------------------------------------------------------------
-# Recoverable / Fallback-Eligible Exceptions
+# Runtime / Transient Service Exceptions
 # -------------------------------------------------------------
 class ProviderRateLimitError(ProviderError):
-    """Provider rate limit reached (HTTP 429). Eligible for automatic fallback."""
+    """Provider rate limit reached (HTTP 429)."""
     pass
 
 
 class ProviderQuotaError(ProviderRateLimitError):
-    """Provider account credit or quota exhausted. Eligible for automatic fallback."""
+    """Provider account credit or quota exhausted."""
     pass
 
 
 class ProviderUnavailableError(ProviderError):
-    """Provider service temporary outage or error (HTTP 500, 502, 503, 504). Eligible for automatic fallback."""
+    """Provider service temporary outage or error (HTTP 500, 502, 503, 504)."""
     pass
 
 
 class ProviderTimeoutError(ProviderError):
-    """Network connection or inference response timeout. Eligible for automatic fallback."""
+    """Network connection or inference response timeout."""
     pass

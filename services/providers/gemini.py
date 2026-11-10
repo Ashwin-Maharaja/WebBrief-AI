@@ -22,7 +22,7 @@ from .exceptions import (
     ProviderUnavailableError,
     ProviderTimeoutError,
 )
-from .catalogue import get_models_for_provider, get_default_model
+from .catalogue import get_models_for_provider, get_default_model, validate_model_id, is_valid_model
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +39,10 @@ class GeminiProvider(BaseProvider):
         model: Optional[str] = None,
         timeout: int = 45
     ):
-        super().__init__(model=model)
+        clean_model = (model or "").strip()
+        if clean_model:
+            validate_model_id(clean_model, "gemini")
+        super().__init__(model=clean_model)
         self.api_key = (api_key or "").strip()
         self.default_timeout = timeout
         self._client: Optional[genai.Client] = None
@@ -60,7 +63,8 @@ class GeminiProvider(BaseProvider):
         if not self.api_key:
             raise ProviderAuthError("Google Gemini API key not provided.", provider=self.provider_id)
         if self._client is None:
-            self._client = genai.Client(api_key=self.api_key)
+            http_options = types.HttpOptions(timeout=int(self.default_timeout * 1000))
+            self._client = genai.Client(api_key=self.api_key, http_options=http_options)
         return self._client
 
     def test_connection(self) -> Tuple[bool, str]:
@@ -74,9 +78,12 @@ class GeminiProvider(BaseProvider):
             return False, "Invalid Google Gemini API key format. Gemini keys typically start with 'AIza'."
 
         try:
+            validate_model_id(self.active_model, self.provider_id)
             client = self._get_client()
             client.models.get(model=self.active_model)
             return True, f"Connection to Google Gemini ({self.active_model}) verified successfully."
+        except ProviderInvalidModelError as e:
+            return False, str(e)
         except errors.APIError as e:
             if getattr(e, "code", None) in (401, 403) or "API_KEY_INVALID" in str(e) or "PERMISSION_DENIED" in str(e):
                 return False, "Invalid Google Gemini API key. Please check your key at Google AI Studio."
@@ -98,7 +105,12 @@ class GeminiProvider(BaseProvider):
         response_format: Optional[Dict[str, Any]] = None,
         timeout: int = 45,
     ) -> str:
-        active_model = model or self.active_model
+        req_model = (model or "").strip()
+        if req_model:
+            active_model = validate_model_id(req_model, self.provider_id)
+        else:
+            active_model = validate_model_id(self.active_model, self.provider_id)
+
         client = self._get_client()
 
         # Separate system instruction from user/model contents
@@ -129,10 +141,14 @@ class GeminiProvider(BaseProvider):
 
         is_json = bool(response_format and response_format.get("type") == "json_object")
 
+        eff_timeout = timeout if timeout is not None else self.default_timeout
+        call_timeout_ms = int(eff_timeout * 1000)
+
         config = types.GenerateContentConfig(
             temperature=temperature,
             system_instruction=system_instruction,
             response_mime_type="application/json" if is_json else None,
+            http_options=types.HttpOptions(timeout=call_timeout_ms),
         )
         if max_tokens:
             config.max_output_tokens = max_tokens
@@ -148,8 +164,18 @@ class GeminiProvider(BaseProvider):
             self._handle_api_error(e, active_model)
         except Exception as e:
             err_str = str(e)
-            if "timeout" in err_str.lower() or "timed out" in err_str.lower():
-                raise ProviderTimeoutError(f"Inference request timed out after {timeout}s", provider=self.provider_id, model=active_model)
+            if (
+                isinstance(e, TimeoutError)
+                or (hasattr(errors, "httpx") and isinstance(e, errors.httpx.TimeoutException))
+                or "timeout" in err_str.lower()
+                or "timed out" in err_str.lower()
+                or "deadline" in err_str.lower()
+            ):
+                raise ProviderTimeoutError(
+                    f"Inference request timed out after {eff_timeout}s",
+                    provider=self.provider_id,
+                    model=active_model,
+                )
             raise ProviderError(f"Google Gemini execution error: {err_str}", provider=self.provider_id, model=active_model)
 
     def embed_text(self, text: str) -> List[float]:
@@ -157,11 +183,17 @@ class GeminiProvider(BaseProvider):
         if not text or not text.strip():
             return []
         client = self._get_client()
+        call_timeout_ms = int(self.default_timeout * 1000)
         try:
-            res = client.models.embed_content(
-                model="gemini-embedding-001",
-                contents=text.strip()[:10000],
-            )
+            kwargs = {
+                "model": "gemini-embedding-001",
+                "contents": text.strip()[:10000],
+            }
+            if hasattr(types, "EmbedContentConfig"):
+                kwargs["config"] = types.EmbedContentConfig(
+                    http_options=types.HttpOptions(timeout=call_timeout_ms)
+                )
+            res = client.models.embed_content(**kwargs)
             if hasattr(res, "embeddings") and res.embeddings:
                 return list(res.embeddings[0].values)
             return []
@@ -183,7 +215,9 @@ class GeminiProvider(BaseProvider):
             if "quota" in msg.lower():
                 raise ProviderQuotaError(f"Gemini quota exhausted: {msg}", provider=self.provider_id, model=model, status_code=code)
             raise ProviderRateLimitError(f"Gemini rate limit exceeded: {msg}", provider=self.provider_id, model=model, status_code=code)
-        if code in (500, 502, 503, 504):
+        if code == 504 or "deadline" in msg.lower() or "timeout" in msg.lower():
+            raise ProviderTimeoutError(f"Gemini request timed out ({code}): {msg}", provider=self.provider_id, model=model, status_code=code)
+        if code in (500, 502, 503):
             raise ProviderUnavailableError(f"Gemini service unavailable ({code}): {msg}", provider=self.provider_id, model=model, status_code=code)
 
         raise ProviderError(f"Gemini API error ({code}): {msg}", provider=self.provider_id, model=model, status_code=code)

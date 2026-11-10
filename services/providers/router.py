@@ -11,6 +11,7 @@ from typing import Dict, Any, List, Optional, Tuple
 
 from .base import BaseProvider
 from .gemini import GeminiProvider
+from .catalogue import validate_model_id
 from .exceptions import (
     ProviderError,
     ProviderAuthError,
@@ -47,10 +48,6 @@ class AIRouter:
         primary_provider: str = "gemini",
         primary_credentials: Optional[Dict[str, Any]] = None,
         primary_model: Optional[str] = None,
-        fallback_enabled: bool = False,
-        fallback_provider: Optional[str] = None,
-        fallback_credentials: Optional[Dict[str, Any]] = None,
-        fallback_model: Optional[str] = None,
     ):
         if isinstance(primary_provider, BaseProvider):
             self._primary_instance = primary_provider
@@ -95,7 +92,10 @@ class AIRouter:
         timeout: int = 45,
     ) -> RouterResult:
         """Generates raw text completion via Gemini."""
-        active_model = model or self.primary_model or self.primary.active_model
+        active_model = validate_model_id(
+            model or self.primary_model or self.primary.active_model,
+            self.primary.provider_id,
+        )
         content = self.primary.generate_completion(
             messages=messages,
             model=active_model,
@@ -122,7 +122,10 @@ class AIRouter:
         timeout: int = 45,
     ) -> RouterResult:
         """Generates structured JSON summary via Gemini."""
-        active_model = model or self.primary_model or self.primary.active_model
+        active_model = validate_model_id(
+            model or self.primary_model or self.primary.active_model,
+            self.primary.provider_id,
+        )
         content = self.primary.generate_structured_json(
             messages=messages,
             model=active_model,

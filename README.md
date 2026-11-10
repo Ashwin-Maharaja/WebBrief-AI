@@ -3,7 +3,7 @@
 # WebBrief AI
 
 > **Production Release — v1.6.4**  
-> An intelligent, multi-mode website summarizer powered by a Google Gemini Developer API (gemini-3.8-flash) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and automatic provider failover routing.
+> An intelligent, multi-mode website summarizer powered by the Google Gemini Developer API (gemini-3.8-flash) and Flask. Converts any webpage—from standard blogs to JavaScript-rendered Single Page Applications—into structured, high-value briefs in seconds with Hardened Security & Reliability, Hosted BYOK & Deployment-Aware Storage, Local Knowledge Retrieval & Semantic Search, Comparative Research, Notion Integration, Multi-URL Batch Summarization, PDF document export, personalized prompt directives, and transparent model execution.
 
 ---
 
@@ -11,7 +11,7 @@
 1. [Project Overview](#1-project-overview)
 2. [What's New in v1.6.4](#2-whats-new-in-v164-stability-security--reliability-patch)
 3. [Features](#3-features)
-4. [Multi-Provider AI Architecture & Routing](#4-multi-provider-ai-architecture--routing)
+4. [Google Gemini Architecture & Model Execution](#4-google-gemini-architecture--model-execution)
 5. [Deployment Models & Architecture](#5-deployment-models--architecture)
 6. [Vector Database Architecture & Semantic Search](#6-vector-database-architecture--semantic-search)
 7. [Visual Previews](#7-visual-previews)
@@ -40,7 +40,7 @@ WebBrief AI simplifies reading long articles, technical papers, corporate releas
 
 Built with enterprise-grade SSRF defense, deployment-aware storage, and a **Bring Your Own Key (BYOK)** security architecture, WebBrief AI guarantees that personal API credentials remain private, stored locally in `.env` for self-hosted instances or strictly in active browser memory for public Vercel visitors—never shared between users, never logged, and never exposing developer API credits.
 
-In **v1.6.4**, WebBrief AI delivers a security and stability hardened release while maintaining its modular, multi-provider engine supporting **Google Gemini Developer API** (default: `gemini-3.8-flash`), complete with model selection, verified model catalogue, and secure BYOK handling.
+In **v1.6.4**, WebBrief AI delivers a security and stability hardened release while maintaining its modular provider engine supporting the **Google Gemini Developer API** (default: `gemini-3.8-flash`), complete with strict model allowlisting, verified model catalogue, explicit SDK timeouts, and secure BYOK handling.
 
 ---
 
@@ -61,7 +61,7 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 - **Non-Globally-Routable & CGNAT IP Rejection**: Rejection of all non-globally-routable unicast destination IPs, including Carrier-Grade NAT (CGNAT RFC 6598: `100.64.0.0/10`), loopback, link-local, and cloud metadata addresses (`169.254.169.254`, `100.100.100.200`, `fd00:ec2::254`).
 - **Scraper Resource & Memory Protection**: Strict 5 MB streaming download cap on both static (`requests`) and dynamic (`playwright`) extraction pipelines. Subrequest navigation budget (max 50 requests) and reliable browser process termination.
 - **Prompt Injection Trust Boundaries**: Explicit security instructions and `<webpage_content>`, `<section_content>`, and `<intermediate_summaries>` XML boundary tags classifying scraped DOM text as untrusted and instructing LLMs to ignore embedded overrides.
-- **Ephemeral BYOK Vault with Full Failover**: Optional Redis-backed Fernet-encrypted vault storing and restoring primary credentials, fallback provider settings, and model selections across sessions.
+- **Ephemeral BYOK Vault**: Optional Redis-backed Fernet-encrypted vault storing and restoring credentials and model selections across sessions.
 - **Cross-Page Vault Consistency**: Synchronized vault activation, credential masking, and validation across Home, Settings, and Setup pages.
 - **Lightweight Sliding-Window Rate Limiting**: Built-in per-client request throttling on `/summarize`, `/batch/summarize`, `/compare`, `/api/credentials`, and `/api/validate-key` accounting for shared NATs and anonymous sessions.
 - **Zero OpenAI Dependencies**: Total removal of legacy OpenAI placeholder values and SDK imports.
@@ -73,22 +73,21 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 - **Complete Decoupling from OpenAI**: The OpenAI Python SDK and all direct OpenAI API calls have been completely removed.
 - **Modular Provider Abstraction**: Introduces `BaseProvider` and dedicated `GeminiProvider` adapter under `services/providers/`.
 - **Google Gemini Developer API**: Fast, multimodal-capable inference powered by Google's Gen AI SDK (recommended models: `gemini-3.8-flash`, `gemini-3.5-flash-lite`).
-- **Automatic Provider Routing (`AIRouter`)**: Automatically attempts inference with the primary provider and seamlessly cascades to the fallback provider on recoverable runtime faults.
-- **Intelligent Fallback Policies**:
-  - *Eligible for Fallback*: Rate limits (HTTP 429), quota exhaustion, service unavailabilities (HTTP 500, 502, 503, 504), and bounded timeouts.
-  - *Blocked from Fallback*: Authentication failures (HTTP 401, 403), invalid credentials, unknown models, or malformed requests (surfaces actionable feedback immediately).
+- **Google Gemini Provider Coordination (`AIRouter`)**: Coordinates execution against the Google Gemini Developer API with strict model validation and unified error classification.
+- **Strict Server-Side Model Allowlisting**: Strictly validates requested model IDs against the verified catalogue (`gemini-3.8-flash`, `gemini-3.5-flash-lite`); rejects unsupported or deprecated models without silent substitution.
+- **Explicit SDK Timeouts**: Enforces deterministic request timeouts configured via the official `google-genai` SDK `HttpOptions`.
 - **Curated Model Catalogue & Selection UI**: Dynamically populated model catalogues with human-friendly descriptions and free-tier tags across `/setup` and `/settings`.
-- **Provider Transparency Badge**: Every summary result card now displays the exact provider and model that generated it, highlighting whether fallback was triggered and why.
+- **Provider Transparency Badge**: Every summary result card displays the exact provider and model that generated it.
 - **Upgraded Vector Embeddings**: Local SQLite semantic search utilizes Google Gemini embeddings (`gemini-embedding-001`), with a deterministic feature-vector fallback for unauthenticated environments.
 
 ---
 
 ## 3. Features
 
-- **Multi-Provider BYOK & Fallback Routing**:
-  - Select your preferred Google Gemini model directly from the UI or Settings.
-  - Enable optional fallback to protect against rate limits or temporary outages.
-  - Single-provider users can use either provider independently without being forced to configure both.
+- **Google Gemini BYOK & Strict Model Selection**:
+  - Select your preferred Google Gemini model (`gemini-3.8-flash` or `gemini-3.5-flash-lite`) directly from the UI or Settings.
+  - Strict server-side allowlisting guarantees unsupported model IDs are rejected immediately with descriptive feedback.
+  - Client- and call-level HTTP timeouts safeguard execution against hanging requests.
 - **Enterprise Security & Reliability Hardening**:
   - **Zero Hardcoded Secrets & Production Verification**: Eliminates static fallbacks. In production environments, requires an explicit 32-byte `FLASK_SECRET_KEY`; in local development, generates an ephemeral, cryptographically secure 32-byte key (`secrets.token_hex(32)`).
   - **Defensive HTTP Security Headers**: Injects `X-Content-Type-Options: nosniff`, `X-Frame-Options: SAMEORIGIN`, `Referrer-Policy: strict-origin-when-cross-origin`, `X-XSS-Protection: 1; mode=block`, and a strict Content Security Policy (`CSP`) into every response.
@@ -130,7 +129,7 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 
 ---
 
-## 4. Multi-Provider AI Architecture & Routing
+## 4. Google Gemini Architecture & Model Execution
 
 ```
                      [ User Request + BYOK Credentials ]
@@ -138,27 +137,23 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
                                      v
                         +--------------------------+
                         |         AIRouter         |
-                        | (Determines Primary/Fall)|
+                        | (Validates Allowed Model)|
                         +--------------------------+
                                      |
                                      v
-                       [ Attempt Primary Provider ]
-                         /                      \
-                    (Success)                 (Failure)
-                       /                          \
-                      v                     [ Recoverable? ]
-            +-------------------+           /              \
-            | Normalized Result |        (Yes)             (No)
-            +-------------------+          /                  \
-                      ^                   v                    v
-                      |         [ Attempt Fallback ]    +--------------+
-                      |           /            \        | Raise Clear  |
-                      +---- (Success)        (Failure)  | Error Notice |
-                                                 \      +--------------+
-                                                  v
-                                         +------------------+
-                                         | Exhausted Notice |
-                                         +------------------+
+                       +--------------------------+
+                       |      GeminiProvider      |
+                       | (google-genai SDK Client)|
+                       +--------------------------+
+                              /              \
+                         (Success)        (Error)
+                            /                  \
+                           v                    v
+                 +-------------------+    +--------------------+
+                 | Normalized Result |    | Actionable Feedback|
+                 | (Title, Sections) |    |  (No Silent Model  |
+                 +-------------------+    |   Substitution)    |
+                                          +--------------------+
 ```
 
 ### Provider Details
@@ -171,6 +166,7 @@ In **v1.6.4**, WebBrief AI delivers a security and stability hardened release wh
 | **Default Model** | `gemini-3.8-flash` |
 | **Verified Models** | `gemini-3.8-flash`<br>`gemini-3.5-flash-lite` |
 | **Free-Tier Compatibility** | Free tier available via Google AI Studio |
+| **Timeouts** | Explicit HTTP timeouts via `google.genai.types.HttpOptions` |
 | **Text Embeddings** | `gemini-embedding-001` (768-dim) / deterministic fallback |
 
 ---
@@ -205,7 +201,7 @@ WebBrief AI uses embedded vector storage directly inside SQLite (`webbrief_histo
 
 ## 7. Visual Previews
 
-### Primary Interface & Multi-Provider Badging
+### Primary Interface & Model Badging
 ```
 +-------------------------------------------------------------------------+
 | [O] WebBrief AI  v1.6.4             [History]  [Settings]  [* Mode: Dark]|
@@ -260,7 +256,7 @@ WebBrief AI/
 │   └── index.py            # Vercel serverless function entrypoint bridge
 ├── app.py                  # Core Flask application, routing, and controller logic
 ├── batch_processor.py      # Multi-URL batch processor, concurrency control, progress callback
-├── byok.py                 # Multi-provider credential validation, safe .env persistence
+├── byok.py                 # Gemini credential validation, safe .env persistence
 ├── chunker.py              # Paragraph-aware chunking and token overlap management
 ├── comparative_analyzer.py # Dual-source comparative research, claims matrix & fact synthesis
 ├── history.py              # Local SQLite summary & comparison persistence layer (CRUD)
@@ -274,7 +270,7 @@ WebBrief AI/
 │       ├── __init__.py     # Module initialization and exports
 │       ├── base.py         # BaseProvider abstract base class definition
 │       └── gemini.py       # Google Gemini Gen AI SDK adapter & embeddings
-│       ├── router.py       # AIRouter automatic routing & fallback engine
+│       ├── router.py       # AIRouter provider coordination & model validation
 │       ├── catalogue.py    # Verified model catalogue & free-tier mappings
 │       └── exceptions.py   # Normalized provider exception hierarchy
 ├── static/
@@ -285,8 +281,8 @@ WebBrief AI/
 │   ├── history.html        # Dedicated summary library view (search, reopen, delete)
 │   ├── result.html         # Standalone result view with provider transparency badges
 │   ├── setup.html          # First-run BYOK onboarding wizard (redirects to settings)
-│   └── settings.html       # Multi-provider configuration, model selection, danger zone
-├── .env.example            # Multi-provider environment variable template
+│   └── settings.html       # Gemini configuration, model selection, danger zone
+├── .env.example            # Gemini environment variable template
 ├── .gitignore              # Git ignore rules (protects credentials and local DBs)
 ├── requirements.txt        # Production Python dependencies (includes Gunicorn & Playwright)
 ├── vercel.json             # Vercel Serverless deployment configuration

@@ -61,10 +61,18 @@
 
     // Database configuration for Hosted IndexedDB mode
     const DB_NAME = 'WebBriefDB';
-    const DB_VERSION = 1;
+    const DB_VERSION = 2;
     const STORE_NAME = 'summaries';
+    const PREFS_STORE_NAME = 'preferences';
 
     let _dbPromise = null;
+
+    // Directives & preferences in-memory cache
+    let _directives = {
+        custom_directive: '',
+        custom_directive_enabled: false
+    };
+    let _directivesPromise = null;
 
     /**
      * Initializes and returns the IndexedDB instance for hosted browser storage.
@@ -91,6 +99,9 @@
                         store.createIndex('mode', 'mode', { unique: false });
                         store.createIndex('entry_type', 'entry_type', { unique: false });
                         store.createIndex('url', 'url', { unique: false });
+                    }
+                    if (!db.objectStoreNames.contains(PREFS_STORE_NAME)) {
+                        db.createObjectStore(PREFS_STORE_NAME, { keyPath: 'key' });
                     }
                 };
 
@@ -581,8 +592,201 @@
             a.click();
             a.remove();
             URL.revokeObjectURL(url);
+        },
+
+        // -------------------------------------------------------------
+        // Custom Prompt Directives & Preferences Storage
+        // -------------------------------------------------------------
+        /**
+         * Loads preferences asynchronously into the cache.
+         * In Hosted mode: loads from browser IndexedDB ('preferences' store).
+         * In Local mode: loads from SQLite backend via /api/preferences.
+         */
+        loadPreferences: function() {
+            if (_directivesPromise) return _directivesPromise;
+
+            _directivesPromise = (async () => {
+                if (this.isHosted()) {
+                    try {
+                        const db = await getIndexedDB();
+                        if (db && db.objectStoreNames.contains(PREFS_STORE_NAME)) {
+                            const record = await new Promise((resolve) => {
+                                const tx = db.transaction(PREFS_STORE_NAME, 'readonly');
+                                const store = tx.objectStore(PREFS_STORE_NAME);
+                                const req = store.get('custom_directives');
+                                req.onsuccess = () => resolve(req.result || null);
+                                req.onerror = () => resolve(null);
+                            });
+                            if (record) {
+                                _directives = {
+                                    custom_directive: record.custom_directive || '',
+                                    custom_directive_enabled: Boolean(record.custom_directive_enabled)
+                                };
+                            }
+                        }
+                    } catch (err) {
+                        console.warn('[WebBrief AI] Failed to load preferences from IndexedDB:', err);
+                    }
+                } else {
+                    // Local Flask: query SQLite preferences via /api/preferences
+                    try {
+                        const res = await fetch('/api/preferences');
+                        if (res.ok) {
+                            const data = await res.json();
+                            _directives = {
+                                custom_directive: data.custom_directive || '',
+                                custom_directive_enabled: Boolean(data.custom_directive_enabled)
+                            };
+                        }
+                    } catch (err) {
+                        console.warn('[WebBrief AI] Failed to load preferences from backend:', err);
+                    }
+                }
+                return Object.assign({}, _directives);
+            })();
+
+            return _directivesPromise;
+        },
+
+        /**
+         * Returns saved preferences object { custom_directive, custom_directive_enabled }.
+         * Guarantees preference loading has completed before resolving.
+         */
+        getPreferences: async function() {
+            await this.loadPreferences();
+            return Object.assign({}, _directives);
+        },
+
+        /**
+         * Synchronously returns currently cached preferences.
+         */
+        getDirectivesSync: function() {
+            return Object.assign({}, _directives);
+        },
+
+        /**
+         * Persists custom prompt directives and enabled state.
+         * In Hosted mode: stores into IndexedDB (never credentials).
+         * In Local mode: stores into SQLite via /api/preferences.
+         */
+        savePreferences: async function(prefs) {
+            const directive = (prefs && prefs.custom_directive ? String(prefs.custom_directive).trim() : '');
+            const enabled = Boolean(prefs && prefs.custom_directive_enabled);
+
+            if (this.isHosted()) {
+                try {
+                    const db = await getIndexedDB();
+                    if (!db) throw new Error('IndexedDB not available');
+                    await new Promise((resolve, reject) => {
+                        const tx = db.transaction(PREFS_STORE_NAME, 'readwrite');
+                        const store = tx.objectStore(PREFS_STORE_NAME);
+                        store.put({
+                            key: 'custom_directives',
+                            custom_directive: directive,
+                            custom_directive_enabled: enabled,
+                            updated_at: new Date().toISOString()
+                        });
+                        tx.oncomplete = () => resolve();
+                        tx.onerror = () => reject(tx.error || new Error('Failed to save to IndexedDB'));
+                    });
+                    _directives = {
+                        custom_directive: directive,
+                        custom_directive_enabled: enabled
+                    };
+                    _directivesPromise = Promise.resolve(Object.assign({}, _directives));
+                    return { success: true, preferences: Object.assign({}, _directives) };
+                } catch (err) {
+                    console.error('[WebBrief AI] Failed to save preferences to IndexedDB:', err);
+                    return { success: false, error: err.message || 'Failed to save preferences to browser storage.' };
+                }
+            } else {
+                // Local mode: POST /api/preferences
+                try {
+                    const res = await fetch('/api/preferences', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            custom_directive: directive,
+                            custom_directive_enabled: enabled
+                        })
+                    });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        _directives = {
+                            custom_directive: directive,
+                            custom_directive_enabled: enabled
+                        };
+                        _directivesPromise = Promise.resolve(Object.assign({}, _directives));
+                        return { success: true, preferences: Object.assign({}, _directives) };
+                    }
+                    return { success: false, error: data.message || 'Failed to save preferences.' };
+                } catch (err) {
+                    return { success: false, error: 'Network error saving preferences.' };
+                }
+            }
+        },
+
+        /**
+         * Resets custom prompt directives to empty and disabled.
+         * In Hosted mode: updates IndexedDB.
+         * In Local mode: calls /api/preferences/reset.
+         */
+        resetPreferences: async function() {
+            if (this.isHosted()) {
+                try {
+                    const db = await getIndexedDB();
+                    if (!db) throw new Error('IndexedDB not available');
+                    await new Promise((resolve, reject) => {
+                        const tx = db.transaction(PREFS_STORE_NAME, 'readwrite');
+                        const store = tx.objectStore(PREFS_STORE_NAME);
+                        store.put({
+                            key: 'custom_directives',
+                            custom_directive: '',
+                            custom_directive_enabled: false,
+                            updated_at: new Date().toISOString()
+                        });
+                        tx.oncomplete = () => resolve();
+                        tx.onerror = () => reject(tx.error || new Error('Failed to reset in IndexedDB'));
+                    });
+                    _directives = {
+                        custom_directive: '',
+                        custom_directive_enabled: false
+                    };
+                    _directivesPromise = Promise.resolve(Object.assign({}, _directives));
+                    return { success: true, preferences: Object.assign({}, _directives) };
+                } catch (err) {
+                    return { success: false, error: err.message || 'Failed to reset preferences in browser storage.' };
+                }
+            } else {
+                try {
+                    const res = await fetch('/api/preferences/reset', { method: 'POST' });
+                    const data = await res.json();
+                    if (res.ok && data.success) {
+                        _directives = {
+                            custom_directive: '',
+                            custom_directive_enabled: false
+                        };
+                        _directivesPromise = Promise.resolve(Object.assign({}, _directives));
+                        return { success: true, preferences: Object.assign({}, _directives) };
+                    }
+                    return { success: false, error: data.message || 'Failed to reset preferences.' };
+                } catch (err) {
+                    return { success: false, error: 'Network error resetting preferences.' };
+                }
+            }
         }
     };
+
+    // Auto-load preferences on startup
+    if (typeof document !== 'undefined') {
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', function() {
+                StorageAdapter.loadPreferences();
+            });
+        } else {
+            StorageAdapter.loadPreferences();
+        }
+    }
 
     // Auto-clear key on page unload / refresh for maximum security
     window.addEventListener('beforeunload', function() {

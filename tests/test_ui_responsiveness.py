@@ -263,6 +263,10 @@ class TestUIResponsiveness(unittest.TestCase):
         self.assertNotIn("BYOK Settings", index_html)
         self.assertIn("<span>⚙️ Settings</span>", index_html)
 
+        # Verify settings header has working theme toggle button
+        self.assertIn('id="theme-toggle-btn"', settings_html)
+        self.assertIn('themeBtn.addEventListener("click"', settings_html)
+
     # --------------------------------------------------------------------------
     # Helper Methods
     # --------------------------------------------------------------------------
