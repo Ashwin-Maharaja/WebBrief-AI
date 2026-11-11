@@ -7,10 +7,19 @@ from typing import Optional, Dict, Any
 from dotenv import load_dotenv
 from chunker import chunk_text, DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 from services.providers.router import AIRouter, RouterResult
-from services.providers.exceptions import ProviderError
+from services.providers.exceptions import (
+    ProviderError,
+    ProviderAuthError,
+    ProviderInvalidModelError,
+    ProviderRateLimitError,
+    ProviderQuotaError,
+)
 
 load_dotenv()
 logger = logging.getLogger(__name__)
+
+# Maximum chunks allowed for summarization to prevent runaway API billing and serverless timeouts
+MAX_SUMMARIZER_CHUNKS = int(os.getenv("MAX_SUMMARIZER_CHUNKS", 100))
 
 
 class SummarizerError(Exception):
@@ -378,6 +387,11 @@ def summarize_text(
         raise SummarizerError("Webpage does not contain sufficient text content to chunk.")
 
     total_chunks = len(chunks)
+    if total_chunks > MAX_SUMMARIZER_CHUNKS:
+        raise SummarizerError(
+            f"Article content exceeds maximum summarization capacity ({total_chunks} chunks generated; "
+            f"maximum supported is {MAX_SUMMARIZER_CHUNKS}). Please summarize a more concise document or section."
+        )
 
     # Short webpage / Single-chunk path: Direct structured summarization
     if total_chunks == 1:
@@ -436,10 +450,16 @@ def summarize_text(
             if map_res.content and map_res.content.strip():
                 intermediate_summaries.append((idx, map_res.content.strip()))
                 routing_metadata = map_res
+        except (ProviderAuthError, ProviderInvalidModelError) as pe:
+            # Fatal authentication errors or model errors terminate map immediately (P2-SUM-01)
+            raise SummarizerError(str(pe)) from pe
+        except (ProviderRateLimitError, ProviderQuotaError) as pe:
+            # Fatal rate limit or quota exhaustion terminates map immediately
+            raise SummarizerError(str(pe)) from pe
         except ProviderError as pe:
             # Fatal authentication errors or model errors terminate map immediately
-            if "invalid" in str(pe).lower() or "unauthorized" in str(pe).lower():
-                raise SummarizerError(str(pe))
+            if "invalid" in str(pe).lower() or "unauthorized" in str(pe).lower() or "auth" in str(pe).lower():
+                raise SummarizerError(str(pe)) from pe
             chunk_errors.append((idx, str(pe)))
         except Exception as e:
             chunk_errors.append((idx, str(e)))
@@ -456,16 +476,25 @@ def summarize_text(
     combined_text = "\n\n".join(combined_parts)
 
     # Hierarchical Reduce: if combined intermediate text is exceptionally long
+    reduce_errors = []
     if len(combined_text) > max(chunk_size * 4, 15000):
         sub_chunks = chunk_text(combined_text, chunk_size=chunk_size, chunk_overlap=chunk_overlap)
         sub_summaries = []
         for s_idx, s_chunk in enumerate(sub_chunks, 1):
-            s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks), mode=active_mode)
-            sub_res = router.generate_completion(messages=[
-                {"role": "system", "content": s_inst},
-                {"role": "user", "content": s_input},
-            ])
-            sub_summaries.append(sub_res.content.strip())
+            try:
+                s_inst, s_input = build_chunk_map_prompt(s_chunk, s_idx, len(sub_chunks), mode=active_mode)
+                sub_res = router.generate_completion(messages=[
+                    {"role": "system", "content": s_inst},
+                    {"role": "user", "content": s_input},
+                ])
+                if sub_res.content and sub_res.content.strip():
+                    sub_summaries.append(sub_res.content.strip())
+                else:
+                    sub_summaries.append(s_chunk)
+            except Exception as se:
+                logger.warning("Hierarchical reduce sub-chunk %d failed: %s; using raw chunk", s_idx, str(se))
+                reduce_errors.append(f"Sub-chunk {s_idx}: {str(se)}")
+                sub_summaries.append(s_chunk)
         combined_text = "\n\n".join(sub_summaries)
 
     # Reduce Phase: Generate final structured summary from combined intermediate summaries
@@ -503,11 +532,23 @@ def summarize_text(
     if final_res.switched_to_fallback:
         result["fallback_reason"] = final_res.fallback_reason
 
+    failed_count = len(chunk_errors) + len(reduce_errors)
     result["stats"] = {
         "total_chunks": total_chunks,
         "processed_chunks": len(intermediate_summaries),
-        "failed_chunks": len(chunk_errors),
+        "failed_chunks": failed_count,
         "is_map_reduce": True
     }
+    if failed_count > 0:
+        result["partial"] = True
+        result["is_partial"] = True
+        result["error_details"] = [f"Chunk {i}: {err}" for i, err in chunk_errors] + reduce_errors
+        result["warning"] = (
+            f"Partial summary: {failed_count} of {total_chunks} content sections encountered errors "
+            "and were omitted from synthesis."
+        )
+    else:
+        result["partial"] = False
+        result["is_partial"] = False
 
     return result

@@ -1,5 +1,5 @@
 """
-WebBrief AI v1.6.1 — Comprehensive Security & Reliability Test Suite.
+WebBrief AI — Comprehensive Security & Reliability Test Suite.
 Tests secret-key validation, anti-CSRF token verification, credential sanitization,
 serverless database protection, health probes, and provider reliability.
 """
@@ -119,14 +119,14 @@ class TestHealthCheckEndpoint(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.4")
+        self.assertNotIn("version", data)
 
     def test_api_health_endpoint(self):
         response = self.client.get("/api/health")
         self.assertEqual(response.status_code, 200)
         data = response.get_json()
         self.assertEqual(data.get("status"), "healthy")
-        self.assertEqual(data.get("version"), "1.6.4")
+        self.assertNotIn("version", data)
 
 
 class TestCSRFProtection(unittest.TestCase):
@@ -281,8 +281,17 @@ class TestSSRFHardening(unittest.TestCase):
             self.assertIn("restricted for security", str(ctx.exception))
 
     def test_response_size_limits_constant(self):
-        from scraper import MAX_RESPONSE_BYTES, MAX_SUBREQUESTS
-        self.assertEqual(MAX_RESPONSE_BYTES, 5 * 1024 * 1024)
+        from scraper import (
+            MAX_RESPONSE_BYTES,
+            MAX_BROWSER_NETWORK_BYTES,
+            MAX_RENDERED_HTML_BYTES,
+            MAX_EXTRACTED_CONTENT_BYTES,
+            MAX_SUBREQUESTS,
+        )
+        self.assertEqual(MAX_RESPONSE_BYTES, 10 * 1024 * 1024)
+        self.assertEqual(MAX_BROWSER_NETWORK_BYTES, 10 * 1024 * 1024)
+        self.assertEqual(MAX_RENDERED_HTML_BYTES, 10 * 1024 * 1024)
+        self.assertEqual(MAX_EXTRACTED_CONTENT_BYTES, 10 * 1024 * 1024)
         self.assertEqual(MAX_SUBREQUESTS, 50)
 
     def test_playwright_direct_unsafe_url_rejected(self):
@@ -309,8 +318,8 @@ class TestSSRFHardening(unittest.TestCase):
         mock_cm = MagicMock()
         mock_cm.__enter__.return_value = mock_pw
 
-        # Simulate page.content() returning 6 MB
-        oversized_content = "A" * (6 * 1024 * 1024)
+        # Simulate page.content() returning 11 MB
+        oversized_content = "A" * (11 * 1024 * 1024)
         mock_page.content.return_value = oversized_content
         mock_page.url = "https://example.com/huge"
 
@@ -355,7 +364,7 @@ class TestSSRFHardening(unittest.TestCase):
 
                 mock_resp = MagicMock()
                 mock_resp.headers = {}  # Missing Content-Length!
-                mock_resp.body.return_value = b"X" * (6 * 1024 * 1024)
+                mock_resp.body.return_value = b"X" * (11 * 1024 * 1024)
                 mock_route.fetch.return_value = mock_resp
 
                 registered_handler(mock_route)
@@ -403,7 +412,7 @@ class TestSSRFHardening(unittest.TestCase):
 
                 mock_resp = MagicMock()
                 mock_resp.headers = {"content-length": "100"}  # Inaccurate declared size!
-                mock_resp.body.return_value = b"Y" * (6 * 1024 * 1024)  # Actual 6 MB
+                mock_resp.body.return_value = b"Y" * (11 * 1024 * 1024)  # Actual 11 MB
                 mock_route.fetch.return_value = mock_resp
 
                 registered_handler(mock_route)

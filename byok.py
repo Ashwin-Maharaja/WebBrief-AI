@@ -64,6 +64,12 @@ def redact_credentials(text: str) -> str:
     sanitized = re.sub(r"(?:secret_|ntn_)[a-zA-Z0-9_\-]{20,}", "[notion_secret_masked]", sanitized)
     # Redact Authorization Bearer headers
     sanitized = re.sub(r"(Bearer\s+)[a-zA-Z0-9_\-\.]{15,}", r"\1[token_masked]", sanitized, flags=re.IGNORECASE)
+    # Redact Redis connection strings with passwords (SEC-05)
+    sanitized = re.sub(r"(rediss?://(?:[^:@\s]+:)?)([^@\s]+)(@\S+)", r"\1[password_masked]\3", sanitized)
+    # Redact Vault session tokens and identifiers
+    sanitized = re.sub(r"(wb_vault_)[a-zA-Z0-9_\-]{16,}", r"\1[masked]", sanitized)
+    # Redact 32-byte base64-encoded Fernet encryption keys (43 chars + '=')
+    sanitized = re.sub(r"(?<![A-Za-z0-9_-])[A-Za-z0-9_-]{43}=(?![A-Za-z0-9_=-])", "[fernet_key_masked]", sanitized)
     return sanitized
 
 
@@ -87,22 +93,27 @@ def validate_gemini_credentials(api_key: str, model: Optional[str] = None) -> Tu
 
 def get_active_provider_config(
     session_dict: Optional[dict] = None,
-    request_data: Optional[dict] = None
+    request_data: Optional[dict] = None,
+    vault_config: Optional[dict] = None,
 ) -> Dict[str, Any]:
     """
     Resolves the active provider configuration.
-    In hosted serverless mode: exclusively resolves from request_data (per-request memory).
-    In local self-hosted mode: reads from process environment (.env), with optional overrides from request_data.
+    In hosted serverless mode: resolves from request_data or persistent encrypted vault.
+    In local self-hosted mode: reads from process environment (.env), with optional overrides from request_data/vault.
     Validates model ID strictly against catalogue if specified; rejects unsupported models without silent substitution.
     """
-    req = request_data or {}
+    req = dict(request_data or {})
+    if vault_config and isinstance(vault_config, dict):
+        for k in ("gemini_api_key", "gemini_model", "primary_provider"):
+            if not req.get(k) and vault_config.get(k):
+                req[k] = vault_config[k]
 
     if is_serverless_env():
-        # Hosted mode: strictly isolated to per-request payload
+        # Hosted mode: isolated to request payload and persistent server-side vault
         gemini_api_key = req.get("gemini_api_key") or req.get("api_key") or ""
         raw_model = req.get("gemini_model") or req.get("model")
     else:
-        # Local self-hosted mode: environment variables with optional request payload overrides
+        # Local self-hosted mode: environment variables with optional request payload/vault overrides
         gemini_api_key = req.get("gemini_api_key") or req.get("api_key") or os.getenv(ENV_GEMINI_API_KEY, "").strip()
         raw_model = req.get("gemini_model") or req.get("model") or os.getenv(ENV_GEMINI_MODEL, "").strip()
 
@@ -122,22 +133,38 @@ def get_active_provider_config(
     }
 
 
-def has_valid_config(session_dict: Optional[dict] = None, request_data: Optional[dict] = None) -> bool:
+def has_valid_config(
+    session_dict: Optional[dict] = None,
+    request_data: Optional[dict] = None,
+    vault_config: Optional[dict] = None,
+) -> bool:
     """
     Returns True if valid non-placeholder Gemini credentials are configured.
     """
     try:
-        config = get_active_provider_config(session_dict=session_dict, request_data=request_data)
+        config = get_active_provider_config(
+            session_dict=session_dict,
+            request_data=request_data,
+            vault_config=vault_config,
+        )
         return bool(config.get("gemini_api_key"))
     except Exception:
         return False
 
 
-def get_router(session_dict: Optional[dict] = None, request_data: Optional[dict] = None) -> AIRouter:
+def get_router(
+    session_dict: Optional[dict] = None,
+    request_data: Optional[dict] = None,
+    vault_config: Optional[dict] = None,
+) -> AIRouter:
     """
     Builds and returns an AIRouter configured with current active credentials.
     """
-    config = get_active_provider_config(session_dict=session_dict, request_data=request_data)
+    config = get_active_provider_config(
+        session_dict=session_dict,
+        request_data=request_data,
+        vault_config=vault_config,
+    )
     return AIRouter(
         primary_provider="gemini",
         primary_credentials={

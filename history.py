@@ -13,6 +13,26 @@ logger = logging.getLogger(__name__)
 DEFAULT_DB_FILENAME = "webbrief_history.db"
 
 
+class HistoryError(Exception):
+    """Base exception for all history persistence and retrieval errors."""
+    pass
+
+
+class HistoryStorageUnavailableError(HistoryError):
+    """Raised when the SQLite database or storage medium is unavailable or unreachable."""
+    pass
+
+
+class HistorySchemaError(HistoryError):
+    """Raised when database schema is corrupted, missing, or mismatched."""
+    pass
+
+
+class HistoryTransactionError(HistoryError):
+    """Raised when a history transaction or statement execution fails."""
+    pass
+
+
 def get_default_db_path() -> str:
     """Returns the default SQLite database path in the application directory."""
     workspace_dir = os.path.dirname(os.path.abspath(__file__))
@@ -22,23 +42,30 @@ def get_default_db_path() -> str:
 def get_db_connection(db_path: Optional[str] = None) -> sqlite3.Connection:
     """
     Creates and returns a SQLite connection with row factory.
-    Gracefully falls back to an in-memory database if disk is read-only or in a serverless environment.
+    Enforces foreign keys on every connection (PRAGMA foreign_keys = ON).
+    Enables WAL mode and busy timeout on disk-backed databases.
+    Does NOT silently fall back to an in-memory database on disk connection failures.
     """
     if is_serverless_env() and db_path is None:
-        conn = sqlite3.connect(":memory:", timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        return conn
+        raise HistoryStorageUnavailableError("SQLite database is disabled in serverless hosting environment.")
 
     target_path = db_path or get_default_db_path()
     try:
-        conn = sqlite3.connect(target_path, timeout=5.0)
+        conn = sqlite3.connect(target_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        # Enforce foreign keys and busy timeout on all connections (HIS-04, P2-HIS-01, P2-HIS-03)
+        conn.execute("PRAGMA foreign_keys = ON;")
+        conn.execute("PRAGMA busy_timeout = 10000;")
+        if target_path != ":memory:":
+            try:
+                conn.execute("PRAGMA journal_mode=WAL;")
+                conn.execute("PRAGMA synchronous=NORMAL;")
+            except sqlite3.OperationalError:
+                pass
         return conn
-    except (sqlite3.OperationalError, OSError):
-        # Fallback to in-memory SQLite if running in read-only/ephemeral serverless environment
-        conn = sqlite3.connect(":memory:", timeout=5.0)
-        conn.row_factory = sqlite3.Row
-        return conn
+    except (sqlite3.OperationalError, OSError) as e:
+        logger.error("Failed to connect to SQLite database at '%s': %s", target_path, str(e))
+        raise HistoryStorageUnavailableError(f"Failed to connect to SQLite database at '{target_path}': {str(e)}") from e
 
 
 _INITIALIZED_DBS: set = set()
@@ -55,6 +82,11 @@ def init_db(db_path: Optional[str] = None) -> None:
 
     try:
         conn = get_db_connection(db_path)
+    except HistoryStorageUnavailableError:
+        _INITIALIZED_DBS.discard(target_path)
+        raise
+
+    try:
         with conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS summary_history (
@@ -79,7 +111,7 @@ def init_db(db_path: Optional[str] = None) -> None:
                 )
             """)
 
-            # Auto-migrate v1.3 columns if existing database created on older version
+            # Auto-migrate comparison columns if existing database created on older schema
             for col_def in [
                 ("entry_type", "TEXT DEFAULT 'single'"),
                 ("url_b", "TEXT DEFAULT NULL"),
@@ -100,7 +132,9 @@ def init_db(db_path: Optional[str] = None) -> None:
             logger.debug("Vector store table init deferred: %s", str(e))
 
     except Exception as e:
-        logger.warning("Failed to initialize SQLite history database: %s", str(e))
+        logger.error("Failed to initialize SQLite history database at '%s': %s", target_path, str(e))
+        _INITIALIZED_DBS.discard(target_path)
+        raise HistorySchemaError(f"Failed to initialize SQLite history database at '{target_path}': {str(e)}") from e
 
 
 def add_history_entry(
@@ -113,12 +147,14 @@ def add_history_entry(
     url_b: Optional[str] = None,
     title_b: Optional[str] = None,
     db_path: Optional[str] = None
-) -> Optional[Dict[str, Any]]:
+) -> Dict[str, Any]:
     """
     Adds a new summary or comparison entry to the history database.
 
     Returns:
-        The newly created history entry dictionary, or None on failure.
+        The newly created history entry dictionary when successfully saved.
+    Raises:
+        HistoryError: When the database insert or transaction fails.
     """
     init_db(db_path)
     entry_id = str(uuid.uuid4())
@@ -132,8 +168,8 @@ def add_history_entry(
     safe_url_b = (url_b or "").strip() if url_b else None
     safe_title_b = (title_b or "").strip() if title_b else None
 
+    conn = get_db_connection(db_path)
     try:
-        conn = get_db_connection(db_path)
         with conn:
             conn.execute(
                 """
@@ -158,6 +194,9 @@ def add_history_entry(
             )
         conn.close()
 
+        is_partial = bool(summary.get("is_partial") or summary.get("partial")) if isinstance(summary, dict) else False
+        warning = summary.get("warning") if isinstance(summary, dict) else None
+
         return {
             "id": entry_id,
             "title": safe_title,
@@ -165,35 +204,36 @@ def add_history_entry(
             "mode": mode,
             "mode_name": mode_name,
             "summary": summary,
+            "created_at": now.isoformat(),
             "created_at_formatted": created_at_formatted,
             "entry_type": entry_type,
             "url_b": safe_url_b,
             "title_b": safe_title_b,
+            "is_partial": is_partial,
+            "warning": warning,
         }
     except Exception as e:
-        logger.warning("Failed to add SQLite history entry: %s", str(e))
-        return {
-            "id": entry_id,
-            "title": safe_title,
-            "url": safe_url,
-            "mode": mode,
-            "mode_name": mode_name,
-            "summary": summary,
-            "created_at_formatted": created_at_formatted,
-            "entry_type": entry_type,
-            "url_b": safe_url_b,
-            "title_b": safe_title_b,
-        }
+        logger.error("Failed to add SQLite history entry: %s", str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HistoryTransactionError(f"Failed to persist history entry: {str(e)}") from e
 
 
 def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str, Any]]:
     """
     Retrieves the most recent summary history entries.
+    Pass limit=-1 or limit<=0 to retrieve all entries without truncation.
     """
+    if is_serverless_env() and db_path is None:
+        return []
+
     init_db(db_path)
     entries = []
+    effective_limit = -1 if (limit is None or limit <= 0) else limit
+    conn = get_db_connection(db_path)
     try:
-        conn = get_db_connection(db_path)
         cursor = conn.cursor()
         cursor.execute(
             """
@@ -203,7 +243,7 @@ def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str
             ORDER BY created_at DESC
             LIMIT ?
             """,
-            (limit,)
+            (effective_limit,)
         )
         rows = cursor.fetchall()
         for row in rows:
@@ -222,6 +262,9 @@ def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str
             except (IndexError, KeyError):
                 pass
 
+            is_partial = bool(parsed_summary.get("is_partial") or parsed_summary.get("partial")) if isinstance(parsed_summary, dict) else False
+            warning = parsed_summary.get("warning") if isinstance(parsed_summary, dict) else None
+
             entries.append({
                 "id": row["id"],
                 "title": row["title"],
@@ -229,25 +272,62 @@ def get_history(limit: int = 50, db_path: Optional[str] = None) -> List[Dict[str
                 "mode": row["mode"],
                 "mode_name": row["mode_name"],
                 "summary": parsed_summary,
+                "created_at": row["created_at"],
                 "created_at_formatted": row["created_at_formatted"],
                 "entry_type": entry_type,
                 "url_b": url_b,
                 "title_b": title_b,
+                "is_partial": is_partial,
+                "warning": warning,
             })
         conn.close()
+        return entries
     except Exception as e:
-        logger.warning("Failed to retrieve summary history: %s", str(e))
+        logger.error("Failed to retrieve summary history: %s", str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HistoryTransactionError(f"Failed to retrieve summary history: {str(e)}") from e
 
-    return entries
+
+def get_history_count(db_path: Optional[str] = None) -> int:
+    """
+    Returns the total count of saved summary records in SQLite history.
+    """
+    if is_serverless_env() and db_path is None:
+        return 0
+
+    init_db(db_path)
+    conn = get_db_connection(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT COUNT(*) AS cnt FROM summary_history")
+        row = cur.fetchone()
+        count = int(row["cnt"]) if row else 0
+        conn.close()
+        return count
+    except Exception as e:
+        logger.error("Failed to count summary history: %s", str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HistoryTransactionError(f"Failed to count summary history: {str(e)}") from e
 
 
 def get_history_entry(entry_id: str, db_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
     """
     Retrieves a single summary history entry by its ID.
+    Returns None if entry does not exist.
+    Raises HistoryError on database failure.
     """
+    if is_serverless_env() and db_path is None:
+        return None
+
     init_db(db_path)
+    conn = get_db_connection(db_path)
     try:
-        conn = get_db_connection(db_path)
         cursor = conn.cursor()
         cursor.execute(
             """
@@ -277,6 +357,9 @@ def get_history_entry(entry_id: str, db_path: Optional[str] = None) -> Optional[
             except (IndexError, KeyError):
                 pass
 
+            is_partial = bool(parsed_summary.get("is_partial") or parsed_summary.get("partial")) if isinstance(parsed_summary, dict) else False
+            warning = parsed_summary.get("warning") if isinstance(parsed_summary, dict) else None
+
             return {
                 "id": row["id"],
                 "title": row["title"],
@@ -284,64 +367,126 @@ def get_history_entry(entry_id: str, db_path: Optional[str] = None) -> Optional[
                 "mode": row["mode"],
                 "mode_name": row["mode_name"],
                 "summary": parsed_summary,
+                "created_at": row["created_at"],
                 "created_at_formatted": row["created_at_formatted"],
                 "entry_type": entry_type,
                 "url_b": url_b,
                 "title_b": title_b,
+                "is_partial": is_partial,
+                "warning": warning,
             }
+        return None
     except Exception as e:
-        logger.warning("Failed to fetch history entry %s: %s", entry_id, str(e))
-
-    return None
+        logger.error("Failed to fetch history entry %s: %s", entry_id, str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HistoryTransactionError(f"Failed to fetch history entry: {str(e)}") from e
 
 
 def delete_history_entry(entry_id: str, db_path: Optional[str] = None) -> bool:
     """
-    Deletes an individual history entry by its ID, and removes any corresponding vector embedding.
+    Deletes an individual history entry by its ID in a single atomic transaction.
+    Foreign keys ensure vector embeddings are cascade-deleted.
     """
+    if is_serverless_env() and db_path is None:
+        return True
+
     init_db(db_path)
+    conn = get_db_connection(db_path)
     try:
-        conn = get_db_connection(db_path)
         with conn:
+            # Explicit delete of embeddings in same transaction for defense-in-depth (HIS-05)
+            try:
+                conn.execute("DELETE FROM summary_embeddings WHERE summary_id = ?", (entry_id,))
+            except sqlite3.OperationalError:
+                pass
             cursor = conn.execute("DELETE FROM summary_history WHERE id = ?", (entry_id,))
             affected = cursor.rowcount
         conn.close()
-
-        # Delete corresponding vector embedding
-        try:
-            from vector_store import delete_embedding
-            delete_embedding(entry_id, db_path=db_path)
-        except Exception:
-            pass
-
         return affected > 0
     except Exception as e:
-        logger.warning("Failed to delete history entry %s: %s", entry_id, str(e))
-        return False
+        logger.error("Failed to delete history entry %s: %s", entry_id, str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HistoryTransactionError(f"Failed to delete history entry: {str(e)}") from e
 
 
 def clear_history(db_path: Optional[str] = None) -> bool:
     """
-    Clears all entries from the summary history database and vector embeddings.
+    Clears all entries from the summary history database and vector embeddings in a single atomic transaction.
     """
+    if is_serverless_env() and db_path is None:
+        return True
+
     init_db(db_path)
+    conn = get_db_connection(db_path)
     try:
-        conn = get_db_connection(db_path)
         with conn:
+            try:
+                conn.execute("DELETE FROM summary_embeddings")
+            except sqlite3.OperationalError:
+                pass
             conn.execute("DELETE FROM summary_history")
         conn.close()
-
-        # Clear vector embeddings
-        try:
-            from vector_store import clear_all_embeddings
-            clear_all_embeddings(db_path=db_path)
-        except Exception:
-            pass
-
         return True
     except Exception as e:
-        logger.warning("Failed to clear summary history: %s", str(e))
-        return False
+        logger.error("Failed to clear summary history: %s", str(e))
+        try:
+            conn.close()
+        except Exception:
+            pass
+        raise HistoryTransactionError(f"Failed to clear history: {str(e)}") from e
+
+
+def backup_database(destination_path: str, db_path: Optional[str] = None) -> bool:
+    """
+    Safely creates an online, consistent backup of the SQLite database (DB-01).
+    Accounts for WAL mode by flushing WAL frames or using SQLite's online backup API,
+    guaranteeing consistency without copying inconsistent live file states.
+    """
+    if is_serverless_env() and db_path is None:
+        raise HistoryStorageUnavailableError("SQLite database backup is disabled in serverless hosting environment.")
+
+    init_db(db_path)
+    dest_dir = os.path.dirname(os.path.abspath(destination_path))
+    if dest_dir and not os.path.exists(dest_dir):
+        os.makedirs(dest_dir, exist_ok=True)
+
+    src_conn = None
+    dest_conn = None
+    try:
+        src_conn = get_db_connection(db_path)
+        try:
+            # Checkpoint WAL first to flush committed frames
+            src_conn.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+            dest_escaped = destination_path.replace("'", "''")
+            src_conn.execute(f"VACUUM INTO '{dest_escaped}';")
+            src_conn.close()
+            return True
+        except (sqlite3.OperationalError, sqlite3.DatabaseError):
+            dest_conn = sqlite3.connect(destination_path)
+            with dest_conn:
+                src_conn.backup(dest_conn, pages=100)
+            dest_conn.close()
+            src_conn.close()
+            return True
+    except Exception as e:
+        logger.error("Failed to backup SQLite database to '%s': %s", destination_path, str(e))
+        if src_conn:
+            try:
+                src_conn.close()
+            except Exception:
+                pass
+        if dest_conn:
+            try:
+                dest_conn.close()
+            except Exception:
+                pass
+        raise HistoryTransactionError(f"Database backup failed: {str(e)}") from e
 
 
 # -------------------------------------------------------------

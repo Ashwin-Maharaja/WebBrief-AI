@@ -1,5 +1,5 @@
 """
-WebBrief AI — Comparative Research & Analysis Engine (v1.6.0).
+WebBrief AI — Comparative Research & Analysis Engine.
 Performs deep comparative synthesis across two articles/sources.
 Extracts common arguments, contradictions, differing perspectives,
 unique information, and side-by-side claim comparisons with strict factuality.
@@ -7,15 +7,14 @@ unique information, and side-by-side claim comparisons with strict factuality.
 
 import json
 import logging
-import os
 import re
 from typing import Dict, Any, Optional, Tuple
 
 from dotenv import load_dotenv
 
-from scraper import scrape_article, validate_safe_url, ScraperError
-from summarizer import summarize_text, SummarizerError
-from services.providers.router import AIRouter, RouterResult
+from scraper import scrape_article, validate_safe_url
+from summarizer import summarize_text
+from services.providers.router import AIRouter
 from services.providers.exceptions import ProviderError, ProviderInvalidModelError
 
 load_dotenv()
@@ -262,19 +261,41 @@ def compare_articles(
     text_a = text_a_override or ""
     if not text_a:
         extracted = scrape_article(safe_url_a)
-        if isinstance(extracted, tuple):
-            title_a, text_a = extracted
+        if isinstance(extracted, tuple) and len(extracted) == 2:
+            scraped_title, text_a = extracted
+            if not title_a_override and scraped_title:
+                title_a = scraped_title
+        elif isinstance(extracted, str):
+            if extracted.startswith("Page Title: "):
+                parts = extracted.split("\n\n", 1)
+                scraped_title = parts[0].replace("Page Title: ", "").strip()
+                if not title_a_override and scraped_title:
+                    title_a = scraped_title
+                text_a = parts[1] if len(parts) > 1 else extracted
+            else:
+                text_a = extracted
         else:
-            text_a = extracted
+            text_a = str(extracted or "")
 
     title_b = title_b_override or "Article B"
     text_b = text_b_override or ""
     if not text_b:
         extracted = scrape_article(safe_url_b)
-        if isinstance(extracted, tuple):
-            title_b, text_b = extracted
+        if isinstance(extracted, tuple) and len(extracted) == 2:
+            scraped_title, text_b = extracted
+            if not title_b_override and scraped_title:
+                title_b = scraped_title
+        elif isinstance(extracted, str):
+            if extracted.startswith("Page Title: "):
+                parts = extracted.split("\n\n", 1)
+                scraped_title = parts[0].replace("Page Title: ", "").strip()
+                if not title_b_override and scraped_title:
+                    title_b = scraped_title
+                text_b = parts[1] if len(parts) > 1 else extracted
+            else:
+                text_b = extracted
         else:
-            text_b = extracted
+            text_b = str(extracted or "")
 
     # Check minimum sufficiency
     if len(text_a.strip()) < MIN_COMPARISON_CHARS:

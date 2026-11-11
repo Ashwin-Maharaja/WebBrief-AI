@@ -71,17 +71,29 @@
                 </div>
                 <div class="brand-info">
                     <h1>WebBrief <span class="accent-text">AI</span></h1>
-                    <span class="badge">v{{ app_version }}</span>
                 </div>
             </div>
             
             <div class="header-nav">
-                <a href="{{ url_for('view_history') }}" class="nav-btn" title="View Summary History">
-                    <span>📚 History</span>
-                </a>
-                <a href="{{ url_for('settings') }}" class="nav-btn" title="Settings">
-                    <span>⚙️ Settings</span>
-                </a>
+                <div class="view-switcher-tabs" role="tablist">
+                    <button type="button" class="view-tab-btn active" id="view-tab-summarize" onclick="switchMainView('summarize')" title="Primary Summarization Workspace">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                            <polyline points="14 2 14 8 20 8"/>
+                            <line x1="16" y1="13" x2="8" y2="13"/>
+                            <line x1="16" y1="17" x2="8" y2="17"/>
+                        </svg>
+                        <span>Summarize</span>
+                    </button>
+                    <button type="button" class="view-tab-btn" id="view-tab-history" onclick="switchMainView('history')" title="View Summary History & Knowledge">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+                            <path d="M8 7h6"/>
+                            <path d="M8 11h8"/>
+                        </svg>
+                        <span>History</span>
+                    </button>
+                </div>
                 <button id="theme-toggle-btn" class="theme-toggle-btn" aria-label="Toggle Theme" title="Toggle Light/Dark Theme">
                     <span id="theme-icon">🌙</span>
                 </button>
@@ -90,10 +102,13 @@
             <p class="tagline" style="margin-top: 12px;">Accurate, multi-mode AI summaries, comparative research & hosted deployment-aware storage.</p>
         </header>
 
+        <!-- VIEW 1: SUMMARIZE WORKSPACE (Default) -->
+        <div id="view-summarize" class="spa-view {% if active_view == 'history' %}hidden{% endif %}" style="{% if active_view == 'history' %}display: none;{% endif %}">
+
         <!-- Main Form Card -->
         <section class="card input-card">
             {% if is_hosted %}
-            <!-- Hosted Serverless BYOK Bar (v1.5) -->
+            <!-- Hosted Serverless BYOK Bar -->
             <div class="hosted-byok-card" id="hosted-byok-card" style="margin-bottom: 16px; padding: 14px 16px; background: var(--section-bg); border: 1px solid var(--border-color); border-radius: 10px;">
                 <div class="hosted-byok-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px;">
                     <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -146,7 +161,7 @@
 
 
 
-            <!-- Mode Switcher Tabs: Single URL vs Batch Summarize vs Compare Articles vs Semantic Search -->
+            <!-- Mode Switcher Tabs: Single URL vs Batch Summarize vs Compare Articles -->
             <div class="tab-bar">
                 <button type="button" class="tab-btn active" id="tab-single-btn" onclick="switchSubmissionTab('single')">
                     <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -172,13 +187,6 @@
                         <circle cx="16" cy="12" r="2"/>
                     </svg>
                     <span>Compare Two Articles</span>
-                </button>
-                <button type="button" class="tab-btn" id="tab-search-btn" onclick="switchSubmissionTab('search')">
-                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <circle cx="11" cy="11" r="8"/>
-                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                    </svg>
-                    <span>Semantic Search</span>
                 </button>
             </div>
 
@@ -267,50 +275,6 @@
                     </div>
                 </div>
 
-                <!-- Semantic Search Input Container (v1.4) -->
-                <div id="semantic-search-container" style="display: none;">
-                    <div class="form-group">
-                        <label for="semantic-query-input" class="form-label">
-                            <span>Natural-Language Knowledge Query</span>
-                            <span class="badge" style="background: rgba(59, 130, 246, 0.15); color: #60a5fa; font-weight: 600;">Vector Search</span>
-                        </label>
-                        <div class="input-wrapper">
-                            <span class="input-icon">🔍</span>
-                            <input
-                                type="text"
-                                id="semantic-query-input"
-                                class="form-control"
-                                placeholder="e.g., What are the key ethical risks of AI models discussed in my saved articles?"
-                                autocomplete="off"
-                            >
-                        </div>
-                        <p style="font-size: 12.5px; color: var(--text-muted); margin-top: 6px;">
-                            Searches your saved summary library using AI vector embeddings (<code>text-embedding-3-small</code>).
-                        </p>
-                    </div>
-
-                    <!-- Search Controls: Filter Type & Relevance Threshold Slider -->
-                    <div class="search-controls-row">
-                        <div class="filter-group" style="display: flex; gap: 8px; align-items: center;">
-                            <label class="form-label" style="margin-bottom: 0; font-size: 13px;">Filter:</label>
-                            <select id="search-filter-type" class="form-control" style="width: auto; padding: 6px 12px; font-size: 13px;">
-                                <option value="all">All Documents</option>
-                                <option value="single">Single Webpages</option>
-                                <option value="comparison">Comparative Briefs</option>
-                            </select>
-                        </div>
-
-                        <div class="threshold-group" style="display: flex; gap: 8px; align-items: center;">
-                            <label for="search-threshold-slider" class="form-label" style="margin-bottom: 0; font-size: 13px;" title="Minimum cosine similarity score to qualify as relevant">
-                                Min Relevance: <span id="threshold-display" style="font-weight: 700; color: var(--primary);">35%</span>
-                            </label>
-                            <input type="range" id="search-threshold-slider" min="15" max="85" value="35" step="5" style="width: 110px;" oninput="document.getElementById('threshold-display').textContent = this.value + '%'">
-                        </div>
-                    </div>
-                </div>
-
-
-
                 <!-- Summarization Mode Selector -->
                 <div class="form-group">
                     <label class="form-label">Summarization Mode</label>
@@ -363,6 +327,49 @@
                     </div>
                 </div>
 
+                <!-- Collapsible Custom Prompt Directives (Settings) -->
+                <details class="directives-accordion" id="directives-accordion">
+                    <summary>
+                        <span style="display: flex; align-items: center; gap: 8px;">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                            </svg>
+                            <span>Custom Prompt Directives</span>
+                        </span>
+                        <span class="badge" style="font-size: 11px; background: rgba(59, 130, 246, 0.15); color: var(--primary);">Custom Instructions</span>
+                    </summary>
+                    <div style="margin-top: 14px;">
+                        <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 10px;">
+                            Inject personalized instructions into all summary prompts (e.g., focus on key metrics, architecture, or risks).
+                        </p>
+                        <div class="form-group" style="margin-bottom: 0.75rem;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                <label for="custom-directive-input" class="form-label" style="margin-bottom: 0;">Directives</label>
+                                <label style="display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 0.85rem;">
+                                    <input type="checkbox" id="directive-toggle-checkbox" {% if custom_directive_enabled %}checked{% endif %}>
+                                    Enable Directives
+                                </label>
+                            </div>
+                            <textarea
+                                id="custom-directive-input"
+                                class="form-control"
+                                rows="3"
+                                maxlength="{{ max_directive_length or 1000 }}"
+                                placeholder="Hint: Highlight revenue growth; focus on developer implications, benchmarks, and actionable insights..."
+                                style="resize: vertical; font-size: 0.9rem; padding: 12px; line-height: 1.5;"
+                            >{{ custom_directive or '' }}</textarea>
+                            <div style="display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--text-muted); margin-top: 6px;">
+                                <span id="directive-feedback"></span>
+                                <span id="directive-char-count">0 / {{ max_directive_length or 1000 }}</span>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 8px; margin-top: 10px;">
+                            <button type="button" id="save-directive-btn" class="btn btn-primary" style="font-size: 0.85rem; padding: 6px 14px;">Save Directives</button>
+                            <button type="button" id="reset-directive-btn" class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 14px;">Reset</button>
+                        </div>
+                    </div>
+                </details>
+
                 <!-- Collapsible BYOK Section -->
                 {% if not is_hosted %}
                 <details class="byok-toggle">
@@ -382,10 +389,20 @@
                             placeholder="Google Gemini API Key (AIza...)"
                             autocomplete="off"
                             spellcheck="false"
+                            oninput="const s=document.getElementById('override-key-status');if(s)s.style.display='none';"
                         >
+                        <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 8px; flex-wrap: wrap; gap: 8px;">
+                            <button type="button" id="test-override-key-btn" class="btn btn-secondary" style="font-size: 0.82rem; padding: 5px 12px; display: inline-flex; align-items: center; gap: 6px;" onclick="testOverrideKey()">
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                                    <polyline points="22 4 12 14.01 9 11.01"/>
+                                </svg>
+                                <span>Test Configure</span>
+                            </button>
+                            <span id="override-key-status" style="font-size: 12px; display: none;"></span>
+                        </div>
                         <p style="font-size: 12px; color: var(--text-muted); margin-top: 6px;">
                             Temporarily override your saved configuration for this request.
-                            <a href="{{ url_for('settings') }}" style="color: var(--primary); text-decoration: underline; margin-left: 4px;">Configure in Settings ↗</a>
                         </p>
                     </div>
                 </details>
@@ -519,9 +536,13 @@
                     <!-- Source Link Banner -->
                     <div class="source-url-banner">
                         <span class="source-label">Source:</span>
-                        <a id="source-url-link" href="{{ url if url else '#' }}" target="_blank" rel="noopener noreferrer" class="source-link">
+                        <a id="source-url-link" href="{{ url | safe_url }}" target="_blank" rel="noopener noreferrer" class="source-link">
                             {{ url if url else '' }}
                         </a>
+                    </div>
+
+                    <div id="summary-partial-warning" class="alert alert-warning" style="display: none; margin-top: 10px; font-size: 13px; padding: 8px 12px; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.4); border-radius: 6px; color: #fbbf24;">
+                        ⚠️ <span id="summary-partial-warning-text"></span>
                     </div>
                 </div>
 
@@ -634,7 +655,7 @@
             </div>
         </section>
 
-        <!-- Comparative Research Results Card (New in v1.3) -->
+        <!-- Comparative Research Results Card -->
         <section id="compare-results-card" class="card result-card" style="display: none;">
             <!-- Header -->
             <div class="result-header">
@@ -815,37 +836,216 @@
             </div>
         </section>
 
-        <!-- Semantic Search Results Card (v1.4) -->
-        <section id="semantic-results-card" class="card result-card" style="display: none;">
-            <div class="result-header">
-                <div>
-                    <div class="result-title-group" style="margin-bottom: 4px;">
-                        <span class="sparkle-icon">
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                <circle cx="11" cy="11" r="8"/>
-                                <line x1="21" y1="21" x2="16.65" y2="16.65"/>
-                            </svg>
-                        </span>
-                        <h2 class="article-title" id="search-results-heading">Semantic Search Matches</h2>
+        </div> <!-- END OF #view-summarize -->
+
+        <!-- VIEW 2: HISTORY & KNOWLEDGE WORKSPACE -->
+        <div id="view-history" class="spa-view {% if active_view != 'history' %}hidden{% endif %}" style="{% if active_view != 'history' %}display: none;{% endif %}">
+            
+            {% if is_hosted %}
+            <div style="max-width: 820px; margin: 1rem auto 0; background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: 8px; padding: 12px 16px; font-size: 13px; color: var(--text-primary); display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap;">
+                <div style="display: flex; align-items: center; gap: 10px;">
+                    <span style="font-size: 18px;">🔒</span>
+                    <div>
+                        <strong>Hosted Private Storage:</strong> Summaries are stored strictly in your browser's IndexedDB. No account required, and data never leaves your device.
                     </div>
-                    <p id="search-results-meta" style="font-size: 13px; color: var(--text-muted); margin-top: 4px;">
-                        0 matching summaries found.
-                    </p>
                 </div>
-                <div style="display: flex; gap: 8px; align-items: center;">
-                    <button type="button" class="btn btn-secondary" onclick="clearSearchResults()">
-                        Clear Results
+                <span class="badge" style="background: rgba(16, 185, 129, 0.15); color: #10b981; font-size: 11px;">IndexedDB Active</span>
+            </div>
+            {% endif %}
+
+            <!-- 1. Local Vector Knowledge & Semantic Search Segment -->
+            <section class="card history-card" style="margin-bottom: 1.5rem;">
+                <div class="section-header" style="display: flex; align-items: center; gap: 10px; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 1px solid var(--border-color);">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <circle cx="11" cy="11" r="8"/>
+                        <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                    </svg>
+                    <h3 style="font-size: 1.15rem; font-weight: 700; color: var(--text-primary); margin: 0;">Local Vector Knowledge & Semantic Search</h3>
+                </div>
+                <p style="font-size: 0.88rem; color: var(--text-muted); margin-bottom: 1rem;">
+                    Ask natural-language questions across all your saved webpage summaries using AI vector embeddings.
+                </p>
+
+                <!-- Vector Search Bar: Input with Side Button -->
+                <div class="vector-search-bar">
+                    <div class="input-wrapper">
+                        <span class="input-icon">🔍</span>
+                        <input
+                            type="text"
+                            id="history-semantic-query-input"
+                            class="form-control"
+                            placeholder="e.g., What are the key ethical risks or metrics discussed in my saved articles?"
+                            autocomplete="off"
+                            onkeydown="if(event.key === 'Enter'){ event.preventDefault(); executeHistorySemanticSearch(); }"
+                        >
+                    </div>
+                    <button type="button" id="history-semantic-search-btn" class="btn btn-primary btn-search-trigger" onclick="executeHistorySemanticSearch()">
+                        <span>🔍 Search</span>
                     </button>
                 </div>
-            </div>
 
-            <!-- List of Semantic Match Cards -->
-            <div id="semantic-matches-list" style="display: flex; flex-direction: column; gap: 14px; margin-top: 16px;">
-                <!-- Populated dynamically via JS -->
-            </div>
-        </section>
+                <!-- Search Controls: Filter Type & Relevance Threshold Slider -->
+                <div class="search-controls-row" style="display: flex; gap: 16px; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-bottom: 16px;">
+                    <div class="filter-group" style="display: flex; gap: 8px; align-items: center;">
+                        <label class="form-label" style="margin-bottom: 0; font-size: 13px;">Filter:</label>
+                        <select id="history-search-filter-type" class="form-control" style="width: auto; padding: 6px 12px; font-size: 13px;">
+                            <option value="all">All Documents</option>
+                            <option value="single">Single Webpages</option>
+                            <option value="comparison">Comparative Briefs</option>
+                        </select>
+                    </div>
 
-        <!-- Notion Export Modal Dialog -->
+                    <div class="threshold-group" style="display: flex; gap: 8px; align-items: center;">
+                        <label for="history-search-threshold-slider" class="form-label" style="margin-bottom: 0; font-size: 13px;" title="Minimum cosine similarity score to qualify as relevant">
+                            Min Relevance: <span id="history-threshold-display" style="font-weight: 700; color: var(--primary);">35%</span>
+                        </label>
+                        <input type="range" id="history-search-threshold-slider" min="15" max="85" value="35" step="5" style="width: 110px;" oninput="document.getElementById('history-threshold-display').textContent = this.value + '%'">
+                    </div>
+                </div>
+
+                <!-- Semantic Search Matches Area (Rendered in place) -->
+                <div id="history-semantic-results-area" style="display: none; margin-bottom: 1.5rem; padding-top: 1rem; border-top: 1px dashed var(--border-color);">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+                        <h4 style="font-size: 0.95rem; font-weight: 700; color: var(--text-primary); margin: 0;">Matching Knowledge Entries</h4>
+                        <button type="button" class="btn btn-secondary" style="font-size: 0.78rem; padding: 4px 10px;" onclick="closeHistorySearchResults()">Close Results</button>
+                    </div>
+                    <p id="history-search-meta" style="font-size: 0.82rem; color: var(--text-muted); margin-bottom: 10px;"></p>
+                    <div id="history-semantic-matches-list" class="semantic-matches-list" style="display: flex; flex-direction: column; gap: 12px;"></div>
+                </div>
+
+                <!-- Vector Knowledge Architecture & Stats Box -->
+                <div class="status-box">
+                    <div class="status-row">
+                        <span class="status-label">Vector Storage Architecture</span>
+                        <span class="status-val" style="color: #10b981;">SQLite Binary Float Vectors (768 dims)</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Embedding Engine</span>
+                        <span class="status-val">Google Gemini / Deterministic Hash</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label">Indexing Cache</span>
+                        <span class="status-val">SHA-256 Content Hash (Zero Redundancy)</span>
+                    </div>
+                    <div class="status-row">
+                        <span class="status-label" style="min-width: 190px; flex-shrink: 0;">Total Indexed Documents</span>
+                        <span class="status-val" id="indexed-count-display" style="padding-left: 1.5rem;">Loading...</span>
+                    </div>
+                </div>
+
+                <div style="margin-top: 1rem; display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                    <button type="button" id="rebuild-index-btn" onclick="rebuildVectorIndex()" class="btn btn-secondary" style="font-size: 0.88rem;">
+                        🔄 Rebuild Vector Index
+                    </button>
+                    <span id="rebuild-status-msg" style="font-size: 0.82rem; font-weight: 600; color: var(--text-muted);"></span>
+                </div>
+            </section>
+
+            <!-- 2. Summary History List Segment -->
+            <section class="card history-card">
+                <div class="history-header">
+                    <div>
+                        <h2 style="font-size: 1.4rem; font-weight: 700; color: var(--text-primary); margin-bottom: 4px;">
+                            Summary History
+                        </h2>
+                        <p style="font-size: 0.88rem; color: var(--text-muted);">
+                            Access, search, reopen, or export previously generated summaries.
+                        </p>
+                    </div>
+
+                    <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap;">
+                        <button id="clear-all-btn" class="btn btn-secondary" style="font-size: 0.85rem; padding: 6px 14px;" onclick="clearAllHistoryAction()">
+                            Clear All History
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Summary History Search / Filter Bar: Input with Side Search Button -->
+                <div class="vector-search-bar history-search-bar" style="margin-bottom: 16px;">
+                    <div class="input-wrapper">
+                        <span class="input-icon">🔎</span>
+                        <input
+                            type="text"
+                            id="history-filter-input"
+                            class="form-control"
+                            placeholder="Quick search saved summaries by keyword or URL..."
+                            autocomplete="off"
+                            oninput="filterHistoryList(this.value)"
+                            onkeydown="if(event.key === 'Enter'){ event.preventDefault(); filterHistoryList(this.value); }"
+                        >
+                    </div>
+                    <button type="button" id="history-filter-search-btn" class="btn btn-primary btn-search-trigger" onclick="filterHistoryList(document.getElementById('history-filter-input').value)">
+                        <span>🔍 Search</span>
+                    </button>
+                </div>
+
+                <div id="history-container" class="history-list">
+                    {% if entries and entries|length > 0 %}
+                        {% for item in entries %}
+                        <div class="history-item" data-id="{{ item.id }}" onclick="openSummaryDirect('{{ item.id }}')">
+                            <div class="history-info">
+                                <h3 class="history-title">{{ item.title }}</h3>
+                                <div class="history-meta">
+                                    {% if item.entry_type == 'comparison' %}
+                                        <span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; font-size: 0.72rem; padding: 2px 8px;">
+                                            ⚖️ Comparison
+                                        </span>
+                                    {% else %}
+                                        <span class="badge" style="background: var(--primary-light); color: var(--primary); font-size: 0.72rem; padding: 2px 8px;">
+                                            {{ item.mode_name or 'Quick' }}
+                                        </span>
+                                    {% endif %}
+                                    <span>{{ item.created_at_formatted }}</span>
+                                    <a href="{{ item.url | safe_url }}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="{{ item.url }}">
+                                        {{ item.url }}
+                                    </a>
+                                    {% if item.url_b %}
+                                        <span style="color: var(--text-muted);">&bull;</span>
+                                        <a href="{{ item.url_b | safe_url }}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="{{ item.url_b }}">
+                                            {{ item.url_b }}
+                                        </a>
+                                    {% endif %}
+                                </div>
+                            </div>
+                            <div class="history-actions" onclick="event.stopPropagation();">
+                                <a href="/export-pdf/{{ item.id }}" class="btn-icon-history" title="Download as PDF" onclick="event.stopPropagation();">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                        <polyline points="14 2 14 8 20 8"/>
+                                        <line x1="12" y1="18" x2="12" y2="12"/>
+                                        <polyline points="9 15 12 18 15 15"/>
+                                    </svg>
+                                </a>
+                                <button type="button" class="btn-icon-history" title="Export to Notion" onclick="event.stopPropagation(); exportHistoryItemToNotion('{{ item.id }}')">
+                                    <span>📓</span>
+                                </button>
+                                <button type="button" class="btn-icon-delete" title="Delete summary" onclick="event.stopPropagation(); deleteHistoryItem('{{ item.id }}', this)">
+                                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                        <path d="M3 6h18"/>
+                                        <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                                        <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                                    </svg>
+                                </button>
+                            </div>
+                        </div>
+                        {% endfor %}
+                    {% else %}
+                        <div class="empty-history-state">
+                            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            <p style="font-size: 1rem; font-weight: 600; margin-bottom: 6px;">No summaries saved yet</p>
+                            <p style="font-size: 0.88rem; margin-bottom: 16px;">Summarize a webpage to start building your personal library.</p>
+                            <button type="button" class="btn btn-primary" onclick="switchMainView('summarize')">
+                                Summarize Your First Webpage
+                            </button>
+                        </div>
+                    {% endif %}
+                </div>
+            </section>
+        </div> <!-- END OF #view-history -->
+
+        <!-- Integrated Notion Export Modal Dialog -->
         <div id="notion-modal" class="notion-modal-overlay">
             <div class="notion-modal-card">
                 <div class="notion-modal-header">
@@ -856,6 +1056,28 @@
                     <button type="button" class="notion-modal-close" onclick="closeNotionModal()">&times;</button>
                 </div>
 
+                <!-- Connect View: Inline Notion Connection (if not connected) -->
+                <div id="notion-modal-connect-view" style="display: none; padding: 6px 0;">
+                    <p style="font-size: 13.5px; color: var(--text-secondary); margin-bottom: 14px; line-height: 1.45;">
+                        Connect your Notion workspace using an internal integration secret to export summaries directly.
+                    </p>
+                    <div class="form-group" style="margin-bottom: 12px;">
+                        <label for="notion-modal-token-input" class="form-label" style="font-size: 13px;">Internal Integration Secret</label>
+                        <input type="password" id="notion-modal-token-input" class="form-control" placeholder="secret_..." autocomplete="off">
+                    </div>
+                    <div id="notion-modal-connect-alert" class="alert alert-error" style="display: none; font-size: 12.5px; padding: 8px 12px; margin-bottom: 12px;"></div>
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 14px;">
+                        <a href="https://www.notion.so/my-integrations" target="_blank" rel="noopener noreferrer" style="font-size: 12px; color: var(--primary); text-decoration: none; font-weight: 600;">
+                            🔑 Get Notion Token ↗
+                        </a>
+                        <div style="display: flex; gap: 8px;">
+                            <button type="button" class="btn btn-secondary" onclick="closeNotionModal()">Cancel</button>
+                            <button type="button" id="notion-modal-connect-btn" class="btn btn-primary" onclick="connectNotionInline()">Connect Workspace</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Export View: Select Destination Page (when connected) -->
                 <div id="notion-modal-body">
                     <p style="font-size: 13.5px; color: var(--text-muted); margin-bottom: 14px; line-height: 1.5;">
                         Select an accessible Notion destination page to create a beautifully formatted document with blocks, callouts, and source links.
@@ -881,14 +1103,20 @@
 
                     <div id="notion-export-alert" class="alert alert-error" style="display: none; font-size: 13px; padding: 10px 14px; margin-bottom: 14px;"></div>
 
-                    <div style="display: flex; justify-content: flex-end; gap: 10px; margin-top: 18px;">
-                        <button type="button" class="btn btn-secondary" onclick="closeNotionModal()">Cancel</button>
-                        <button type="button" id="notion-submit-export-btn" class="btn btn-primary" onclick="submitNotionExport()">
-                            Export Page Now
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 18px;">
+                        <button type="button" onclick="disconnectNotionInline()" style="background: none; border: none; color: #f87171; font-size: 12px; cursor: pointer; text-decoration: underline;">
+                            Disconnect Notion
                         </button>
+                        <div style="display: flex; gap: 10px;">
+                            <button type="button" class="btn btn-secondary" onclick="closeNotionModal()">Cancel</button>
+                            <button type="button" id="notion-submit-export-btn" class="btn btn-primary" onclick="submitNotionExport()">
+                                Export Page Now
+                            </button>
+                        </div>
                     </div>
                 </div>
 
+                <!-- Success View -->
                 <div id="notion-modal-success" style="display: none; text-align: center; padding: 16px 0;">
                     <div style="font-size: 36px; margin-bottom: 10px;">🎉</div>
                     <h3 style="font-size: 17px; font-weight: 700; color: var(--text-primary); margin-bottom: 6px;">Successfully Exported to Notion!</h3>
@@ -904,18 +1132,53 @@
 
         <!-- Footer -->
         <footer class="app-footer">
-            <p>WebBrief AI v{{ app_version }} • Zero-Credential Exposure BYOK Pipeline</p>
+            <p>WebBrief AI • Zero-Credential Exposure BYOK Pipeline</p>
         </footer>
 
     </main>
 
     <script>
         function escapeHtml(text) {
-            if (!text) return "";
-            const div = document.createElement("div");
-            div.textContent = text;
-            return div.innerHTML;
+            if (text === null || text === undefined) return "";
+            return String(text)
+                .replace(/&/g, "&amp;")
+                .replace(/</g, "&lt;")
+                .replace(/>/g, "&gt;")
+                .replace(/"/g, "&quot;")
+                .replace(/'/g, "&#39;");
         }
+
+        function safeHref(url) {
+            if (!url) return "#";
+            const s = String(url).trim();
+            if (/^https?:\/\//i.test(s) || /^mailto:/i.test(s) || /^blob:/i.test(s)) {
+                return escapeHtml(s);
+            }
+            return "#";
+        }
+
+        // Theme Toggle Helpers
+        window.setTheme = function(theme) {
+            document.documentElement.setAttribute("data-theme", theme);
+            try {
+                localStorage.setItem("webbrief_theme", theme);
+            } catch (_) {}
+            const themeIcon = document.getElementById("theme-icon");
+            if (themeIcon) {
+                themeIcon.textContent = theme === "dark" ? "🌙" : "☀️";
+            }
+        };
+
+        let lastThemeToggle = 0;
+        window.toggleTheme = function(e) {
+            if (e && e.preventDefault) e.preventDefault();
+            const now = Date.now();
+            if (now - lastThemeToggle < 250) return;
+            lastThemeToggle = now;
+            const current = document.documentElement.getAttribute("data-theme") || (window.localStorage ? localStorage.getItem("webbrief_theme") : "") || "dark";
+            const next = current === "dark" ? "light" : "dark";
+            window.setTheme(next);
+        };
 
         // Global copy section helper
         async function copySectionText(sectionId, btn) {
@@ -942,7 +1205,7 @@
         // Provider Model Catalogue (passed from backend)
         window.__WEBBRIEF_CATALOGUE = {{ (provider_catalogue or {}) | tojson | safe }};
 
-        // Hosted In-Memory Key Actions (v1.5 & v1.6.4)
+        // Hosted In-Memory Key Actions
         window.toggleHostedKeyVis = function() {
             const input = document.getElementById("hosted-api-key-input");
             const btn = document.getElementById("hosted-toggle-vis-btn");
@@ -1104,24 +1367,121 @@
             }
         };
 
-        window.clearHostedKey = function() {
+        window.clearHostedKey = async function() {
+            const clearBtn = document.getElementById("hosted-clear-btn");
+            const alertBox = document.getElementById("hosted-key-alert");
+            if (clearBtn) clearBtn.disabled = true;
+
             if (window.__WEBBRIEF_VAULT_ENABLED) {
-                fetch("/api/credentials", {method: "DELETE"}).catch(() => {});
+                try {
+                    const res = await fetch("/api/credentials", { method: "DELETE" });
+                    if (!res.ok) {
+                        const data = await res.json().catch(() => ({}));
+                        if (alertBox) {
+                            alertBox.style.display = "block";
+                            alertBox.style.color = "var(--error-text, #ef4444)";
+                            alertBox.textContent = data.error || "Failed to clear credentials from server vault. Please retry.";
+                        }
+                        if (clearBtn) clearBtn.disabled = false;
+                        return;
+                    }
+                } catch (e) {
+                    if (alertBox) {
+                        alertBox.style.display = "block";
+                        alertBox.style.color = "var(--error-text, #ef4444)";
+                        alertBox.textContent = "Network error communicating with server vault.";
+                    }
+                    if (clearBtn) clearBtn.disabled = false;
+                    return;
+                }
             }
             if (window.StorageAdapter) {
                 StorageAdapter.clearCredentials();
             }
             const keyInput = document.getElementById("hosted-gemini-key") || document.getElementById("hosted-api-key-input");
             if (keyInput) keyInput.value = "";
-            const clearBtn = document.getElementById("hosted-clear-btn");
-            if (clearBtn) clearBtn.style.display = "none";
-            const alertBox = document.getElementById("hosted-key-alert");
+            if (clearBtn) {
+                clearBtn.style.display = "none";
+                clearBtn.disabled = false;
+            }
             if (alertBox) alertBox.style.display = "none";
             const statusLabel = document.getElementById("hosted-status-label");
             if (statusLabel) {
                 statusLabel.textContent = "○ Not Configured";
                 statusLabel.style.color = "var(--text-muted)";
                 statusLabel.style.fontWeight = "normal";
+            }
+        };
+
+        window.testOverrideKey = async function() {
+            const keyInput = document.getElementById("api-key-input");
+            const statusBox = document.getElementById("override-key-status");
+            const testBtn = document.getElementById("test-override-key-btn");
+            const apiKey = keyInput ? keyInput.value.trim() : "";
+
+            if (!apiKey) {
+                if (statusBox) {
+                    statusBox.style.display = "inline";
+                    statusBox.style.color = "var(--error-text, #ef4444)";
+                    statusBox.textContent = "Please enter an API key to test.";
+                }
+                if (keyInput) keyInput.focus();
+                return;
+            }
+
+            if (testBtn) {
+                testBtn.disabled = true;
+                testBtn.innerHTML = `
+                    <span class="spinner" style="display: inline-block; width: 12px; height: 12px; border: 2px solid rgba(255,255,255,0.3); border-top-color: currentColor; border-radius: 50%; animation: spin 0.8s linear infinite;"></span>
+                    <span>Testing...</span>
+                `;
+            }
+            if (statusBox) {
+                statusBox.style.display = "inline";
+                statusBox.style.color = "var(--text-muted)";
+                statusBox.textContent = "Validating with Gemini API...";
+            }
+
+            try {
+                const res = await fetch("/api/validate-key", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        provider: "gemini",
+                        gemini_api_key: apiKey
+                    })
+                });
+                const data = await res.json();
+                if (res.ok && data.valid) {
+                    if (statusBox) {
+                        statusBox.style.display = "inline";
+                        statusBox.style.color = "#10b981";
+                        statusBox.textContent = "✓ Configuration valid & active!";
+                    }
+                } else {
+                    if (statusBox) {
+                        statusBox.style.display = "inline";
+                        statusBox.style.color = "var(--error-text, #ef4444)";
+                        statusBox.textContent = "✗ " + ((data && data.message) || "Validation failed.");
+                    }
+                }
+            } catch (e) {
+                if (statusBox) {
+                    statusBox.style.display = "inline";
+                    statusBox.style.color = "var(--error-text, #ef4444)";
+                    statusBox.textContent = "✗ Network error during validation.";
+                }
+            } finally {
+                if (testBtn) {
+                    testBtn.disabled = false;
+                    testBtn.innerHTML = `
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                            <polyline points="22 4 12 14.01 9 11.01"/>
+                        </svg>
+                        <span>Test Configure</span>
+                    `;
+                }
             }
         };
 
@@ -1163,7 +1523,61 @@
             }
         }
 
-        // Direct reopen helper from recent shelf
+        // ==========================================
+        // SPA VIEW SWITCHER & DIRECT REOPEN
+        // ==========================================
+        window.switchMainView = function(view) {
+            const summarizeView = document.getElementById("view-summarize");
+            const historyView = document.getElementById("view-history");
+            const tabSummarize = document.getElementById("view-tab-summarize");
+            const tabHistory = document.getElementById("view-tab-history");
+
+            if (view === 'history') {
+                if (summarizeView) {
+                    summarizeView.style.display = "none";
+                    summarizeView.classList.add("hidden");
+                }
+                if (historyView) {
+                    historyView.style.display = "block";
+                    historyView.classList.remove("hidden");
+                }
+                if (tabSummarize) tabSummarize.classList.remove("active");
+                if (tabHistory) tabHistory.classList.add("active");
+                try {
+                    loadHistoryViewData();
+                } catch (e) {
+                    console.warn("Could not load history view data:", e);
+                }
+                try {
+                    window.history.replaceState(null, "", "#history");
+                } catch (_) {}
+            } else {
+                if (historyView) {
+                    historyView.style.display = "none";
+                    historyView.classList.add("hidden");
+                }
+                if (summarizeView) {
+                    summarizeView.style.display = "block";
+                    summarizeView.classList.remove("hidden");
+                }
+                if (tabHistory) tabHistory.classList.remove("active");
+                if (tabSummarize) tabSummarize.classList.add("active");
+                try {
+                    window.history.replaceState(null, "", "#summarize");
+                } catch (_) {}
+            }
+        };
+
+        window.loadHistoryViewData = async function() {
+            loadVectorStats();
+            if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                renderHostedHistory();
+            } else {
+                fetchLocalHistory();
+            }
+        };
+
+        // Direct reopen helper from recent shelf or history view
         async function reopenSummaryDirect(id) {
             try {
                 let item = null;
@@ -1178,16 +1592,690 @@
                     }
                 }
                 if (item) {
-                    renderSummaryObject(item.summary || item, item.url);
+                    switchMainView('summarize');
+                    if (item.entry_type === 'comparison' && window.renderComparisonResults) {
+                        currentComparisonData = item.summary;
+                        currentComparisonHistoryId = item.id;
+                        window.renderComparisonResults(item.summary);
+                        const compCard = document.getElementById("compare-results-card");
+                        if (compCard) {
+                            compCard.style.display = "block";
+                            compCard.classList.add("active");
+                            compCard.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                    } else if (renderSummaryObject) {
+                        renderSummaryObject(item.summary || item, item.url, item.mode_name || item.mode);
+                        const resCard = document.getElementById("result-card");
+                        if (resCard) {
+                            resCard.style.display = "block";
+                            resCard.classList.add("active");
+                            resCard.scrollIntoView({ behavior: "smooth", block: "start" });
+                        }
+                    }
                 }
             } catch (err) {
                 console.error("Failed to reopen summary: ", err);
             }
         }
+        window.openSummaryDirect = reopenSummaryDirect;
+
+        // ==========================================
+        // VECTOR KNOWLEDGE & SEMANTIC SEARCH
+        // ==========================================
+        let _activeHistorySearchReqId = 0;
+
+        window.executeHistorySemanticSearch = async function() {
+            const queryInput = document.getElementById("history-semantic-query-input");
+            const query = queryInput ? queryInput.value.trim() : "";
+            if (!query) {
+                alert("Please enter a natural-language search query.");
+                queryInput?.focus();
+                return;
+            }
+
+            const currentReqId = ++_activeHistorySearchReqId;
+
+            const thresholdSlider = document.getElementById("history-search-threshold-slider");
+            const thresholdVal = thresholdSlider ? (parseFloat(thresholdSlider.value) / 100.0) : 0.35;
+            const filterSelect = document.getElementById("history-search-filter-type");
+            const filterType = filterSelect ? filterSelect.value : "all";
+            const apiKey = (window.getFullProviderConfigPayload ? window.getFullProviderConfigPayload() : {})?.gemini_api_key || "";
+
+            const searchBtn = document.getElementById("history-semantic-search-btn");
+            const resultsArea = document.getElementById("history-semantic-results-area");
+            const resultsList = document.getElementById("history-semantic-matches-list");
+            const resultsMeta = document.getElementById("history-search-meta");
+
+            if (searchBtn) {
+                searchBtn.disabled = true;
+                searchBtn.innerHTML = "<span>Searching...</span>";
+            }
+
+            try {
+                let data = null;
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    data = await window.StorageAdapter.search(query, thresholdVal, filterType, apiKey);
+                } else {
+                    const response = await fetch("/api/search/semantic", {
+                        method: "POST",
+                        headers: {
+                            "Content-Type": "application/json",
+                            "X-Requested-With": "XMLHttpRequest"
+                        },
+                        body: JSON.stringify({
+                            query: query,
+                            top_k: 10,
+                            threshold: thresholdVal,
+                            filter_type: filterType,
+                            api_key: apiKey
+                        })
+                    });
+                    data = await response.json();
+                }
+
+                // Discard stale out-of-order response (P2-UI-01)
+                if (currentReqId !== _activeHistorySearchReqId) return;
+
+                if (resultsArea && resultsList && resultsMeta) {
+                    resultsList.innerHTML = "";
+                    const count = data.count || (data.results ? data.results.length : 0);
+                    resultsMeta.textContent = `Found ${count} matching summaries for "${query}".`;
+                    resultsArea.style.display = "block";
+
+                    if (!data.results || data.results.length === 0) {
+                        const pct = Math.round(thresholdVal * 100);
+                        resultsList.innerHTML = `
+                            <div class="empty-history-state" style="padding: 20px 16px;">
+                                <p style="font-size: 14px; font-weight: 600; color: var(--text-primary); margin-bottom: 4px;">
+                                    No saved summaries matched your query (Threshold ≥ ${pct}%).
+                                </p>
+                                <p style="font-size: 12.5px; color: var(--text-muted); margin-bottom: 0;">
+                                    Try lowering the minimum relevance slider or rephrasing your search query.
+                                </p>
+                            </div>
+                        `;
+                    } else {
+                        data.results.forEach(res => {
+                            const pct = Math.round((res.similarity || 0) * 100);
+                            const scoreClass = pct >= 65 ? "match-score-high" : pct >= 45 ? "match-score-medium" : "match-score-moderate";
+                            const isComparison = res.entry_type === "comparison";
+                            const typeBadge = isComparison ? "⚖️ Comparison" : (res.mode_name || "Summary");
+
+                            const card = document.createElement("div");
+                            card.className = "semantic-match-card";
+                            card.innerHTML = `
+                                <div class="match-header-row">
+                                    <div class="match-title-group">
+                                        <div style="display: flex; gap: 8px; align-items: center; margin-bottom: 6px; flex-wrap: wrap;">
+                                            <span class="match-score-pill ${scoreClass}">● ${pct}% Match</span>
+                                            <span class="badge" style="font-size: 11px;">${escapeHtml(typeBadge)}</span>
+                                            <span style="font-size: 12px; color: var(--text-muted);">${escapeHtml(res.created_at_formatted || '')}</span>
+                                        </div>
+                                        <h3 class="match-card-title">${escapeHtml(res.title || 'Saved Summary')}</h3>
+                                    </div>
+                                    <button type="button" class="btn btn-primary btn-open-match" style="font-size: 12px; padding: 6px 14px; white-space: nowrap;">
+                                        Open Summary &rarr;
+                                    </button>
+                                </div>
+                                <div class="match-excerpt-box">
+                                    <span class="match-excerpt-label">Matching Content Excerpt</span>
+                                    <div>"${escapeHtml(res.relevant_snippet || '')}"</div>
+                                </div>
+                                <div class="match-meta-footer">
+                                    <div style="display: flex; gap: 6px; align-items: center; max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
+                                        <span>Source:</span>
+                                        <a href="${safeHref(res.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;">
+                                            ${escapeHtml(res.url)}
+                                        </a>
+                                    </div>
+                                    ${res.id ? `<button type="button" class="btn btn-secondary" style="font-size: 11px; padding: 3px 8px; cursor: pointer;" onclick="event.stopPropagation(); exportHistoryItemToPdf(encodeURIComponent('${escapeHtml(res.id)}'));">PDF</button>` : ''}
+                                </div>
+                            `;
+                            const openBtn = card.querySelector(".btn-open-match");
+                            if (openBtn) openBtn.addEventListener("click", () => reopenSummaryDirect(res.id));
+                            resultsList.appendChild(card);
+                        });
+                    }
+                    resultsArea.scrollIntoView({ behavior: "smooth", block: "nearest" });
+                }
+            } catch (err) {
+                alert("Semantic search failed: " + (err.message || "Unknown error"));
+            } finally {
+                if (searchBtn) {
+                    searchBtn.disabled = false;
+                    searchBtn.innerHTML = "<span>🔍 Search</span>";
+                }
+            }
+        };
+
+        window.closeHistorySearchResults = function() {
+            const resultsArea = document.getElementById("history-semantic-results-area");
+            if (resultsArea) resultsArea.style.display = "none";
+        };
+
+        window.loadVectorStats = async function() {
+            const countDisplay = document.getElementById("indexed-count-display");
+            if (!countDisplay) return;
+
+            if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                try {
+                    const count = await window.StorageAdapter.getCount();
+                    countDisplay.textContent = `${count} summaries in IndexedDB`;
+                } catch (_) {
+                    countDisplay.textContent = "Active in browser";
+                }
+                return;
+            }
+
+            try {
+                const res = await fetch("/api/search/stats");
+                const data = await res.json();
+                if (data && data.success) {
+                    countDisplay.textContent = `${data.stats.total_indexed_documents} summaries (${data.stats.active_model})`;
+                } else {
+                    countDisplay.textContent = "0 indexed";
+                }
+            } catch (e) {
+                countDisplay.textContent = "Offline";
+            }
+        };
+
+        window.rebuildVectorIndex = async function() {
+            const btn = document.getElementById("rebuild-index-btn");
+            const msg = document.getElementById("rebuild-status-msg");
+            if (btn) btn.disabled = true;
+            if (msg) {
+                msg.textContent = "Rebuilding vector index...";
+                msg.style.color = "var(--primary)";
+            }
+
+            if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                if (msg) {
+                    msg.textContent = "✓ IndexedDB vectors refreshed.";
+                    msg.style.color = "#10b981";
+                }
+                if (btn) btn.disabled = false;
+                loadVectorStats();
+                return;
+            }
+
+            try {
+                const res = await fetch("/api/search/rebuild-index", { method: "POST" });
+                const data = await res.json();
+                if (res.ok && data.success) {
+                    if (msg) {
+                        msg.textContent = `✓ Index rebuilt: ${data.indexed} indexed, ${data.failed} failed.`;
+                        msg.style.color = "#10b981";
+                    }
+                    loadVectorStats();
+                } else {
+                    if (msg) {
+                        msg.textContent = (data && data.error) || "Rebuild failed.";
+                        msg.style.color = "var(--error-text)";
+                    }
+                }
+            } catch (e) {
+                if (msg) {
+                    msg.textContent = "Network error rebuilding index.";
+                    msg.style.color = "var(--error-text)";
+                }
+            } finally {
+                if (btn) btn.disabled = false;
+            }
+        };
+
+        // ==========================================
+        // HISTORY LIST MANAGEMENT (LOCAL & HOSTED)
+        // ==========================================
+        window.renderHostedHistory = async function() {
+            if (!window.StorageAdapter || !window.StorageAdapter.isHosted()) return;
+            const container = document.getElementById("history-container");
+            const filterRow = document.getElementById("filter-controls-row");
+            const clearBtn = document.getElementById("clear-all-btn");
+            if (!container) return;
+
+            try {
+                const items = await window.StorageAdapter.getHistory(500);
+                if (!items || items.length === 0) {
+                    if (filterRow) filterRow.style.display = "none";
+                    if (clearBtn) clearBtn.style.display = "none";
+                    container.innerHTML = `
+                        <div class="empty-history-state">
+                            <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                                <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            <p style="font-size: 1rem; font-weight: 600; margin-bottom: 6px;">No summaries saved in this browser yet</p>
+                            <p style="font-size: 0.88rem; margin-bottom: 16px;">Summarize a webpage to start building your personal IndexedDB library.</p>
+                            <button type="button" class="btn btn-primary" onclick="switchMainView('summarize')">
+                                Summarize Your First Webpage
+                            </button>
+                        </div>
+                    `;
+                    return;
+                }
+
+                if (filterRow) filterRow.style.display = "flex";
+                if (clearBtn) clearBtn.style.display = "inline-block";
+                container.innerHTML = "";
+
+                items.forEach(item => {
+                    const isComp = item.entry_type === 'comparison';
+                    const badgeHtml = isComp
+                        ? `<span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; font-size: 0.72rem; padding: 2px 8px;">⚖️ Comparison</span>`
+                        : `<span class="badge" style="background: var(--primary-light); color: var(--primary); font-size: 0.72rem; padding: 2px 8px;">${escapeHtml(item.mode_name || 'Summary')}</span>`;
+
+                    const div = document.createElement("div");
+                    div.className = "history-item";
+                    div.dataset.id = item.id;
+                    div.onclick = () => reopenSummaryDirect(item.id);
+
+                    div.innerHTML = `
+                        <div class="history-info">
+                            <h3 class="history-title">${escapeHtml(item.title || 'Webpage Summary')}</h3>
+                            <div class="history-meta">
+                                ${badgeHtml}
+                                <span>${escapeHtml(item.created_at_formatted || new Date(item.created_at).toLocaleDateString())}</span>
+                                <a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="${escapeHtml(item.url)}">
+                                    ${escapeHtml(item.url)}
+                                </a>
+                                ${item.url_b ? `<span style="color: var(--text-muted);">&bull;</span><a href="${safeHref(item.url_b)}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="${escapeHtml(item.url_b)}">${escapeHtml(item.url_b)}</a>` : ''}
+                            </div>
+                        </div>
+                        <div class="history-actions" onclick="event.stopPropagation();">
+                            <button type="button" class="btn-icon-history" title="Download as PDF" onclick="event.stopPropagation(); exportHostedPdf('${item.id}')">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                    <polyline points="14 2 14 8 20 8"/>
+                                    <line x1="12" y1="18" x2="12" y2="12"/>
+                                    <polyline points="9 15 12 18 15 15"/>
+                                </svg>
+                            </button>
+                            <button type="button" class="btn-icon-history" title="Export to Notion" onclick="event.stopPropagation(); exportHistoryItemToNotion('${item.id}')">
+                                <span>📓</span>
+                            </button>
+                            <button type="button" class="btn-icon-delete" title="Delete summary" onclick="event.stopPropagation(); deleteHistoryItem('${item.id}', this)">
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                    <path d="M3 6h18"/>
+                                    <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                                    <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                                </svg>
+                            </button>
+                        </div>
+                    `;
+                    container.appendChild(div);
+                });
+            } catch (err) {
+                console.error("Failed to render hosted history: ", err);
+                if (filterRow) filterRow.style.display = "none";
+                if (clearBtn) clearBtn.style.display = "none";
+                container.innerHTML = `
+                    <div class="empty-history-state" style="border-color: rgba(239, 68, 68, 0.3);">
+                        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" style="color: #ef4444;">
+                            <circle cx="12" cy="12" r="10"></circle>
+                            <line x1="12" y1="8" x2="12" y2="12"></line>
+                            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+                        </svg>
+                        <p style="font-size: 1rem; font-weight: 600; margin-bottom: 6px; color: #ef4444;">Unable to load browser history</p>
+                        <p style="font-size: 0.88rem; margin-bottom: 16px; color: var(--text-muted);">IndexedDB storage could not be accessed. Private browsing mode or storage permissions may be blocking local storage.</p>
+                        <button type="button" class="btn btn-primary" onclick="renderHostedHistory()">
+                            Retry
+                        </button>
+                    </div>
+                `;
+            }
+        };
+
+        window.fetchLocalHistory = async function() {
+            if (window.StorageAdapter && window.StorageAdapter.isHosted()) return;
+            try {
+                const res = await fetch("/api/history");
+                const data = await res.json();
+                if (data && Array.isArray(data.history)) {
+                    renderLocalHistoryList(data.history);
+                }
+            } catch (e) {
+                console.warn("Failed to fetch local history: ", e);
+            }
+        };
+
+        function renderLocalHistoryList(items) {
+            const container = document.getElementById("history-container");
+            const filterRow = document.getElementById("filter-controls-row");
+            const clearBtn = document.getElementById("clear-all-btn");
+            if (!container) return;
+
+            if (!items || items.length === 0) {
+                if (filterRow) filterRow.style.display = "none";
+                if (clearBtn) clearBtn.style.display = "none";
+                container.innerHTML = `
+                    <div class="empty-history-state">
+                        <svg class="empty-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                            <path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        <p style="font-size: 1rem; font-weight: 600; margin-bottom: 6px;">No summaries saved yet</p>
+                        <p style="font-size: 0.88rem; margin-bottom: 16px;">Summarize a webpage to start building your personal library.</p>
+                        <button type="button" class="btn btn-primary" onclick="switchMainView('summarize')">
+                            Summarize Your First Webpage
+                        </button>
+                    </div>
+                `;
+                return;
+            }
+
+            if (filterRow) filterRow.style.display = "flex";
+            if (clearBtn) clearBtn.style.display = "inline-block";
+            container.innerHTML = "";
+
+            items.forEach(item => {
+                const isComp = item.entry_type === 'comparison';
+                const badgeHtml = isComp
+                    ? `<span class="badge" style="background: rgba(147, 51, 234, 0.15); color: #c084fc; font-size: 0.72rem; padding: 2px 8px;">⚖️ Comparison</span>`
+                    : `<span class="badge" style="background: var(--primary-light); color: var(--primary); font-size: 0.72rem; padding: 2px 8px;">${escapeHtml(item.mode_name || 'Summary')}</span>`;
+
+                const div = document.createElement("div");
+                div.className = "history-item";
+                div.dataset.id = item.id;
+                div.onclick = () => reopenSummaryDirect(item.id);
+
+                div.innerHTML = `
+                    <div class="history-info">
+                        <h3 class="history-title">${escapeHtml(item.title || 'Webpage Summary')}</h3>
+                        <div class="history-meta">
+                            ${badgeHtml}
+                            <span>${escapeHtml(item.created_at_formatted || '')}</span>
+                            <a href="${safeHref(item.url)}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="${escapeHtml(item.url)}">
+                                ${escapeHtml(item.url)}
+                            </a>
+                            ${item.url_b ? `<span style="color: var(--text-muted);">&bull;</span><a href="${safeHref(item.url_b)}" target="_blank" rel="noopener noreferrer" class="history-url" onclick="event.stopPropagation();" title="${escapeHtml(item.url_b)}">${escapeHtml(item.url_b)}</a>` : ''}
+                        </div>
+                    </div>
+                    <div class="history-actions" onclick="event.stopPropagation();">
+                        <button type="button" class="btn-icon-history" title="Download as PDF" onclick="event.stopPropagation(); exportHistoryItemToPdf('${item.id}');">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+                                <polyline points="14 2 14 8 20 8"/>
+                                <line x1="12" y1="18" x2="12" y2="12"/>
+                                <polyline points="9 15 12 18 15 15"/>
+                            </svg>
+                        </button>
+                        <button type="button" class="btn-icon-history" title="Export to Notion" onclick="event.stopPropagation(); exportHistoryItemToNotion('${item.id}')">
+                            <span>📓</span>
+                        </button>
+                        <button type="button" class="btn-icon-delete" title="Delete summary" onclick="event.stopPropagation(); deleteHistoryItem('${item.id}', this)">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                                <path d="M3 6h18"/>
+                                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/>
+                                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/>
+                            </svg>
+                        </button>
+                    </div>
+                `;
+                container.appendChild(div);
+            });
+        }
+
+        window.filterHistoryList = function(q) {
+            const query = (q || "").toLowerCase().trim();
+            const items = document.querySelectorAll("#history-container .history-item");
+            items.forEach(item => {
+                const text = item.textContent.toLowerCase();
+                item.style.display = text.includes(query) ? "flex" : "none";
+            });
+        };
+
+        window.deleteHistoryItem = async function(id, btn) {
+            if (!confirm("Are you sure you want to delete this summary?")) return;
+            try {
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    await window.StorageAdapter.deleteEntry(id);
+                    const item = btn.closest(".history-item");
+                    if (item) item.remove();
+                    const container = document.getElementById("history-container");
+                    if (!container.querySelector(".history-item")) {
+                        renderHostedHistory();
+                    }
+                    refreshRecentShelf();
+                    return;
+                }
+
+                const res = await fetch(`/api/history/${id}`, { method: "DELETE" });
+                const data = await res.json();
+                if (data.success) {
+                    const item = btn.closest(".history-item");
+                    if (item) item.remove();
+                    const container = document.getElementById("history-container");
+                    if (!container.querySelector(".history-item")) {
+                        fetchLocalHistory();
+                    }
+                    refreshRecentShelf();
+                }
+            } catch (err) {
+                alert("Failed to delete entry.");
+            }
+        };
+
+        window.clearAllHistoryAction = async function() {
+            if (!confirm("Are you sure you want to clear your entire summary history? This cannot be undone.")) return;
+            try {
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    await window.StorageAdapter.clearHistory();
+                    renderHostedHistory();
+                    refreshRecentShelf();
+                    return;
+                }
+
+                const res = await fetch("/api/history/clear", { method: "POST" });
+                const data = await res.json();
+                if (data.success) {
+                    fetchLocalHistory();
+                    refreshRecentShelf();
+                }
+            } catch (err) {
+                alert("Failed to clear history.");
+            }
+        };
+
+        window.exportHistoryItemToPdf = async function(id) {
+            if (!window.StorageAdapter) return;
+            const isHosted = window.StorageAdapter.isHosted();
+            if (!isHosted) {
+                window.location.href = "/export-pdf/" + encodeURIComponent(id);
+                return;
+            }
+
+            try {
+                const entry = await window.StorageAdapter.getEntry(id);
+                if (!entry || !entry.summary) {
+                    alert("Could not load summary from browser storage for PDF export.");
+                    return;
+                }
+
+                const isComp = entry.entry_type === "comparison" || (entry.summary && entry.summary.article_a);
+                const endpoint = isComp ? "/compare/export-pdf" : "/export-pdf";
+                const payload = isComp ? {
+                    comparison: entry.summary,
+                    url_a: entry.url || "",
+                    url_b: entry.url_b || "",
+                    created_at: entry.created_at_formatted || ""
+                } : {
+                    summary: entry.summary,
+                    url: entry.url || "",
+                    title: entry.title || "Summary",
+                    mode: entry.mode_name || entry.mode || "Summary",
+                    created_at: entry.created_at_formatted || ""
+                };
+
+                const res = await fetch(endpoint, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify(payload)
+                });
+                if (!res.ok) throw new Error("PDF generation failed");
+                const blob = await res.blob();
+                const downloadUrl = window.URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = downloadUrl;
+                const safeName = (entry.title || "Summary").trim().replace(/[^a-zA-Z0-9_\-\s]/g, "").replace(/\s+/g, "_");
+                a.download = `WebBrief_${safeName}.pdf`;
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+                window.URL.revokeObjectURL(downloadUrl);
+            } catch (e) {
+                alert("Could not export PDF: " + (e.message || "Unknown error"));
+            }
+        };
+        window.exportHostedPdf = window.exportHistoryItemToPdf;
 
         let renderSummaryObject = null;
 
+        // Custom Prompt Directives UI Logic
+        const directiveInput = document.getElementById("custom-directive-input");
+        const directiveToggle = document.getElementById("directive-toggle-checkbox");
+        const saveDirectiveBtn = document.getElementById("save-directive-btn");
+        const resetDirectiveBtn = document.getElementById("reset-directive-btn");
+        const directiveFeedback = document.getElementById("directive-feedback");
+        const directiveCharCount = document.getElementById("directive-char-count");
+
+        function updateDirectiveCharCount() {
+            if (directiveInput && directiveCharCount) {
+                directiveCharCount.textContent = `${directiveInput.value.length} / {{ max_directive_length or 1000 }}`;
+            }
+        }
+
+        if (directiveInput) {
+            directiveInput.addEventListener("input", updateDirectiveCharCount);
+            updateDirectiveCharCount();
+        }
+
+        async function loadSavedDirectivesUI() {
+            try {
+                if (window.StorageAdapter) {
+                    const prefs = await window.StorageAdapter.getPreferences();
+                    if (directiveInput && prefs.custom_directive !== undefined) {
+                        directiveInput.value = prefs.custom_directive || "";
+                    }
+                    if (directiveToggle && prefs.custom_directive_enabled !== undefined) {
+                        directiveToggle.checked = Boolean(prefs.custom_directive_enabled);
+                    }
+                    updateDirectiveCharCount();
+                }
+            } catch (err) {
+                console.warn("[WebBrief AI] Failed to load saved directives:", err);
+            }
+        }
+
+        if (saveDirectiveBtn) {
+            saveDirectiveBtn.addEventListener("click", async () => {
+                const directive = directiveInput.value.trim();
+                const enabled = directiveToggle.checked;
+
+                saveDirectiveBtn.disabled = true;
+                directiveFeedback.textContent = "Saving...";
+                directiveFeedback.style.color = "var(--primary)";
+
+                try {
+                    let result;
+                    if (window.StorageAdapter) {
+                        result = await window.StorageAdapter.savePreferences({
+                            custom_directive: directive,
+                            custom_directive_enabled: enabled
+                        });
+                    } else {
+                        const res = await fetch("/api/preferences", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ custom_directive: directive, custom_directive_enabled: enabled })
+                        });
+                        const data = await res.json();
+                        result = { success: res.ok && data.success, error: data.message };
+                    }
+
+                    if (result && result.success) {
+                        directiveFeedback.textContent = "✓ Saved!";
+                        directiveFeedback.style.color = "#10b981";
+                    } else {
+                        directiveFeedback.textContent = (result && result.error) || "Failed to save.";
+                        directiveFeedback.style.color = "var(--error-text)";
+                    }
+                } catch (err) {
+                    directiveFeedback.textContent = "Network error.";
+                    directiveFeedback.style.color = "var(--error-text)";
+                } finally {
+                    saveDirectiveBtn.disabled = false;
+                }
+            });
+        }
+
+        if (resetDirectiveBtn) {
+            resetDirectiveBtn.addEventListener("click", async () => {
+                if (!confirm("Reset custom prompt directives to default?")) return;
+                resetDirectiveBtn.disabled = true;
+                directiveFeedback.textContent = "Resetting...";
+                directiveFeedback.style.color = "var(--primary)";
+
+                try {
+                    let result;
+                    if (window.StorageAdapter) {
+                        result = await window.StorageAdapter.resetPreferences();
+                    } else {
+                        const res = await fetch("/api/preferences/reset", { method: "POST" });
+                        const data = await res.json();
+                        result = { success: res.ok && data.success, error: data.message };
+                    }
+
+                    if (result && result.success) {
+                        directiveInput.value = "";
+                        directiveToggle.checked = false;
+                        updateDirectiveCharCount();
+                        directiveFeedback.textContent = "✓ Reset to default.";
+                        directiveFeedback.style.color = "#10b981";
+                    } else {
+                        directiveFeedback.textContent = (result && result.error) || "Failed to reset.";
+                        directiveFeedback.style.color = "var(--error-text)";
+                    }
+                } catch (err) {
+                    directiveFeedback.textContent = "Network error.";
+                    directiveFeedback.style.color = "var(--error-text)";
+                } finally {
+                    resetDirectiveBtn.disabled = false;
+                }
+            });
+        }
+
         document.addEventListener("DOMContentLoaded", () => {
+            // Core DOM Elements
+            const form = document.getElementById("summarize-form");
+            const urlInput = document.getElementById("url-input");
+            const apiKeyInput = document.getElementById("api-key-input");
+            const submitBtn = document.getElementById("submit-btn");
+            const btnText = document.getElementById("btn-text");
+            const loadingCard = document.getElementById("loading-card");
+            const loadingStepText = document.getElementById("loading-step-text");
+            const resultCard = document.getElementById("result-card");
+            const errorAlert = document.getElementById("error-alert");
+            const errorMessage = document.getElementById("error-message");
+            const copyBtn = document.getElementById("copy-summary-btn");
+            const copyBtnText = document.getElementById("copy-btn-text");
+            const exportPdfBtn = document.getElementById("export-pdf-btn");
+            const exportPdfText = document.getElementById("export-pdf-text");
+            const newSummaryBtn = document.getElementById("new-summary-btn");
+            const themeBtn = document.getElementById("theme-toggle-btn");
+
+            // Structured section DOM nodes
+            const articleTitle = document.getElementById("article-title");
+            const sourceUrlLink = document.getElementById("source-url-link");
+            const resultModeBadge = document.getElementById("result-mode-badge");
+            const analysisTypeBadge = document.getElementById("analysis-type-badge");
+            const sectionOverview = document.getElementById("section-overview");
+            const summaryOverview = document.getElementById("summary-overview");
+            const sectionKeyPoints = document.getElementById("section-key-points");
+            const summaryKeyPoints = document.getElementById("summary-key-points");
+            const sectionDetails = document.getElementById("section-details");
+            const summaryDetails = document.getElementById("summary-details");
+            const sectionConclusion = document.getElementById("section-conclusion");
+            const summaryConclusion = document.getElementById("summary-conclusion");
+
             // Clean up conflicting legacy localStorage directive keys and initialize preferences
             try {
                 localStorage.removeItem("webbrief_custom_directive");
@@ -1198,48 +2286,27 @@
                 window.StorageAdapter.loadPreferences();
             }
 
-            // Theme toggle
-            const themeBtn = document.getElementById("theme-toggle-btn");
-            const themeIcon = document.getElementById("theme-icon");
+            // Load saved directives into UI
+            loadSavedDirectivesUI();
 
-            function updateThemeIcon(theme) {
-                if (themeIcon) {
-                    themeIcon.textContent = theme === "dark" ? "🌙" : "☀️";
-                }
+            // Set initial SPA view (default 'summarize', or 'history' if deep-linked)
+            const initialHash = window.location.hash;
+            const urlParams = new URLSearchParams(window.location.search);
+            if (initialHash === '#history' || urlParams.get('view') === 'history') {
+                window.switchMainView('history');
+            } else {
+                window.switchMainView('summarize');
             }
 
-            const currentTheme = document.documentElement.getAttribute("data-theme") || "dark";
-            updateThemeIcon(currentTheme);
-
+            // Theme toggle listener & sync
             if (themeBtn) {
-                themeBtn.addEventListener("click", () => {
-                    const cur = document.documentElement.getAttribute("data-theme") || "dark";
-                    const next = cur === "dark" ? "light" : "dark";
-                    document.documentElement.setAttribute("data-theme", next);
-                    localStorage.setItem("webbrief_theme", next);
-                    updateThemeIcon(next);
-                });
+                themeBtn.onclick = window.toggleTheme;
             }
+            const currentTheme = document.documentElement.getAttribute("data-theme") || (window.localStorage ? localStorage.getItem("webbrief_theme") : "") || "dark";
+            window.setTheme(currentTheme);
 
-            // Load user's default mode preference from localStorage
-            const savedDefaultMode = localStorage.getItem("webbrief_default_mode");
-            if (savedDefaultMode) {
-                const targetRadio = document.querySelector(`input[name="mode"][value="${savedDefaultMode}"]`);
-                if (targetRadio) {
-                    document.querySelectorAll(".mode-card").forEach(c => c.classList.remove("selected"));
-                    targetRadio.checked = true;
-                    targetRadio.closest(".mode-card")?.classList.add("selected");
-                }
-            }
-
-            // Populate recent shelf from storage adapter
-            refreshRecentShelf();
-            if (window.initHostedModelAndFallback) {
-                window.initHostedModelAndFallback();
-            }
-
-            // Mode radio selection UI binding
-            function updateModeSelection(selectedVal) {
+            // Summary Mode Selection
+            window.selectSummaryMode = function(selectedVal) {
                 document.querySelectorAll(".mode-card").forEach(c => {
                     const r = c.querySelector('input[type="radio"]');
                     if (r && r.value === selectedVal) {
@@ -1249,79 +2316,93 @@
                         c.classList.remove("selected");
                     }
                 });
-            }
+                try {
+                    localStorage.setItem("webbrief_default_mode", selectedVal);
+                } catch (_) {}
+            };
 
             document.querySelectorAll('input[name="mode"]').forEach(radio => {
                 radio.addEventListener("change", (e) => {
-                    updateModeSelection(e.target.value);
+                    window.selectSummaryMode(e.target.value);
                 });
             });
 
             document.querySelectorAll(".mode-card").forEach(card => {
-                card.addEventListener("click", (e) => {
-                    const radio = card.querySelector('input[type="radio"]');
-                    if (radio) {
-                        updateModeSelection(radio.value);
+                card.addEventListener("click", function(e) {
+                    const radio = this.querySelector('input[type="radio"]');
+                    if (radio && radio.value) {
+                        window.selectSummaryMode(radio.value);
                     }
                 });
             });
+
+            const savedDefaultMode = localStorage.getItem("webbrief_default_mode");
+            if (savedDefaultMode) {
+                window.selectSummaryMode(savedDefaultMode);
+            }
+
+            // Populate recent shelf from storage adapter
+            refreshRecentShelf();
+            if (window.initHostedModelAndFallback) {
+                window.initHostedModelAndFallback();
+            }
 
             let currentTab = 'single';
             const MAX_BATCH = {{ max_batch_urls or 10 }};
             let currentBatchResults = [];
 
-            // Tab Switcher Helper
+            // Tab Switcher Helper (Single vs Batch vs Compare)
             window.switchSubmissionTab = function(tab) {
+                if (tab === 'search') {
+                    window.switchMainView('history');
+                    setTimeout(() => {
+                        document.getElementById("history-semantic-query-input")?.focus();
+                    }, 50);
+                    return;
+                }
                 currentTab = tab;
                 hideError();
                 document.getElementById("tab-single-btn")?.classList.toggle("active", tab === 'single');
                 document.getElementById("tab-batch-btn")?.classList.toggle("active", tab === 'batch');
                 document.getElementById("tab-compare-btn")?.classList.toggle("active", tab === 'compare');
-                document.getElementById("tab-search-btn")?.classList.toggle("active", tab === 'search');
                 
                 const singleContainer = document.getElementById("single-url-container");
                 const batchContainer = document.getElementById("batch-url-container");
                 const compareContainer = document.getElementById("compare-container");
-                const searchContainer = document.getElementById("semantic-search-container");
                 const modeSelector = document.querySelector(".mode-selector-grid")?.closest(".form-group");
 
                 if (tab === 'single') {
                     if (singleContainer) singleContainer.style.display = "block";
                     if (batchContainer) batchContainer.style.display = "none";
                     if (compareContainer) compareContainer.style.display = "none";
-                    if (searchContainer) searchContainer.style.display = "none";
                     if (modeSelector) modeSelector.style.display = "block";
                     if (btnText) btnText.textContent = "Summarize Webpage";
                 } else if (tab === 'batch') {
                     if (singleContainer) singleContainer.style.display = "none";
                     if (batchContainer) batchContainer.style.display = "block";
                     if (compareContainer) compareContainer.style.display = "none";
-                    if (searchContainer) searchContainer.style.display = "none";
                     if (modeSelector) modeSelector.style.display = "block";
-                    // Initialize with 2 rows if empty
                     const list = document.getElementById("batch-url-list");
-                    if (list && list.children.length === 0) {
-                        addBatchUrlRow();
-                        addBatchUrlRow();
+                    if (list && list.children.length === 0 && window.addBatchUrlRow) {
+                        window.addBatchUrlRow();
+                        window.addBatchUrlRow();
                     }
                     updateBatchSubmitBtnText();
                 } else if (tab === 'compare') {
                     if (singleContainer) singleContainer.style.display = "none";
                     if (batchContainer) batchContainer.style.display = "none";
                     if (compareContainer) compareContainer.style.display = "block";
-                    if (searchContainer) searchContainer.style.display = "none";
                     if (modeSelector) modeSelector.style.display = "none";
                     if (btnText) btnText.textContent = "⚖️ Run Comparative Research";
-                } else if (tab === 'search') {
-                    if (singleContainer) singleContainer.style.display = "none";
-                    if (batchContainer) batchContainer.style.display = "none";
-                    if (compareContainer) compareContainer.style.display = "none";
-                    if (searchContainer) searchContainer.style.display = "block";
-                    if (modeSelector) modeSelector.style.display = "none";
-                    if (btnText) btnText.textContent = "🔍 Search Knowledge Base";
-                    document.getElementById("semantic-query-input")?.focus();
                 }
             };
+
+            // Explicit event listeners for buttons
+            document.getElementById("tab-single-btn")?.addEventListener("click", () => window.switchSubmissionTab('single'));
+            document.getElementById("tab-batch-btn")?.addEventListener("click", () => window.switchSubmissionTab('batch'));
+            document.getElementById("tab-compare-btn")?.addEventListener("click", () => window.switchSubmissionTab('compare'));
+            document.getElementById("view-tab-summarize")?.addEventListener("click", () => window.switchMainView('summarize'));
+            document.getElementById("view-tab-history")?.addEventListener("click", () => window.switchMainView('history'));
 
             // Semantic Search Results UI
             window.clearSearchResults = function() {
@@ -1332,10 +2413,13 @@
             };
 
             function escapeHtml(text) {
-                if (!text) return "";
-                const div = document.createElement("div");
-                div.textContent = text;
-                return div.innerHTML;
+                if (text === null || text === undefined) return "";
+                return String(text)
+                    .replace(/&/g, "&amp;")
+                    .replace(/</g, "&lt;")
+                    .replace(/>/g, "&gt;")
+                    .replace(/"/g, "&quot;")
+                    .replace(/'/g, "&#39;");
             }
 
             function renderSemanticSearchResults(data) {
@@ -1394,7 +2478,7 @@
                             <div class="match-meta-footer">
                                 <div style="display: flex; gap: 6px; align-items: center; max-width: 80%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                                     <span>Source:</span>
-                                    <a href="${escapeHtml(res.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;">
+                                    <a href="${safeHref(res.url)}" target="_blank" rel="noopener noreferrer" style="color: var(--primary); text-decoration: none;">
                                         ${escapeHtml(res.url)}
                                     </a>
                                 </div>
@@ -1414,7 +2498,10 @@
 
             if (window.location.hash === "#search" || localStorage.getItem("webbrief_active_tab") === "search") {
                 localStorage.removeItem("webbrief_active_tab");
-                window.switchSubmissionTab('search');
+                window.switchMainView('history');
+                setTimeout(() => {
+                    document.getElementById("history-semantic-query-input")?.focus();
+                }, 100);
             }
 
             function updateBatchSubmitBtnText() {
@@ -1762,37 +2849,6 @@
                 });
             }
 
-            // Form submission & elements
-            const form = document.getElementById("summarize-form");
-            const urlInput = document.getElementById("url-input");
-            const apiKeyInput = document.getElementById("api-key-input");
-            const submitBtn = document.getElementById("submit-btn");
-            const btnText = document.getElementById("btn-text");
-            const loadingCard = document.getElementById("loading-card");
-            const loadingStepText = document.getElementById("loading-step-text");
-            const resultCard = document.getElementById("result-card");
-            const errorAlert = document.getElementById("error-alert");
-            const errorMessage = document.getElementById("error-message");
-            const copyBtn = document.getElementById("copy-summary-btn");
-            const copyBtnText = document.getElementById("copy-btn-text");
-            const exportPdfBtn = document.getElementById("export-pdf-btn");
-            const exportPdfText = document.getElementById("export-pdf-text");
-            const newSummaryBtn = document.getElementById("new-summary-btn");
-
-            // Structured section DOM nodes
-            const articleTitle = document.getElementById("article-title");
-            const sourceUrlLink = document.getElementById("source-url-link");
-            const resultModeBadge = document.getElementById("result-mode-badge");
-            const analysisTypeBadge = document.getElementById("analysis-type-badge");
-            const sectionOverview = document.getElementById("section-overview");
-            const summaryOverview = document.getElementById("summary-overview");
-            const sectionKeyPoints = document.getElementById("section-key-points");
-            const summaryKeyPoints = document.getElementById("summary-key-points");
-            const sectionDetails = document.getElementById("section-details");
-            const summaryDetails = document.getElementById("summary-details");
-            const sectionConclusion = document.getElementById("section-conclusion");
-            const summaryConclusion = document.getElementById("summary-conclusion");
-
             let currentSummaryData = null;
 
             // New summary button handler
@@ -1826,6 +2882,7 @@
             }
 
             renderSummaryObject = function(data, sourceUrl) {
+                window.renderSummaryObject = renderSummaryObject;
                 currentSummaryData = data;
                 hideError();
 
@@ -1837,10 +2894,25 @@
                     resultModeBadge.textContent = data.mode_name;
                 }
 
-                if (data.stats && data.stats.is_map_reduce) {
-                    analysisTypeBadge.textContent = `Map-Reduce (${data.stats.processed_chunks}/${data.stats.total_chunks} Chunks)`;
+                const partialWarning = document.getElementById("summary-partial-warning");
+                const partialWarningText = document.getElementById("summary-partial-warning-text");
+                if (data.partial || (data.stats && data.stats.failed_chunks > 0) || data.warning) {
+                    if (partialWarning) {
+                        partialWarning.style.display = "block";
+                        if (partialWarningText) {
+                            partialWarningText.textContent = data.warning || `Partial summary: ${data.stats.failed_chunks} of ${data.stats.total_chunks} sections could not be analyzed due to processing errors.`;
+                        }
+                    }
+                    if (data.stats && data.stats.is_map_reduce) {
+                        analysisTypeBadge.textContent = `Partial Map-Reduce (${data.stats.processed_chunks}/${data.stats.total_chunks} Chunks)`;
+                    }
                 } else {
-                    analysisTypeBadge.textContent = "Direct Analysis";
+                    if (partialWarning) partialWarning.style.display = "none";
+                    if (data.stats && data.stats.is_map_reduce) {
+                        analysisTypeBadge.textContent = `Map-Reduce (${data.stats.processed_chunks}/${data.stats.total_chunks} Chunks)`;
+                    } else {
+                        analysisTypeBadge.textContent = "Direct Analysis";
+                    }
                 }
 
                 // Provider transparency update
@@ -1938,6 +3010,8 @@
             let currentComparisonHistoryId = null;
 
             function renderComparisonUI(comp, historyId) {
+                window.renderComparisonUI = renderComparisonUI;
+                window.renderComparisonResults = renderComparisonUI;
                 currentComparisonData = comp;
                 currentComparisonHistoryId = historyId;
                 hideError();
@@ -2190,31 +3264,55 @@
             }
 
             // ==========================================
-            // NOTION EXPORT MODAL LOGIC
+            // NOTION EXPORT MODAL LOGIC (INLINE WORKSPACE CONNECTION)
             // ==========================================
             let activeNotionTarget = { type: 'single', data: null, historyId: null };
 
             window.openNotionModal = async function(type, data, historyId) {
                 activeNotionTarget = { type: type, data: data, historyId: historyId };
                 const modal = document.getElementById("notion-modal");
-                const body = document.getElementById("notion-modal-body");
+                const connectView = document.getElementById("notion-modal-connect-view");
+                const exportBody = document.getElementById("notion-modal-body");
                 const success = document.getElementById("notion-modal-success");
                 const select = document.getElementById("notion-page-select");
                 const alertBox = document.getElementById("notion-export-alert");
+                const connectAlert = document.getElementById("notion-modal-connect-alert");
 
                 if (modal) modal.classList.add("active");
-                if (body) body.style.display = "block";
                 if (success) success.style.display = "none";
                 if (alertBox) alertBox.style.display = "none";
+                if (connectAlert) connectAlert.style.display = "none";
+
+                // First check Notion connection status
+                let isConnected = false;
+                try {
+                    const statusRes = await fetch("/api/notion/status");
+                    const statusJson = await statusRes.json();
+                    if (!statusRes.ok) {
+                        if (connectAlert) {
+                            connectAlert.style.display = "block";
+                            connectAlert.textContent = statusJson.error || "Credential storage is temporarily unavailable. Please retry in a moment.";
+                        }
+                    }
+                    isConnected = Boolean(statusJson && statusJson.connected);
+                } catch (_) {}
+
+                if (!isConnected) {
+                    if (connectView) connectView.style.display = "block";
+                    if (exportBody) exportBody.style.display = "none";
+                    return;
+                }
+
+                if (connectView) connectView.style.display = "none";
+                if (exportBody) exportBody.style.display = "block";
                 select.innerHTML = '<option value="">Loading accessible Notion pages...</option>';
 
                 try {
                     const res = await fetch("/api/notion/pages");
                     const json = await res.json();
                     if (!res.ok) {
-                        select.innerHTML = '<option value="">Notion not connected — configure in Settings</option>';
-                        alertBox.style.display = "block";
-                        alertBox.innerHTML = 'Notion integration is not connected. Please <a href="/settings" style="color: var(--primary); text-decoration: underline;">connect Notion in Settings</a> first.';
+                        if (connectView) connectView.style.display = "block";
+                        if (exportBody) exportBody.style.display = "none";
                         return;
                     }
 
@@ -2231,6 +3329,88 @@
                     }
                 } catch (e) {
                     select.innerHTML = '<option value="">Could not load pages. Enter Page ID below.</option>';
+                }
+            };
+
+            window.connectNotionInline = async function() {
+                const input = document.getElementById("notion-modal-token-input");
+                const token = input ? input.value.trim() : "";
+                const alertBox = document.getElementById("notion-modal-connect-alert");
+                const btn = document.getElementById("notion-modal-connect-btn");
+
+                if (!token) {
+                    if (alertBox) {
+                        alertBox.style.display = "block";
+                        alertBox.textContent = "Please enter an internal integration secret.";
+                    }
+                    return;
+                }
+
+                if (btn) {
+                    btn.disabled = true;
+                    btn.textContent = "Connecting...";
+                }
+                if (alertBox) alertBox.style.display = "none";
+
+                try {
+                    const res = await fetch("/api/notion/connect", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ token: token })
+                    });
+                    const data = await res.json();
+                    if (!res.ok || !data.success) {
+                        if (alertBox) {
+                            alertBox.style.display = "block";
+                            alertBox.textContent = data.error || "Failed to connect Notion workspace.";
+                        }
+                    } else {
+                        if (input) input.value = "";
+                        openNotionModal(activeNotionTarget.type, activeNotionTarget.data, activeNotionTarget.historyId);
+                    }
+                } catch (e) {
+                    if (alertBox) {
+                        alertBox.style.display = "block";
+                        alertBox.textContent = "Network error connecting to Notion.";
+                    }
+                } finally {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = "Connect Workspace";
+                    }
+                }
+            };
+
+            window.disconnectNotionInline = async function() {
+                if (!confirm("Disconnect your Notion workspace?")) return;
+                try {
+                    const res = await fetch("/api/notion/disconnect", { method: "POST" });
+                    if (!res.ok) {
+                        const data = await res.json().catch(() => ({}));
+                        alert(data.error || "Failed to disconnect Notion workspace.");
+                        return;
+                    }
+                    openNotionModal(activeNotionTarget.type, activeNotionTarget.data, activeNotionTarget.historyId);
+                } catch (e) {
+                    alert("Failed to disconnect Notion: " + (e.message || "Network error"));
+                }
+            };
+
+            window.exportHistoryItemToNotion = async function(id) {
+                let entry = null;
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    entry = await window.StorageAdapter.getEntry(id);
+                } else {
+                    const res = await fetch(`/api/history/${id}`);
+                    const data = await res.json();
+                    if (data && data.entry) entry = data.entry;
+                }
+                if (entry) {
+                    if (entry.entry_type === 'comparison') {
+                        openNotionModal('comparison', entry.summary, id);
+                    } else {
+                        openNotionModal('single', entry.summary, id);
+                    }
                 }
             };
 
@@ -2364,7 +3544,7 @@
 
                     try {
                         const historyId = currentSummaryData.history_id;
-                        if (historyId) {
+                        if (historyId && window.StorageAdapter && !window.StorageAdapter.isHosted()) {
                             window.location.href = "/export-pdf/" + encodeURIComponent(historyId);
                         } else {
                             const res = await fetch("/export-pdf", {
@@ -2400,6 +3580,8 @@
                 });
             }
 
+            let _activeWorkspaceSearchId = 0;
+
             // Form Submit Listener (Single or Batch Mode)
             form.addEventListener("submit", async (e) => {
                 e.preventDefault();
@@ -2411,14 +3593,19 @@
                 const customDir = directives.custom_directive || "";
                 const customDirEnabled = Boolean(directives.custom_directive_enabled);
 
-                // Hosted mode check: require visitor's in-memory key
-                if (window.StorageAdapter && window.StorageAdapter.isHosted() && !window.StorageAdapter.hasValidCredentials()) {
-                    showError("Please configure your AI provider credentials in the Hosted BYOK box above to proceed.");
-                    return;
+                // Hosted mode check: require visitor's in-memory key or restored vault session
+                if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
+                    if (typeof window.StorageAdapter.waitForAuthReady === "function") {
+                        await window.StorageAdapter.waitForAuthReady();
+                    }
+                    if (!window.StorageAdapter.hasValidCredentials()) {
+                        showError("Please configure your AI provider credentials in the Hosted BYOK box above to proceed.");
+                        return;
+                    }
                 }
 
                 // ==========================================
-                // SEMANTIC SEARCH SUBMISSION (v1.4 & v1.5)
+                // SEMANTIC SEARCH SUBMISSION
                 // ==========================================
                 if (currentTab === 'search') {
                     const queryInput = document.getElementById("semantic-query-input");
@@ -2430,6 +3617,7 @@
                         return;
                     }
 
+                    const currentSearchId = ++_activeWorkspaceSearchId;
                     const thresholdSlider = document.getElementById("search-threshold-slider");
                     const thresholdVal = thresholdSlider ? (parseFloat(thresholdSlider.value) / 100.0) : 0.35;
                     const filterSelect = document.getElementById("search-filter-type");
@@ -2454,8 +3642,10 @@
                     if (window.StorageAdapter && window.StorageAdapter.isHosted()) {
                         try {
                             const hostedResults = await window.StorageAdapter.search(query, thresholdVal, filterType, apiKey);
+                            if (currentSearchId !== _activeWorkspaceSearchId) return;
                             renderSemanticSearchResults(hostedResults);
                         } catch (err) {
+                            if (currentSearchId !== _activeWorkspaceSearchId) return;
                             showError("Search failed: " + (err.message || "Unknown error"));
                         } finally {
                             loadingCard.style.display = "none";
@@ -2483,6 +3673,7 @@
                         });
 
                         const data = await response.json();
+                        if (currentSearchId !== _activeWorkspaceSearchId) return;
 
                         if (!response.ok || !data.success) {
                             if (response.status === 401 && data.redirect) {
@@ -2506,7 +3697,7 @@
                 }
 
                 // ==========================================
-                // COMPARATIVE RESEARCH SUBMISSION (v1.3)
+                // COMPARATIVE RESEARCH SUBMISSION
                 // ==========================================
                 if (currentTab === 'compare') {
                     const urlA = document.getElementById("compare-url-a")?.value.trim();
@@ -2552,6 +3743,7 @@
                         });
 
                         const data = await response.json();
+                        if (currentSearchId !== _activeWorkspaceSearchId) return;
 
                         if (!response.ok || !data.success) {
                             if (response.status === 401 && data.redirect) {

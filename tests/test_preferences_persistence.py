@@ -302,28 +302,27 @@ class TestPreferencesPersistence(unittest.TestCase):
         self.assertNotIn("store.put({ key: 'api_key'", code)
 
     # -------------------------------------------------------------
-    # 9. Home & Settings Templates Free of Conflicting localStorage
+    # 9. Single-Page Application Free of Conflicting localStorage
     # -------------------------------------------------------------
     def test_09_templates_no_conflicting_localstorage_directive_reads(self):
         base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
         index_path = os.path.join(base_dir, "templates", "index.html")
         settings_path = os.path.join(base_dir, "templates", "settings.html")
 
+        # Confirm settings.html has been scrapped
+        self.assertFalse(os.path.exists(settings_path), "settings.html must be scrapped in single-page architecture.")
+
         with open(index_path, "r", encoding="utf-8") as f:
             index_code = f.read()
-        with open(settings_path, "r", encoding="utf-8") as f:
-            settings_code = f.read()
 
         # Confirm zero localStorage.getItem for directives
         self.assertNotIn('localStorage.getItem("webbrief_custom_directive")', index_code)
         self.assertNotIn('localStorage.getItem("webbrief_custom_directive_enabled")', index_code)
-        self.assertNotIn('localStorage.getItem("webbrief_custom_directive")', settings_code)
 
-        # Confirm Home uses StorageAdapter.getPreferences
+        # Confirm single-page app uses StorageAdapter.getPreferences, savePreferences & resetPreferences
         self.assertIn("window.StorageAdapter.getPreferences()", index_code)
-        # Confirm Settings uses StorageAdapter.savePreferences & resetPreferences
-        self.assertIn("window.StorageAdapter.savePreferences(", settings_code)
-        self.assertIn("window.StorageAdapter.resetPreferences()", settings_code)
+        self.assertIn("window.StorageAdapter.savePreferences(", index_code)
+        self.assertIn("window.StorageAdapter.resetPreferences()", index_code)
 
 
 if __name__ == "__main__":

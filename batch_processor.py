@@ -7,12 +7,13 @@ sensible concurrency limits, and history persistence.
 
 import concurrent.futures
 import logging
+import threading
 import urllib.parse
 from typing import List, Dict, Any, Tuple, Optional, Callable
 
 from scraper import scrape_article, validate_safe_url, ScraperError
 from summarizer import summarize_text, SummarizerError, MODES, DEFAULT_MODE
-from history import add_history_entry, get_custom_directives
+from history import add_history_entry, HistoryError
 from byok import is_serverless_env
 import uuid
 
@@ -41,12 +42,19 @@ def validate_batch_urls(raw_urls: List[str]) -> Tuple[List[Dict[str, Any]], Dict
     if not raw_urls:
         return [], {"total": 0, "valid": 0, "invalid": 0, "duplicates": 0}
 
-    # Limit to MAX_BATCH_URLS
+    # Separate within-limit URLs from excess URLs
     urls_to_check = raw_urls[:MAX_BATCH_URLS]
+    excess_urls = raw_urls[MAX_BATCH_URLS:]
 
     validated = []
     seen_urls = {}  # normalized_url -> first index
-    stats = {"total": len(urls_to_check), "valid": 0, "invalid": 0, "duplicates": 0}
+    stats = {
+        "total": len(raw_urls),
+        "valid": 0,
+        "invalid": 0,
+        "duplicates": 0,
+        "truncated_count": len(excess_urls),
+    }
 
     for idx, raw in enumerate(urls_to_check):
         cleaned = (raw or "").strip()
@@ -69,8 +77,27 @@ def validate_batch_urls(raw_urls: List[str]) -> Tuple[List[Dict[str, Any]], Dict
             safe_url = validate_safe_url(cleaned)
             item["normalized_url"] = safe_url
 
-            # Duplicate check
-            norm_key = safe_url.lower().rstrip("/")
+            # Canonical normalization for duplicate detection:
+            # - lowercase scheme and host
+            # - strip default ports (:80 for http, :443 for https)
+            # - strip fragment
+            # - deterministic sort of query parameters
+            # - normalize path trailing slashes
+            parsed = urllib.parse.urlparse(safe_url)
+            norm_scheme = (parsed.scheme or "https").lower()
+            norm_host = (parsed.hostname or "").lower()
+            port_str = ""
+            if parsed.port:
+                if (norm_scheme == "http" and parsed.port != 80) or (norm_scheme == "https" and parsed.port != 443):
+                    port_str = f":{parsed.port}"
+            # Canonicalize path percent-encoding and trailing slashes (P2-BATCH-01)
+            unquoted_path = urllib.parse.unquote(parsed.path)
+            clean_path = unquoted_path.rstrip("/") if unquoted_path != "/" else "/"
+            if not clean_path:
+                clean_path = "/"
+            sorted_query = urllib.parse.urlencode(sorted(urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)))
+            norm_key = urllib.parse.urlunparse((norm_scheme, f"{norm_host}{port_str}", clean_path, "", sorted_query, ""))
+
             if norm_key in seen_urls:
                 item["is_duplicate"] = True
                 first_idx = seen_urls[norm_key]
@@ -88,6 +115,19 @@ def validate_batch_urls(raw_urls: List[str]) -> Tuple[List[Dict[str, Any]], Dict
             item["error"] = f"Invalid URL: {str(e)}"
             stats["invalid"] += 1
 
+        validated.append(item)
+
+    for idx, raw in enumerate(excess_urls, start=MAX_BATCH_URLS):
+        cleaned = (raw or "").strip()
+        item = {
+            "index": idx,
+            "original_url": cleaned,
+            "normalized_url": None,
+            "is_valid": False,
+            "is_duplicate": False,
+            "error": f"Batch limit exceeded (maximum {MAX_BATCH_URLS} URLs per batch).",
+        }
+        stats["invalid"] += 1
         validated.append(item)
 
     return validated, stats
@@ -155,20 +195,34 @@ def process_single_item(
                     mode_name=summary.get("mode_name", MODES[active_mode]["name"]),
                     summary=summary,
                 )
-                if hist_entry:
+                if hist_entry and hist_entry.get("id"):
                     result_item["history_id"] = hist_entry.get("id")
+                    result_item["history_saved"] = True
                     summary["history_id"] = hist_entry.get("id")
                     try:
                         from vector_store import index_summary_entry
                         index_summary_entry(hist_entry["id"], api_key=api_key)
                     except Exception:
                         pass
+                else:
+                    result_item["history_id"] = None
+                    result_item["history_saved"] = False
+            except HistoryError as he:
+                logger.warning("Could not record history for %s: %s", safe_url, str(he))
+                result_item["history_id"] = None
+                result_item["history_saved"] = False
+                result_item["history_error"] = str(he)
             except Exception as e:
                 logger.warning("Could not record history for %s: %s", safe_url, str(e))
+                result_item["history_id"] = None
+                result_item["history_saved"] = False
         elif is_serverless_env():
             generated_id = str(uuid.uuid4())
             result_item["history_id"] = generated_id
+            result_item["history_saved"] = False
             summary["history_id"] = generated_id
+        else:
+            result_item["history_saved"] = False
 
     except ScraperError as se:
         result_item["status"] = "failed"
@@ -193,10 +247,11 @@ def execute_batch(
     progress_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     batch_id: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> Dict[str, Any]:
     """
     Executes batch summarization across multiple URLs.
-    Supports progress callbacks for streaming UI updates and deduplication.
+    Supports progress callbacks for streaming UI updates, deduplication, and cancellation.
     """
     validated_items, val_stats = validate_batch_urls(raw_urls)
 
@@ -244,6 +299,18 @@ def execute_batch(
     workers = max(1, min(max_workers, 3))
 
     def _worker_task(target_url: str):
+        if cancel_event and cancel_event.is_set():
+            return {
+                "url": target_url,
+                "status": "failed",
+                "error": "Batch processing was canceled.",
+                "mode": mode,
+                "mode_name": MODES.get(mode, MODES[DEFAULT_MODE])["name"],
+                "title": None,
+                "summary": None,
+                "history_id": None,
+                "batch_id": batch_id,
+            }
         return process_single_item(
             url=target_url,
             mode=mode,
@@ -263,6 +330,12 @@ def execute_batch(
         }
 
         for future in concurrent.futures.as_completed(future_to_url):
+            if cancel_event and cancel_event.is_set():
+                logger.info("Batch execution canceled by client disconnect; abandoning remaining tasks.")
+                for f in future_to_url:
+                    f.cancel()
+                break
+
             target_url = future_to_url[future]
             assigned_indices = unique_tasks[target_url]
 
@@ -302,7 +375,39 @@ def execute_batch(
                         "total": total_count,
                     })
 
+    # Guard against unpopulated slots if canceled prematurely
+    for idx, r in enumerate(results):
+        if r is None:
+            results[idx] = {
+                "url": validated_items[idx]["original_url"],
+                "status": "failed",
+                "error": "Batch processing was canceled.",
+                "mode": mode,
+                "mode_name": MODES.get(mode, MODES[DEFAULT_MODE])["name"],
+                "title": None,
+                "summary": None,
+                "history_id": None,
+                "batch_id": batch_id,
+            }
+            failed_count += 1
+
+    # BATCH-01: Calculate batch status and success flag
+    if cancel_event and cancel_event.is_set():
+        batch_status = "canceled"
+        is_success = False
+    elif completed_count == total_count and total_count > 0:
+        batch_status = "completed"
+        is_success = True
+    elif completed_count > 0:
+        batch_status = "partial"
+        is_success = True
+    else:
+        batch_status = "failed"
+        is_success = False
+
     return {
+        "success": is_success,
+        "status": batch_status,
         "batch_id": batch_id,
         "mode": mode,
         "total": total_count,

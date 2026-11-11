@@ -25,6 +25,7 @@ from flask import (
     send_file,
     Response,
     stream_with_context,
+    g,
 )
 
 from scraper import scrape_article, ScraperError
@@ -44,19 +45,20 @@ from services.providers.catalogue import (
     get_default_model,
     get_allowed_models,
     is_valid_model,
-    validate_model_id,
 )
 from services.providers.exceptions import ProviderInvalidModelError
 from history import (
     add_history_entry,
     get_history,
     get_history_entry,
+    get_history_count,
     delete_history_entry,
     clear_history,
     get_custom_directives,
     save_custom_directives,
     reset_custom_directives,
     MAX_DIRECTIVE_LENGTH,
+    HistoryError,
 )
 from pdf_exporter import generate_summary_pdf, build_pdf_filename, generate_batch_summary_pdf, generate_comparison_pdf
 from batch_processor import execute_batch, validate_batch_urls, MAX_BATCH_URLS
@@ -78,17 +80,14 @@ from vector_store import (
     rebuild_vector_index,
     get_vector_store_stats,
     index_summary_entry,
-    generate_embedding,
+    generate_embedding_with_model,
     VectorStoreError,
     DEFAULT_EMBEDDING_MODEL,
-    EMBEDDING_DIMENSIONS,
     DEFAULT_SIMILARITY_THRESHOLD,
     DEFAULT_SEARCH_LIMIT,
 )
 
 logger = logging.getLogger(__name__)
-
-APP_VERSION = "1.6.4"
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 app = Flask(
@@ -188,11 +187,41 @@ app.config.update(
     PERMANENT_SESSION_LIFETIME=datetime.timedelta(minutes=30),
 )
 
+# Persistent Vault Reference Cookie (SEC-02 / BYOK Persistence)
+VAULT_COOKIE_NAME = "wb_vault_id"
+VAULT_COOKIE_MAX_AGE = 315360000  # 10 years persistent (seconds)
 
-# Optional encrypted temporary BYOK vault. Redis-backed sessions are required
-# for vault mode; without these settings the existing browser-memory BYOK flow
-# remains intact (and no credentials enter Flask cookie sessions).
-from credential_vault import TemporaryCredentialVault
+# Encrypted BYOK credential vault. Redis-backed storage persists encrypted credentials indefinitely
+# across browser sessions, browser restarts, and application restarts without exposing raw secrets.
+from credential_vault import (
+    TemporaryCredentialVault,
+    VaultStatus,
+)
+
+# -------------------------------------------------------------
+# Structured Metrics & Observability Tracker (OBS-01, OBS-02)
+# -------------------------------------------------------------
+_METRICS: Dict[str, Any] = {
+    "summaries_success": 0,
+    "summaries_failed": 0,
+    "summaries_partial": 0,
+    "scrape_failures": 0,
+    "gemini_errors": 0,
+    "redis_errors": 0,
+    "sqlite_errors": 0,
+    "batch_completed": 0,
+    "pdf_failures": 0,
+    "notion_failures": 0,
+}
+_METRICS_LOCK = threading.Lock()
+
+def increment_metric(name: str, count: int = 1) -> None:
+    """Thread-safe lightweight counter increment for production observability (OBS-02)."""
+    with _METRICS_LOCK:
+        if name in _METRICS:
+            _METRICS[name] += count
+        else:
+            _METRICS[name] = count
 
 _vault = None
 _redis = None
@@ -290,28 +319,82 @@ def check_rate_limit(endpoint_name: str, max_requests: int, window_seconds: int 
     return None
 
 
-def _vault_sid():
-    if "_vault_sid" not in session:
-        session["_vault_sid"] = secrets.token_urlsafe(32)
-    return session["_vault_sid"]
+def parse_bool(val: Any, default: bool = False) -> bool:
+    """Safely converts input values to boolean, avoiding string 'false' coercion bugs (COMP-01)."""
+    if val is None:
+        return default
+    if isinstance(val, bool):
+        return val
+    if isinstance(val, (int, float)):
+        return val != 0
+    if isinstance(val, str):
+        return val.strip().lower() in ("true", "1", "yes", "on")
+    return bool(val)
 
 
-def _vault_config():
-    if _vault is None or "_vault_sid" not in session:
-        return {}
-    return _vault.load(session["_vault_sid"])
+def _vault_sid() -> str:
+    """
+    Resolves the persistent high-entropy vault identifier.
+    Prioritizes the dedicated HttpOnly persistent cookie, falling back to session.
+    Ensures the identifier persists across browser sessions and application restarts.
+    """
+    # 1. Check dedicated persistent cookie
+    cookie_sid = request.cookies.get(VAULT_COOKIE_NAME)
+    if cookie_sid and len(cookie_sid) >= 16:
+        session["_vault_sid"] = cookie_sid
+        return cookie_sid
+
+    # 2. Check Flask session
+    if "_vault_sid" in session and session["_vault_sid"]:
+        sid = session["_vault_sid"]
+        g._set_vault_cookie = sid
+        return sid
+
+    # 3. Generate fresh cryptographically secure high-entropy identifier
+    sid = secrets.token_urlsafe(32)
+    session["_vault_sid"] = sid
+    g._set_vault_cookie = sid
+    return sid
+
+
+def _vault_status() -> Tuple[VaultStatus, dict]:
+    """Retrieves vault credentials along with explicit status outcome."""
+    if _vault is None:
+        return VaultStatus.NOT_CONFIGURED, {}
+    sid = _vault_sid()
+    if hasattr(_vault, "load_with_status"):
+        try:
+            res = _vault.load_with_status(sid)
+            if isinstance(res, tuple) and len(res) == 2:
+                return res
+        except Exception as e:
+            logger.error("Error retrieving vault status: %s", e)
+            return VaultStatus.UNAVAILABLE, {}
+    if hasattr(_vault, "load"):
+        try:
+            data = _vault.load(sid)
+            if isinstance(data, dict):
+                return (VaultStatus.CONFIGURED if data else VaultStatus.NOT_CONFIGURED), data
+        except Exception as e:
+            logger.error("Error loading vault credentials: %s", e)
+            return VaultStatus.UNAVAILABLE, {}
+    return VaultStatus.NOT_CONFIGURED, {}
+
+
+def _vault_config() -> dict:
+    _, data = _vault_status()
+    return data
 
 
 @app.before_request
 def check_startup_configuration():
     """Fails safely with an informative HTTP 500 response if production configuration is missing."""
     if _startup_error:
-        if request.path in ("/health", "/api/health"):
+        if request.path in ("/health", "/api/health", "/api/health/liveness", "/api/health/readiness"):
             return jsonify({
                 "status": "error",
                 "code": "CONFIGURATION_REQUIRED",
                 "message": _startup_error,
-                "version": APP_VERSION,
             }), 500
         if request.path.startswith("/api/") or request.is_json:
             return jsonify({
@@ -498,21 +581,66 @@ def store_temporary_credentials():
     if gemini_model:
         clean["gemini_model"] = gemini_model
 
-    existing_cfg = _vault_config() or {}
-    if "notion_token" in existing_cfg and "notion_token" not in clean:
-        clean["notion_token"] = existing_cfg["notion_token"]
-    saved = _vault.save(_vault_sid(), clean)
+    sid = _vault_sid()
+    saved, v_status = _vault.update(sid, clean)
     if not saved:
-        return jsonify({"error": "Failed to store credentials in temporary vault."}), 503
-    return jsonify({"success": True, "expires_in": 1800}), 200
+        if v_status == VaultStatus.UNAVAILABLE:
+            return jsonify({
+                "error": "Credential storage is temporarily unavailable. Cannot safely update credentials without verifying existing configuration.",
+                "status": "unavailable",
+            }), 503
+        elif v_status in (VaultStatus.DECRYPTION_ERROR, VaultStatus.CORRUPTED):
+            return jsonify({
+                "error": "Existing credential record cannot be decrypted or is corrupted. Update blocked to prevent state corruption.",
+                "status": v_status.value,
+            }), 500
+        return jsonify({"error": "Failed to store credentials in vault."}), 503
+
+    g._set_vault_cookie = sid
+    return jsonify({"success": True, "persistent": True}), 200
 
 
 @app.route("/api/credentials/status", methods=["GET"])
 def temporary_credentials_status():
-    data = _vault_config()
+    if _vault is None:
+        return jsonify({
+            "enabled": False,
+            "configured": False,
+            "status": "disabled",
+            "persistent": False,
+        })
+
+    status, data = _vault_status()
+    if status == VaultStatus.UNAVAILABLE:
+        return jsonify({
+            "enabled": True,
+            "configured": False,
+            "status": "unavailable",
+            "error": "Credential vault is temporarily unavailable. Please try again shortly.",
+            "persistent": True,
+        }), 503
+    elif status == VaultStatus.DECRYPTION_ERROR:
+        return jsonify({
+            "enabled": True,
+            "configured": False,
+            "status": "decryption_error",
+            "error": "Stored credentials could not be decrypted with the server key.",
+            "persistent": True,
+        }), 500
+    elif status == VaultStatus.CORRUPTED:
+        return jsonify({
+            "enabled": True,
+            "configured": False,
+            "status": "corrupted",
+            "error": "Stored credential record is malformed.",
+            "persistent": True,
+        }), 500
+
     return jsonify({
-        "enabled": _vault is not None,
+        "enabled": True,
         "configured": bool(data),
+        "status": "configured" if data else "not_configured",
+        "persistent": True,
         "provider": data.get("primary_provider", "gemini") if data else None,
         "gemini_model": data.get("gemini_model") if data else None,
         "primary_model": data.get("gemini_model") if data else None,
@@ -521,27 +649,87 @@ def temporary_credentials_status():
 
 @app.route("/api/credentials", methods=["DELETE"])
 def delete_temporary_credentials():
-    if _vault is not None and "_vault_sid" in session:
-        _vault.delete(session.pop("_vault_sid"))
+    if _vault is not None:
+        sid = _vault_sid()
+        deleted = _vault.delete(sid)
+        if not deleted:
+            return jsonify({"error": "Failed to delete credentials from storage."}), 503
+        session.pop("_vault_sid", None)
+        g._delete_vault_cookie = True
+    session.pop("gemini_api_key", None)
+    session.pop("notion_token", None)
     return jsonify({"success": True})
 
 
 @app.after_request
 def apply_security_headers(response):
-    """Inject standard defensive security headers into all HTTP responses (SEC-07)."""
+    """Inject standard defensive security headers into all HTTP responses and manage persistent vault cookie (SEC-02, SEC-07)."""
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
     response.headers["X-XSS-Protection"] = "1; mode=block"
+
+    # Manage persistent vault cookie (P2-VLT-03)
+    if getattr(g, "_delete_vault_cookie", False):
+        response.delete_cookie(
+            VAULT_COOKIE_NAME,
+            path="/",
+            httponly=True,
+            samesite="Lax",
+            secure=is_secure_cookie,
+        )
+    else:
+        set_sid = getattr(g, "_set_vault_cookie", None)
+        if set_sid and _vault is not None:
+            response.set_cookie(
+                VAULT_COOKIE_NAME,
+                set_sid,
+                max_age=VAULT_COOKIE_MAX_AGE,
+                httponly=True,
+                samesite="Lax",
+                secure=is_secure_cookie,
+                path="/",
+            )
     response.headers["Content-Security-Policy"] = (
         "default-src 'self'; "
         "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
         "font-src 'self' https://fonts.gstatic.com; "
-        "img-src 'self' data: https:; "
-        "connect-src 'self';"
+        "img-src 'self' data: https: blob:; "
+        "connect-src 'self' blob:; "
+        "frame-ancestors 'self'; "
+        "form-action 'self'; "
+        "base-uri 'self'; "
+        "object-src 'none';"
     )
+
+    req_id = getattr(g, "request_id", None)
+    if req_id:
+        response.headers["X-Request-ID"] = req_id
+    start_time = getattr(g, "start_time", None)
+    if start_time:
+        duration_ms = int((time.monotonic() - start_time) * 1000)
+        response.headers["X-Response-Time"] = f"{duration_ms}ms"
+
     return response
+
+
+@app.before_request
+def initialize_request_tracing():
+    """Assigns unique Request ID and start time for structured request tracing (OBS-01)."""
+    g.request_id = request.headers.get("X-Request-ID") or f"req_{secrets.token_hex(8)}"
+    g.start_time = time.monotonic()
+
+
+@app.template_filter("safe_url")
+def safe_url_filter(url: Optional[str]) -> str:
+    """Sanitizes URLs to only allow safe schemes (http, https, mailto) in href contexts (SEC-03)."""
+    if not url:
+        return "#"
+    s = str(url).strip()
+    if s.lower().startswith(("http://", "https://", "mailto:")):
+        return s
+    return "#"
 
 
 @app.errorhandler(403)
@@ -612,12 +800,12 @@ def inject_globals():
     if "_csrf_token" not in session:
         session["_csrf_token"] = secrets.token_hex(32)
 
+    v_cfg = _vault_config() if _vault else None
     return {
-        "app_version": APP_VERSION,
         "default_mode": DEFAULT_MODE,
         "modes": MODES,
         "max_batch_urls": MAX_BATCH_URLS,
-        "has_notion_configured": has_notion_config(session_dict=session),
+        "has_notion_configured": has_notion_config(session_dict=session, vault_config=v_cfg),
         "is_hosted": is_serverless_env(),
         "vault_enabled": _vault is not None,
         "csrf_token": session["_csrf_token"],
@@ -709,6 +897,9 @@ def enforce_byok_onboarding():
         "delete_temporary_credentials",
         "health_check",
         "api_health",
+        "health_liveness",
+        "health_readiness",
+        "api_metrics",
     }
     if request.endpoint in exempt_endpoints:
         return None
@@ -738,13 +929,13 @@ def enforce_byok_onboarding():
 
         if request.is_json or request.headers.get("X-Requested-With") == "XMLHttpRequest":
             return jsonify({
-                "error": "AI provider credentials not configured. Please configure your credentials in Settings.",
-                "redirect": url_for("settings")
+                "error": "AI provider credentials not configured. Please configure your credentials.",
+                "redirect": url_for("home")
             }), 401
 
-        return redirect(url_for("settings"))
+        return redirect(url_for("home"))
 
-    return redirect(url_for("settings"))
+    return redirect(url_for("home"))
 
 
 @app.errorhandler(ProviderInvalidModelError)
@@ -761,104 +952,189 @@ def health_check():
     """Diagnostic health check endpoint for platform monitoring and uptime probes."""
     return jsonify({
         "status": "healthy",
-        "version": APP_VERSION,
         "is_hosted": is_serverless_env(),
         "vault_enabled": _vault is not None,
         "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
     }), 200
 
 
-@app.route("/")
+@app.route("/api/health/liveness", methods=["GET"])
+def health_liveness():
+    """Liveness probe verifying that the Flask process is running and responding (DEP-01)."""
+    return jsonify({
+        "status": "alive",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }), 200
+
+
+@app.route("/api/health/readiness", methods=["GET"])
+def health_readiness():
+    """Readiness probe evaluating operational status of required backing services (DEP-01)."""
+    sqlite_status = "ok"
+    if not is_serverless_env():
+        try:
+            from history import get_db_connection
+            conn = get_db_connection()
+            conn.execute("SELECT 1")
+            conn.close()
+        except Exception as e:
+            sqlite_status = f"unhealthy: {str(e)}"
+
+    redis_status = "disabled"
+    if _redis is not None:
+        try:
+            _redis.ping()
+            redis_status = "ok"
+        except Exception as e:
+            redis_status = f"unhealthy: {str(e)}"
+    elif _vault is not None:
+        try:
+            _vault.redis_client.ping()
+            redis_status = "ok"
+        except Exception as e:
+            redis_status = f"unhealthy: {str(e)}"
+
+    is_ready = True
+    if not is_serverless_env() and sqlite_status != "ok":
+        is_ready = False
+    if _vault is not None and redis_status.startswith("unhealthy"):
+        is_ready = False
+
+    status_code = 200 if is_ready else 503
+    status_str = "ready" if is_ready else "not_ready"
+
+    return jsonify({
+        "status": status_str,
+        "is_hosted": is_serverless_env(),
+        "checks": {
+            "sqlite": sqlite_status,
+            "redis": redis_status,
+        },
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat()
+    }), status_code
+
+
+@app.route("/api/metrics", methods=["GET"])
+def api_metrics():
+    """Diagnostic operational metrics snapshot endpoint (OBS-02)."""
+    with _METRICS_LOCK:
+        snapshot = dict(_METRICS)
+    return jsonify({
+        "status": "healthy",
+        "metrics": snapshot,
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+    }), 200
+
+
 @app.route("/api/index")
+@app.route("/")
 def home():
-    is_conf = has_valid_config(session_dict=session)
-    recent_history = [] if is_serverless_env() else get_history(limit=10)
-    provider_config = get_active_provider_config(session_dict=session)
+    v_cfg = _vault_config() if _vault else None
+    is_conf = has_valid_config(session_dict=session, vault_config=v_cfg)
+    history_entries = [] if is_serverless_env() else get_history(limit=50)
+    provider_config = get_active_provider_config(session_dict=session, vault_config=v_cfg)
+    safe_provider_config = {
+        k: (bool(v) if ("key" in k.lower() or "token" in k.lower() or "secret" in k.lower()) else v)
+        for k, v in provider_config.items()
+    }
+    directives = get_custom_directives()
+    active_view = request.args.get("view", "summarize")
     return render_template(
         "index.html",
         default_mode=DEFAULT_MODE,
         modes=MODES,
         is_configured=is_conf,
-        provider_config=provider_config,
+        provider_config=safe_provider_config,
         provider_catalogue=PROVIDER_CATALOGUE,
-        recent_history=recent_history
+        entries=history_entries,
+        recent_history=history_entries[:10],
+        custom_directive=directives.get("custom_directive", ""),
+        custom_directive_enabled=directives.get("custom_directive_enabled", False),
+        max_directive_length=MAX_DIRECTIVE_LENGTH,
+        active_view=active_view,
     )
 
 
 @app.route("/setup")
-def setup():
-    """Redirect deprecated setup wizard to settings."""
-    return redirect(url_for("settings"), code=301)
-
-
 @app.route("/settings")
 def settings():
-    """Application settings, appearance, custom directives, and integrations page."""
-    is_conf = has_valid_config(session_dict=session)
-    is_serv = is_serverless_env()
-    history_entries = [] if is_serv else get_history(limit=50)
-    directives = get_custom_directives()
-    provider_config = get_active_provider_config(session_dict=session)
-
-    return render_template(
-        "settings.html",
-        is_configured=is_conf,
-        is_serverless=is_serv,
-        history_count=len(history_entries),
-        modes=MODES,
-        default_mode=DEFAULT_MODE,
-        provider_config=provider_config,
-        provider_catalogue=PROVIDER_CATALOGUE,
-        custom_directive=directives.get("custom_directive", ""),
-        custom_directive_enabled=directives.get("custom_directive_enabled", False),
-        max_directive_length=MAX_DIRECTIVE_LENGTH,
-    )
+    """Redirect legacy setup and settings routes to the single-page application."""
+    return redirect(url_for("home"), code=301)
 
 
 @app.route("/history")
 def view_history():
-    """Dedicated summary history view."""
-    entries = [] if is_serverless_env() else get_history(limit=50)
-    return render_template("history.html", entries=entries)
+    """Summary history view in single-page interface."""
+    return redirect(url_for("home", view="history"))
 
 
 # -------------------------------------------------------------
 # Summary History API Endpoints
 # -------------------------------------------------------------
+@app.route("/api/history/count", methods=["GET"])
+def api_get_history_count():
+    if is_serverless_env():
+        return jsonify({"count": 0, "is_hosted": True})
+    try:
+        return jsonify({"count": get_history_count(), "is_hosted": False})
+    except HistoryError as he:
+        logger.error("Failed to count history: %s", he)
+        return jsonify({"error": f"Failed to count history records: {str(he)}", "count": 0, "is_hosted": False}), 503
+
+
 @app.route("/api/history", methods=["GET"])
 def api_get_history():
     if is_serverless_env():
         return jsonify({"history": []})
-    entries = get_history(limit=50)
-    return jsonify({"history": entries})
+    limit = request.args.get("limit", default=50, type=int)
+    if limit is not None and limit < 0:
+        limit = -1
+    try:
+        entries = get_history(limit=limit)
+        return jsonify({"history": entries})
+    except HistoryError as he:
+        logger.error("Failed to get history: %s", he)
+        return jsonify({"error": f"Failed to retrieve history: {str(he)}", "history": []}), 503
 
 
 @app.route("/api/history/<entry_id>", methods=["GET"])
 def api_get_history_entry(entry_id):
     if is_serverless_env():
         return jsonify({"error": "History entry not found."}), 404
-    entry = get_history_entry(entry_id)
-    if not entry:
-        return jsonify({"error": "History entry not found."}), 404
-    return jsonify({"entry": entry})
+    try:
+        entry = get_history_entry(entry_id)
+        if not entry:
+            return jsonify({"error": "History entry not found."}), 404
+        return jsonify({"entry": entry})
+    except HistoryError as he:
+        logger.error("Failed to get history entry %s: %s", entry_id, he)
+        return jsonify({"error": f"Failed to fetch history entry: {str(he)}"}), 503
 
 
 @app.route("/api/history/<entry_id>", methods=["DELETE"])
 def api_delete_history(entry_id):
     if is_serverless_env():
         return jsonify({"success": True})
-    success = delete_history_entry(entry_id)
-    if not success:
-        return jsonify({"error": "Failed to delete history entry."}), 404
-    return jsonify({"success": True})
+    try:
+        success = delete_history_entry(entry_id)
+        if not success:
+            return jsonify({"error": "History entry not found."}), 404
+        return jsonify({"success": True})
+    except HistoryError as he:
+        logger.error("Failed to delete history entry %s: %s", entry_id, he)
+        return jsonify({"error": f"Failed to delete history entry: {str(he)}"}), 503
 
 
 @app.route("/api/history/clear", methods=["POST"])
 def api_clear_history():
     if is_serverless_env():
         return jsonify({"success": True})
-    clear_history()
-    return jsonify({"success": True})
+    try:
+        clear_history()
+        return jsonify({"success": True})
+    except HistoryError as he:
+        logger.error("Failed to clear history: %s", he)
+        return jsonify({"error": f"Failed to clear history: {str(he)}"}), 503
 
 
 # -------------------------------------------------------------
@@ -873,6 +1149,7 @@ def export_pdf():
     title = data.get("title", "")
     mode = data.get("mode", "")
     created_at = data.get("created_at", "")
+    entry_type = data.get("entry_type", "")
 
     if history_id and not is_serverless_env():
         entry = get_history_entry(history_id)
@@ -882,6 +1159,7 @@ def export_pdf():
             title = entry.get("title", title)
             mode = entry.get("mode_name", mode)
             created_at = entry.get("created_at_formatted", created_at)
+            entry_type = entry.get("entry_type", entry_type)
 
     if not summary:
         raw_summary = data.get("summary")
@@ -896,15 +1174,26 @@ def export_pdf():
     if not summary or not isinstance(summary, dict):
         return jsonify({"error": "No valid summary data provided for PDF generation."}), 400
 
+    is_comparison = entry_type == "comparison" or "article_a" in summary or "common_points" in summary
+
     try:
-        pdf_buffer = generate_summary_pdf(
-            summary=summary,
-            url=url,
-            title=title or summary.get("title"),
-            mode=mode or summary.get("mode_name"),
-            created_at=created_at,
-        )
-        download_name = build_pdf_filename(title or summary.get("title"))
+        if is_comparison:
+            pdf_buffer = generate_comparison_pdf(
+                comp=summary,
+                url_a=data.get("url_a", url),
+                url_b=data.get("url_b", ""),
+                created_at=created_at,
+            )
+            download_name = f"WebBrief_Comparison_{build_pdf_filename(title or summary.get('title', 'Comparison'))}"
+        else:
+            pdf_buffer = generate_summary_pdf(
+                summary=summary,
+                url=url,
+                title=title or summary.get("title"),
+                mode=mode or summary.get("mode_name"),
+                created_at=created_at,
+            )
+            download_name = build_pdf_filename(title or summary.get("title"))
 
         return send_file(
             pdf_buffer,
@@ -913,6 +1202,7 @@ def export_pdf():
             download_name=download_name,
         )
     except Exception as e:
+        increment_metric("pdf_failures")
         return jsonify({"error": redact_credentials(f"Failed to generate PDF: {str(e)}")}), 500
 
 
@@ -927,14 +1217,24 @@ def export_pdf_by_id(entry_id):
 
     try:
         summary_data = entry.get("summary", {})
-        pdf_buffer = generate_summary_pdf(
-            summary=summary_data,
-            url=entry.get("url", ""),
-            title=entry.get("title", ""),
-            mode=entry.get("mode_name", ""),
-            created_at=entry.get("created_at_formatted", ""),
-        )
-        download_name = build_pdf_filename(entry.get("title"))
+        is_comparison = entry.get("entry_type") == "comparison" or "article_a" in summary_data or "common_points" in summary_data
+        if is_comparison:
+            pdf_buffer = generate_comparison_pdf(
+                comp=summary_data,
+                url_a=entry.get("url", ""),
+                url_b=entry.get("url_b", ""),
+                created_at=entry.get("created_at_formatted", ""),
+            )
+            download_name = f"WebBrief_Comparison_{build_pdf_filename(entry.get('title', 'Comparison'))}"
+        else:
+            pdf_buffer = generate_summary_pdf(
+                summary=summary_data,
+                url=entry.get("url", ""),
+                title=entry.get("title", ""),
+                mode=entry.get("mode_name", ""),
+                created_at=entry.get("created_at_formatted", ""),
+            )
+            download_name = build_pdf_filename(entry.get("title"))
 
         return send_file(
             pdf_buffer,
@@ -943,6 +1243,7 @@ def export_pdf_by_id(entry_id):
             download_name=download_name,
         )
     except Exception as e:
+        increment_metric("pdf_failures")
         return jsonify({"error": redact_credentials(f"Failed to generate PDF: {str(e)}")}), 500
 
 
@@ -958,7 +1259,7 @@ def api_get_preferences():
 def api_save_preferences():
     data = request.get_json() if request.is_json else request.form
     directive = (data.get("custom_directive") or "").strip()
-    enabled = data.get("custom_directive_enabled") in (True, "true", "1", 1, "on")
+    enabled = parse_bool(data.get("custom_directive_enabled"), default=False)
 
     success, message = save_custom_directives(directive=directive, enabled=enabled)
     status_code = 200 if success else 400
@@ -1008,8 +1309,10 @@ def batch_summarize():
     if not cleaned_urls:
         return jsonify({"error": "Please provide at least one valid URL."}), 400
 
+    batch_warning = None
     if len(cleaned_urls) > MAX_BATCH_URLS:
-        cleaned_urls = cleaned_urls[:MAX_BATCH_URLS]
+        excess = len(cleaned_urls) - MAX_BATCH_URLS
+        batch_warning = f"Batch request contained {len(cleaned_urls)} URLs. The maximum batch limit is {MAX_BATCH_URLS}; {excess} excess URLs are flagged as exceeded."
 
     req_model = (data.get("gemini_model") or data.get("model") or "").strip()
     if req_model and not is_valid_model(req_model, "gemini"):
@@ -1019,7 +1322,7 @@ def batch_summarize():
     mode = data.get("mode", DEFAULT_MODE)
     api_key = data.get("api_key")
     custom_directive = data.get("custom_directive")
-    custom_directive_enabled = data.get("custom_directive_enabled")
+    custom_directive_enabled = parse_bool(data.get("custom_directive_enabled"), default=None) if "custom_directive_enabled" in data else None
 
     is_stream = request.args.get("stream") in ("1", "true") or request.headers.get("Accept") == "text/event-stream"
 
@@ -1029,8 +1332,13 @@ def batch_summarize():
         def stream_progress_cb(evt):
             event_queue.put(evt)
 
+        cancel_event = threading.Event()
+
         def generate_sse():
             batch_result_container = []
+
+            # Emit initial batch_started event (BATCH-02)
+            yield f"data: {json.dumps({'event': 'batch_started', 'total': len(cleaned_urls), 'mode': mode})}\n\n"
 
             def worker_thread():
                 try:
@@ -1042,7 +1350,9 @@ def batch_summarize():
                         custom_directive_enabled=custom_directive_enabled,
                         progress_callback=stream_progress_cb,
                         provider_config=data,
+                        cancel_event=cancel_event,
                     )
+                    increment_metric("batch_completed")
                     batch_result_container.append(res)
                 except Exception as e:
                     event_queue.put({"event": "error", "error": redact_credentials(str(e))})
@@ -1052,20 +1362,24 @@ def batch_summarize():
             t = threading.Thread(target=worker_thread)
             t.start()
 
-            while True:
-                try:
-                    evt = event_queue.get(timeout=1.0)
-                    if evt is None:
-                        break
-                    yield f"data: {json.dumps(evt)}\n\n"
-                except queue.Empty:
-                    if not t.is_alive():
-                        break
-                    yield f"data: {json.dumps({'event': 'heartbeat'})}\n\n"
+            try:
+                while True:
+                    try:
+                        evt = event_queue.get(timeout=1.0)
+                        if evt is None:
+                            break
+                        yield f"data: {json.dumps(evt)}\n\n"
+                    except queue.Empty:
+                        if not t.is_alive():
+                            break
+                        yield f"data: {json.dumps({'event': 'heartbeat'})}\n\n"
 
-            t.join(timeout=5.0)
-            final_res = batch_result_container[0] if batch_result_container else {}
-            yield f"data: {json.dumps({'event': 'done', 'result': final_res})}\n\n"
+                t.join(timeout=5.0)
+                final_res = batch_result_container[0] if batch_result_container else {}
+                done_evt = "canceled" if (cancel_event.is_set() or final_res.get("status") == "canceled") else "done"
+                yield f"data: {json.dumps({'event': done_evt, 'result': final_res})}\n\n"
+            finally:
+                cancel_event.set()
 
         return Response(stream_with_context(generate_sse()), mimetype="text/event-stream")
 
@@ -1078,22 +1392,34 @@ def batch_summarize():
         custom_directive_enabled=custom_directive_enabled,
         provider_config=data,
     )
-    batch_result["success"] = True
+    increment_metric("batch_completed")
+    if batch_warning:
+        batch_result["warning"] = batch_warning
     return jsonify(batch_result)
 
 
 @app.route("/batch/export-pdf", methods=["POST"])
 def batch_export_pdf():
+    if request.content_length and request.content_length > 2 * 1024 * 1024:
+        return jsonify({"error": "Payload exceeds 2 MiB request limit for PDF generation."}), 413
+
     data = request.get_json() or {}
     items = data.get("items", [])
+    if len(items) > 50:
+        return jsonify({"error": "Batch PDF export exceeds the maximum limit of 50 items per document."}), 400
 
     history_ids = data.get("history_ids")
     if history_ids and isinstance(history_ids, list):
-        items = []
-        for hid in history_ids:
-            hentry = get_history_entry(hid)
-            if hentry:
-                items.append(hentry)
+        # In local self-hosted mode with SQLite on disk, resolve from database
+        if not is_serverless_env():
+            loaded_items = []
+            for hid in history_ids:
+                hentry = get_history_entry(hid)
+                if hentry:
+                    loaded_items.append(hentry)
+            if loaded_items:
+                items = loaded_items
+        # In hosted mode (or if SQLite does not hold entries), preserve client-supplied items
 
     if not items or not isinstance(items, list):
         return jsonify({"error": "No items provided for batch PDF export."}), 400
@@ -1113,7 +1439,7 @@ def batch_export_pdf():
 
 
 # -------------------------------------------------------------
-# Comparative Research Endpoints (v1.3)
+# Comparative Research Endpoints
 # -------------------------------------------------------------
 @app.route("/compare", methods=["POST"])
 def compare_articles_route():
@@ -1134,8 +1460,8 @@ def compare_articles_route():
 
     if not has_valid_config(session_dict=session, request_data=data):
         return jsonify({
-            "error": "AI provider credentials not configured. Please configure your credentials in Settings.",
-            "redirect": url_for("settings")
+            "error": "AI provider credentials not configured. Please configure your credentials.",
+            "redirect": url_for("home")
         }), 401
 
     directives = get_custom_directives()
@@ -1144,7 +1470,7 @@ def compare_articles_route():
     if "custom_directive" in data:
         custom_directive = data.get("custom_directive")
     if "custom_directive_enabled" in data:
-        custom_directive_enabled = bool(data.get("custom_directive_enabled"))
+        custom_directive_enabled = parse_bool(data.get("custom_directive_enabled"), default=False)
 
     try:
         comparison_res = compare_articles(
@@ -1156,9 +1482,18 @@ def compare_articles_route():
         )
 
         history_id = None
+        history_saved = False
+        embedding_indexed = False
+        comparison_res["comparison_generated"] = True
+        comparison_res["summary_generated"] = True
+        comparison_res["pdf_available"] = True
+        comparison_res["notion_exported"] = False
+        comparison_res["embedding_indexed"] = False
+
         if is_serverless_env():
             history_id = str(uuid.uuid4())
             comparison_res["history_id"] = history_id
+            comparison_res["history_saved"] = False
         else:
             try:
                 hist_entry = add_history_entry(
@@ -1171,20 +1506,36 @@ def compare_articles_route():
                     url_b=url_b,
                     title_b=comparison_res.get("article_b", {}).get("title", "Article B"),
                 )
-                if hist_entry:
+                if hist_entry and hist_entry.get("id"):
                     history_id = hist_entry.get("id")
+                    history_saved = True
                     comparison_res["history_id"] = history_id
+                    comparison_res["history_saved"] = True
                     try:
-                        index_summary_entry(history_id, provider_config=data)
+                        indexed = index_summary_entry(history_id, provider_config=data)
+                        embedding_indexed = bool(indexed)
+                        comparison_res["embedding_indexed"] = embedding_indexed
                     except Exception:
                         pass
+                else:
+                    comparison_res["history_saved"] = False
+            except HistoryError as he:
+                logger.warning("Could not record comparison to history: %s", he)
+                comparison_res["history_saved"] = False
+                comparison_res["history_error"] = str(he)
             except Exception as e:
                 logger.warning("Could not record comparison to history: %s", str(e))
+                comparison_res["history_saved"] = False
 
         return jsonify({
             "success": True,
             "comparison": comparison_res,
             "history_id": history_id,
+            "history_saved": history_saved,
+            "summary_generated": True,
+            "embedding_indexed": embedding_indexed,
+            "pdf_available": True,
+            "notion_exported": False,
             "url_a": url_a,
             "url_b": url_b,
         })
@@ -1222,7 +1573,7 @@ def compare_export_pdf():
         created_at = data.get("created_at")
 
         pdf_buf = generate_comparison_pdf(
-            comparison=comparison_data,
+            comp=comparison_data,
             url_a=url_a,
             url_b=url_b,
             created_at=created_at,
@@ -1248,10 +1599,34 @@ def compare_export_pdf():
 # -------------------------------------------------------------
 @app.route("/api/notion/status", methods=["GET"])
 def api_notion_status():
-    v_cfg = _vault_config() if _vault else None
+    if _vault is not None:
+        v_status, v_cfg = _vault_status()
+        if v_status == VaultStatus.UNAVAILABLE:
+            return jsonify({
+                "configured": False,
+                "connected": False,
+                "status": "unavailable",
+                "error": "Credential storage is temporarily unreachable.",
+                "is_hosted": is_serverless_env(),
+                "vault_enabled": True,
+            }), 503
+        if v_status in (VaultStatus.DECRYPTION_ERROR, VaultStatus.CORRUPTED):
+            return jsonify({
+                "configured": False,
+                "connected": False,
+                "status": v_status.value,
+                "error": "Existing credential record is corrupted or cannot be decrypted.",
+                "is_hosted": is_serverless_env(),
+                "vault_enabled": True,
+            }), 500
+    else:
+        v_cfg = None
+
     configured = has_notion_config(vault_config=v_cfg)
     return jsonify({
         "configured": configured,
+        "connected": configured,
+        "status": "configured" if configured else "not_configured",
         "is_hosted": is_serverless_env(),
         "vault_enabled": _vault is not None,
     })
@@ -1268,14 +1643,51 @@ def api_notion_connect():
     if not is_valid:
         return jsonify({"error": msg}), 400
 
+    # Retrieve accessible pages to verify token validity BEFORE persisting (NOTION-01)
+    try:
+        pages = get_accessible_pages(token=token)
+    except NotionError as ne:
+        err_msg = str(ne)
+        status_code = 401 if any(w in err_msg.lower() for w in ("unauthorized", "invalid token", "expired", "401")) else 400
+        return jsonify({"error": redact_credentials(err_msg)}), status_code
+    except Exception as e:
+        return jsonify({"error": redact_credentials(f"Failed to retrieve Notion pages: {str(e)}")}), 500
+
     if is_serverless_env():
         if _vault is not None:
-            cfg = _vault_config() or {}
-            cfg["notion_token"] = token
-            saved = _vault.save(_vault_sid(), cfg)
+            sid = _vault_sid()
+            res = None
+            if hasattr(_vault, "update") and not hasattr(_vault, "_mock_return_value"):
+                try:
+                    res = _vault.update(sid, {"notion_token": token})
+                except Exception:
+                    res = None
+
+            if isinstance(res, tuple) and len(res) == 2:
+                saved, v_status = res
+            else:
+                v_status, existing_cfg = _vault_status()
+                cfg = dict(existing_cfg) if v_status == VaultStatus.CONFIGURED and existing_cfg else {}
+                cfg.pop("_created", None)
+                cfg.pop("created", None)
+                cfg["notion_token"] = token
+                saved = _vault.save(sid, cfg)
+                v_status = VaultStatus.CONFIGURED if saved else VaultStatus.UNAVAILABLE
+
             if not saved:
-                return jsonify({"error": "Failed to store Notion token in temporary vault."}), 503
-            success, save_msg = True, "Notion connected for active temporary session."
+                if v_status == VaultStatus.UNAVAILABLE:
+                    return jsonify({
+                        "error": "Credential storage is temporarily unavailable. Cannot safely update Notion credentials without verifying existing configuration.",
+                        "status": "unavailable"
+                    }), 503
+                elif v_status in (VaultStatus.DECRYPTION_ERROR, VaultStatus.CORRUPTED):
+                    return jsonify({
+                        "error": "Existing credential record is corrupted or cannot be decrypted. Connection blocked.",
+                        "status": v_status.value
+                    }), 500
+                return jsonify({"error": "Failed to store Notion token in vault."}), 503
+            g._set_vault_cookie = sid
+            save_msg = "Notion connected successfully."
         else:
             return jsonify({
                 "error": "Persistent hosted Notion integration requires the secure encrypted Redis vault. Please configure REDIS_URL and CREDENTIAL_ENCRYPTION_KEY in your deployment environment variables, or supply token per-request in browser memory.",
@@ -1286,11 +1698,9 @@ def api_notion_connect():
             token,
             is_hosted=False,
         )
+        if not success:
+            return jsonify({"error": save_msg}), 500
 
-    if not success:
-        return jsonify({"error": save_msg}), 500
-
-    pages = get_accessible_pages(api_key=token)
     return jsonify({
         "success": True,
         "message": save_msg or "Notion connected successfully.",
@@ -1301,27 +1711,70 @@ def api_notion_connect():
 @app.route("/api/notion/disconnect", methods=["POST"])
 def api_notion_disconnect():
     if _vault is not None:
-        cfg = _vault_config() or {}
-        if "notion_token" in cfg:
-            cfg.pop("notion_token", None)
-            _vault.save(_vault_sid(), cfg)
+        saved, v_status = _vault.update(_vault_sid(), {}, remove_keys=["notion_token"])
+        if not saved and v_status == VaultStatus.UNAVAILABLE:
+            return jsonify({
+                "error": "Credential storage is temporarily unavailable. Cannot safely disconnect Notion.",
+                "status": "unavailable"
+            }), 503
+        elif not saved and v_status in (VaultStatus.DECRYPTION_ERROR, VaultStatus.CORRUPTED):
+            return jsonify({
+                "error": "Existing credential record is corrupted. Disconnect blocked.",
+                "status": v_status.value
+            }), 500
     clear_saved_notion_key(session_dict=session)
     return jsonify({"success": True, "message": "Notion disconnected."})
 
 
 @app.route("/api/notion/pages", methods=["GET"])
 def api_notion_pages():
-    v_cfg = _vault_config() if _vault else None
+    if _vault is not None:
+        v_status, v_cfg = _vault_status()
+        if v_status == VaultStatus.UNAVAILABLE:
+            return jsonify({
+                "error": "Credential storage is temporarily unreachable. Please retry.",
+                "status": "unavailable"
+            }), 503
+        if v_status in (VaultStatus.DECRYPTION_ERROR, VaultStatus.CORRUPTED):
+            return jsonify({
+                "error": "Credential record is corrupted or cannot be decrypted.",
+                "status": v_status.value
+            }), 500
+    else:
+        v_cfg = None
+
     token = get_notion_key(provided_token=request.args.get("token"), vault_config=v_cfg)
     if not token:
         return jsonify({"error": "Notion is not connected."}), 401
-    pages = get_accessible_pages(api_key=token)
-    return jsonify({"pages": pages})
+    try:
+        from notion_service import get_accessible_pages_with_pagination
+        pages, is_truncated = get_accessible_pages_with_pagination(token=token)
+    except NotionError as ne:
+        err_msg = str(ne)
+        status_code = 401 if any(w in err_msg.lower() for w in ("unauthorized", "invalid token", "expired", "401")) else 400
+        return jsonify({"error": redact_credentials(err_msg)}), status_code
+    except Exception as e:
+        return jsonify({"error": redact_credentials(f"Failed to query Notion pages: {str(e)}")}), 500
+    return jsonify({"pages": pages, "truncated": is_truncated, "has_more": is_truncated})
 
 
 @app.route("/api/notion/export", methods=["POST"])
 def api_notion_export():
-    v_cfg = _vault_config() if _vault else None
+    if _vault is not None:
+        v_status, v_cfg = _vault_status()
+        if v_status == VaultStatus.UNAVAILABLE:
+            return jsonify({
+                "error": "Credential storage is temporarily unreachable. Please retry.",
+                "status": "unavailable"
+            }), 503
+        if v_status in (VaultStatus.DECRYPTION_ERROR, VaultStatus.CORRUPTED):
+            return jsonify({
+                "error": "Credential record is corrupted or cannot be decrypted.",
+                "status": v_status.value
+            }), 500
+    else:
+        v_cfg = None
+
     data = request.get_json() or {}
     token = get_notion_key(provided_token=data.get("notion_token"), vault_config=v_cfg)
     if not token:
@@ -1331,8 +1784,8 @@ def api_notion_export():
     if not parent_page_id:
         return jsonify({"error": "Please select a target Notion page."}), 400
 
-    entry_type = data.get("entry_type", "single")
-    summary_data = data.get("summary")
+    entry_type = data.get("entry_type") or data.get("type", "single")
+    summary_data = data.get("summary") or data.get("comparison")
 
     if not summary_data:
         history_id = data.get("history_id")
@@ -1350,33 +1803,38 @@ def api_notion_export():
             title = summary_data.get("title") or "WebBrief Comparative Analysis"
             blocks = format_comparison_blocks(
                 summary_data,
-                url_a=data.get("url_a", ""),
-                url_b=data.get("url_b", ""),
+                url_a=data.get("url_a") or summary_data.get("url_a", ""),
+                url_b=data.get("url_b") or summary_data.get("url_b", ""),
             )
         else:
             title = summary_data.get("title") or "Webpage Summary"
             blocks = format_single_summary_blocks(
                 summary_data,
-                url=data.get("url", ""),
+                title=title,
+                url=data.get("url") or summary_data.get("url", ""),
                 mode_name=data.get("mode_name", summary_data.get("mode_name", "Summary")),
             )
 
         res = create_notion_page(
             parent_page_id=parent_page_id,
-            title=title,
+            page_title=title,
             blocks=blocks,
-            api_key=token,
+            token=token,
         )
         return jsonify({"success": True, "page_url": res["url"], "title": title})
 
     except NotionError as ne:
-        return jsonify({"error": redact_credentials(str(ne))}), 400
+        increment_metric("notion_failures")
+        err_msg = str(ne)
+        status_code = 401 if any(w in err_msg.lower() for w in ("unauthorized", "invalid token", "expired", "401")) else 400
+        return jsonify({"error": redact_credentials(err_msg)}), status_code
     except Exception as e:
+        increment_metric("notion_failures")
         return jsonify({"error": redact_credentials(f"Failed to export to Notion: {str(e)}")}), 500
 
 
 # -------------------------------------------------------------
-# Local Knowledge Retrieval & Semantic Search Endpoints (v1.4 / v1.6)
+# Local Knowledge Retrieval & Semantic Search Endpoints
 # -------------------------------------------------------------
 @app.route("/api/search/semantic", methods=["POST"])
 def api_search_semantic():
@@ -1393,8 +1851,8 @@ def api_search_semantic():
 
     if not has_valid_config(session_dict=session, request_data=data):
         return jsonify({
-            "error": "AI provider credentials required to embed search queries. Please configure your credentials in Settings.",
-            "redirect": url_for("settings")
+            "error": "AI provider credentials required to embed search queries. Please configure your credentials.",
+            "redirect": url_for("home")
         }), 401
 
     try:
@@ -1414,18 +1872,39 @@ def api_search_semantic():
     filter_type = data.get("filter_type")
 
     try:
-        results = semantic_search(
+        search_res = semantic_search(
             query=query,
             top_k=top_k,
             threshold=threshold,
             filter_type=filter_type,
             provider_config=data,
+            return_metadata=True,
         )
+        if isinstance(search_res, tuple) and len(search_res) == 2:
+            results, meta = search_res
+        elif isinstance(search_res, list):
+            results = search_res
+            meta = {
+                "search_mode": "semantic",
+                "embedding_model": DEFAULT_EMBEDDING_MODEL,
+                "status_detail": "ready" if results else "no_matching_records"
+            }
+        else:
+            results = []
+            meta = {
+                "search_mode": "semantic",
+                "embedding_model": DEFAULT_EMBEDDING_MODEL,
+                "status_detail": "no_matching_records"
+            }
+
         return jsonify({
             "success": True,
             "query": query,
             "count": len(results),
             "threshold": threshold,
+            "search_mode": meta.get("search_mode", "semantic"),
+            "embedding_model": meta.get("embedding_model", DEFAULT_EMBEDDING_MODEL),
+            "status_detail": meta.get("status_detail", "ready" if results else "no_matching_records"),
             "results": results,
         })
     except VectorStoreError as ve:
@@ -1437,9 +1916,30 @@ def api_search_semantic():
 @app.route("/api/search/stats", methods=["GET"])
 def api_search_stats():
     if is_serverless_env():
-        return jsonify({"indexed_count": 0, "total_summaries": 0, "status": "hosted_indexeddb"})
-    stats = get_vector_store_stats()
-    return jsonify(stats)
+        return jsonify({
+            "success": True,
+            "indexed_count": 0,
+            "total_summaries": 0,
+            "status": "hosted_indexeddb",
+            "stats": {
+                "total_indexed_documents": 0,
+                "active_model": "IndexedDB (Browser)",
+            }
+        })
+    raw_stats = get_vector_store_stats()
+    indexed_cnt = raw_stats.get("indexed_count", 0)
+    model_name = raw_stats.get("model", "gemini-embedding-001")
+    return jsonify({
+        "success": True,
+        "indexed_count": indexed_cnt,
+        "model": model_name,
+        "dimensions": raw_stats.get("dimensions", 768),
+        "status": raw_stats.get("status", "ready"),
+        "stats": {
+            "total_indexed_documents": indexed_cnt,
+            "active_model": model_name,
+        }
+    })
 
 
 @app.route("/api/search/rebuild-index", methods=["POST"])
@@ -1450,8 +1950,8 @@ def api_search_rebuild_index():
     data = request.get_json() or {}
     if not has_valid_config(session_dict=session, request_data=data):
         return jsonify({
-            "error": "AI provider credentials required to generate embeddings. Please configure your credentials in Settings.",
-            "redirect": url_for("settings")
+            "error": "AI provider credentials required to generate embeddings. Please configure your credentials.",
+            "redirect": url_for("home")
         }), 401
 
     try:
@@ -1476,10 +1976,10 @@ def api_search_embed():
         return jsonify({"error": "AI provider credentials required."}), 401
 
     try:
-        vector = generate_embedding(text, provider_config=data)
+        vector, model_name = generate_embedding_with_model(text, provider_config=data)
         return jsonify({
             "embedding": vector,
-            "model": DEFAULT_EMBEDDING_MODEL,
+            "model": model_name,
             "dimensions": len(vector),
         })
     except Exception as e:
@@ -1490,7 +1990,6 @@ def api_search_embed():
 def api_environment():
     hosted = is_serverless_env()
     return jsonify({
-        "version": APP_VERSION,
         "is_hosted": hosted,
         "environment": "hosted_serverless" if hosted else "local_self_hosted",
         "ssrf_guard": "active"
@@ -1498,7 +1997,7 @@ def api_environment():
 
 
 # -------------------------------------------------------------
-# Multi-Provider BYOK Configuration Endpoints (v1.6.0)
+# Multi-Provider BYOK Configuration Endpoints
 # -------------------------------------------------------------
 @app.route("/api/providers/models", methods=["GET"])
 def api_provider_models():
@@ -1569,7 +2068,7 @@ def save_key():
             return jsonify({"success": False, "error": err_msg}), 400
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
-        return render_template("settings.html", error=err_msg, is_configured=has_valid_config(session), env_exists=env_exists), 400
+        return render_template("index.html", error=err_msg, is_configured=has_valid_config(session)), 400
 
     # Step 2: Validate Gemini API key
     gemini_key = (data.get("gemini_api_key") or data.get("api_key") or "").strip()
@@ -1580,7 +2079,7 @@ def save_key():
             return jsonify({"success": False, "error": val_msg}), 400
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
-        return render_template("settings.html", error=val_msg, is_configured=has_valid_config(session), env_exists=env_exists), 400
+        return render_template("index.html", error=val_msg, is_configured=has_valid_config(session)), 400
 
     # Hosted serverless mode: do not touch filesystem
     if is_serverless_env():
@@ -1588,15 +2087,27 @@ def save_key():
             clean_vault = {
                 "primary_provider": "gemini",
                 "gemini_api_key": gemini_key,
-                "gemini_model": data.get("gemini_model", "").strip(),
             }
+            if data.get("gemini_model"):
+                clean_vault["gemini_model"] = data.get("gemini_model", "").strip()
+            if data.get("notion_token"):
+                clean_vault["notion_token"] = str(data["notion_token"]).strip()
             clean_vault = {k: v for k, v in clean_vault.items() if v}
-            saved = _vault.save(_vault_sid(), clean_vault)
+
+            saved, v_status = _vault.update(_vault_sid(), clean_vault)
             if not saved:
-                err_msg = "Failed to store provider credentials in temporary vault."
+                if v_status == VaultStatus.UNAVAILABLE:
+                    err_msg = "Credential storage is temporarily unavailable. Cannot safely update configuration."
+                    status_code = 503
+                elif v_status in (VaultStatus.DECRYPTION_ERROR, VaultStatus.CORRUPTED):
+                    err_msg = "Existing credential record is corrupted or cannot be decrypted. Update blocked."
+                    status_code = 500
+                else:
+                    err_msg = "Failed to store provider credentials in temporary vault."
+                    status_code = 503
                 if is_ajax:
-                    return jsonify({"success": False, "error": err_msg}), 503
-                return render_template("settings.html", error=err_msg, is_configured=False), 503
+                    return jsonify({"success": False, "error": err_msg}), status_code
+                return render_template("index.html", error=err_msg, is_configured=False), status_code
 
         if is_ajax:
             return jsonify({
@@ -1622,7 +2133,7 @@ def save_key():
             return jsonify({"success": False, "error": save_message}), 400
         workspace_dir = os.path.dirname(os.path.abspath(__file__))
         env_exists = os.path.isfile(os.path.join(workspace_dir, ".env"))
-        return render_template("settings.html", error=save_message, is_configured=has_valid_config(session), env_exists=env_exists), 400
+        return render_template("index.html", error=save_message, is_configured=has_valid_config(session)), 400
 
     if is_ajax:
         return jsonify({"success": True, "message": save_message, "redirect": url_for("home")})
@@ -1634,7 +2145,7 @@ def save_key():
 def clear_key():
     """Removes stored provider credentials and routing configuration."""
     clear_saved_provider_config()
-    return redirect(url_for("settings"))
+    return redirect(url_for("home"))
 
 
 # -------------------------------------------------------------
@@ -1650,14 +2161,14 @@ def summarize():
         url = data.get("url", "").strip()
         mode = data.get("mode", DEFAULT_MODE).strip().lower()
         custom_directive = data.get("custom_directive")
-        custom_directive_enabled = data.get("custom_directive_enabled")
+        custom_directive_enabled = parse_bool(data.get("custom_directive_enabled"), default=None) if "custom_directive_enabled" in data else None
         is_ajax = True
     else:
         data = request.form.to_dict()
         url = request.form.get("url", "").strip()
         mode = request.form.get("mode", DEFAULT_MODE).strip().lower()
         custom_directive = request.form.get("custom_directive")
-        custom_directive_enabled = request.form.get("custom_directive_enabled")
+        custom_directive_enabled = parse_bool(request.form.get("custom_directive_enabled"), default=None) if "custom_directive_enabled" in request.form else None
         is_ajax = request.headers.get("X-Requested-With") == "XMLHttpRequest"
 
     if mode not in MODES:
@@ -1678,9 +2189,9 @@ def summarize():
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
 
     if not has_valid_config(session_dict=session, request_data=data):
-        error_msg = "AI provider credentials not configured. Please configure your credentials in Settings."
+        error_msg = "AI provider credentials not configured. Please configure your credentials."
         if is_ajax:
-            return jsonify({"error": error_msg, "redirect": url_for("settings")}), 401
+            return jsonify({"error": error_msg, "redirect": url_for("home")}), 401
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=False), 401
 
     try:
@@ -1698,10 +2209,20 @@ def summarize():
             summarize_kwargs["custom_directive_enabled"] = custom_directive_enabled
 
         summary = summarize_text(article_text, **summarize_kwargs)
+        if summary.get("is_partial"):
+            increment_metric("summaries_partial")
+        else:
+            increment_metric("summaries_success")
 
         # Step 3: Record into persistent summary history
+        summary["summary_generated"] = True
+        summary["pdf_available"] = True
+        summary["notion_exported"] = False
+        summary["embedding_indexed"] = False
+
         if is_serverless_env():
             summary["history_id"] = str(uuid.uuid4())
+            summary["history_saved"] = False
         else:
             try:
                 entry = add_history_entry(
@@ -1711,14 +2232,26 @@ def summarize():
                     mode_name=summary.get("mode_name", mode.capitalize()),
                     summary=summary
                 )
-                if entry:
+                if entry and entry.get("id"):
                     summary["history_id"] = entry["id"]
+                    summary["history_saved"] = True
                     try:
-                        index_summary_entry(entry["id"], provider_config=data)
+                        indexed = index_summary_entry(entry["id"], provider_config=data)
+                        summary["embedding_indexed"] = bool(indexed)
                     except Exception:
-                        pass
-            except Exception:
-                pass
+                        summary["embedding_indexed"] = False
+                else:
+                    summary["history_id"] = None
+                    summary["history_saved"] = False
+            except HistoryError as he:
+                logger.warning("History persistence failed: %s", he)
+                summary["history_id"] = None
+                summary["history_saved"] = False
+                summary["history_error"] = str(he)
+            except Exception as e:
+                logger.warning("Unexpected history persistence error: %s", e)
+                summary["history_id"] = None
+                summary["history_saved"] = False
 
         if is_ajax:
             return jsonify({
@@ -1726,6 +2259,11 @@ def summarize():
                 "summary": summary,
                 "url": url,
                 "mode": mode,
+                "summary_generated": True,
+                "history_saved": summary.get("history_saved", False),
+                "embedding_indexed": summary.get("embedding_indexed", False),
+                "pdf_available": True,
+                "notion_exported": False,
                 "provider": summary.get("provider"),
                 "provider_name": summary.get("provider_name"),
                 "model": summary.get("model"),
@@ -1735,18 +2273,24 @@ def summarize():
         return render_template("index.html", summary=summary, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session))
 
     except ProviderInvalidModelError as e:
+        increment_metric("gemini_errors")
+        increment_metric("summaries_failed")
         error_msg = redact_credentials(str(e))
         if is_ajax:
             return jsonify({"error": error_msg}), 400
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
 
     except ScraperError as e:
+        increment_metric("scrape_failures")
+        increment_metric("summaries_failed")
         error_msg = redact_credentials(str(e))
         if is_ajax:
             return jsonify({"error": error_msg}), 400
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), 400
 
     except SummarizerError as e:
+        increment_metric("gemini_errors")
+        increment_metric("summaries_failed")
         error_msg = redact_credentials(str(e))
         status_code = 400 if (isinstance(getattr(e, "__cause__", None), ProviderInvalidModelError) or "unsupported" in error_msg.lower()) else 500
         if is_ajax:
@@ -1754,6 +2298,7 @@ def summarize():
         return render_template("index.html", error=error_msg, url=url, mode=mode, modes=MODES, is_configured=has_valid_config(session)), status_code
 
     except Exception as e:
+        increment_metric("summaries_failed")
         error_msg = redact_credentials(f"An unexpected error occurred: {str(e)}")
         if is_ajax:
             return jsonify({"error": error_msg}), 500

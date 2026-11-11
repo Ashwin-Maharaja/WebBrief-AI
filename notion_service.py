@@ -198,35 +198,71 @@ def validate_notion_token(token: str) -> Tuple[bool, str]:
         return False, f"Network error connecting to Notion: {str(e)}"
 
 
-def get_accessible_pages(token: str) -> List[Dict[str, str]]:
+def get_accessible_pages_with_pagination(
+    token: Optional[str] = None,
+    api_key: Optional[str] = None,
+    max_pages: int = 100,
+) -> Tuple[List[Dict[str, str]], bool]:
     """
     Queries Notion search API to find pages that have been shared with this integration.
-    Returns:
-        List of dictionaries with {"id": page_id, "title": page_title, "icon": icon_emoji}
+    Supports complete pagination using Notion's cursor behaviour (next_cursor / has_more).
+    Returns (pages: List[Dict[str, str]], is_truncated: bool) (P2-NOTION-01).
+    Raises:
+        NotionError: On authentication, permission, or network failure.
     """
-    url = f"{NOTION_BASE_URL}/search"
-    payload = {
-        "filter": {"value": "page", "property": "object"},
-        "page_size": 25,
-        "sort": {"direction": "descending", "timestamp": "last_edited_time"}
-    }
+    effective_token = (token or api_key or "").strip()
+    if not effective_token:
+        raise NotionError("Missing Notion integration token.")
 
-    try:
-        resp = requests.post(
-            url,
-            headers=get_notion_headers(token),
-            json=payload,
-            timeout=NOTION_TIMEOUT
-        )
-        if resp.status_code != 200:
-            logger.warning("Notion search failed: %d %s", resp.status_code, resp.text)
-            return []
+    url = f"{NOTION_BASE_URL}/search"
+    pages: List[Dict[str, str]] = []
+    start_cursor = None
+    has_more = True
+    is_truncated = False
+
+    while has_more and len(pages) < max_pages:
+        payload: Dict[str, Any] = {
+            "filter": {"value": "page", "property": "object"},
+            "page_size": min(100, max_pages - len(pages)),
+            "sort": {"direction": "descending", "timestamp": "last_edited_time"},
+        }
+        if start_cursor:
+            payload["start_cursor"] = start_cursor
+
+        try:
+            resp = requests.post(
+                url,
+                headers=get_notion_headers(effective_token),
+                json=payload,
+                timeout=NOTION_TIMEOUT,
+            )
+        except requests.exceptions.Timeout:
+            raise NotionError("Connection to Notion timed out while searching pages.")
+        except requests.exceptions.RequestException as e:
+            raise NotionError(f"Network error searching Notion pages: {str(e)}")
+
+        if resp.status_code == 401:
+            raise NotionError("Authentication failed: Notion integration token is invalid or has been revoked.")
+        elif resp.status_code == 403:
+            raise NotionError("Notion permission denied: Integration lacks access to search pages.")
+        elif resp.status_code == 429:
+            raise NotionError("Notion API rate limit exceeded. Please wait a moment and try again.")
+        elif resp.status_code != 200:
+            err_msg = resp.text[:200]
+            try:
+                err_msg = resp.json().get("message", err_msg)
+            except Exception:
+                pass
+            raise NotionError(f"Notion search error ({resp.status_code}): {err_msg}")
 
         data = resp.json()
         results = data.get("results", [])
-        pages = []
 
         for p in results:
+            if len(pages) >= max_pages:
+                is_truncated = True
+                break
+
             page_id = p.get("id")
             # Extract title from properties
             title = "Untitled Page"
@@ -250,10 +286,23 @@ def get_accessible_pages(token: str) -> List[Dict[str, str]]:
                 "icon": icon,
             })
 
-        return pages
-    except Exception as e:
-        logger.warning("Failed to retrieve accessible Notion pages: %s", str(e))
-        return []
+        has_more = bool(data.get("has_more"))
+        start_cursor = data.get("next_cursor")
+        if len(pages) >= max_pages or not start_cursor:
+            if has_more or (len(results) > len(pages)):
+                is_truncated = True
+            break
+
+    return pages, is_truncated
+
+
+def get_accessible_pages(token: Optional[str] = None, api_key: Optional[str] = None) -> List[Dict[str, str]]:
+    """
+    Queries Notion search API to find pages that have been shared with this integration.
+    Maintains backward compatibility by returning list of page dicts.
+    """
+    pages, _ = get_accessible_pages_with_pagination(token=token, api_key=api_key)
+    return pages
 
 
 # -------------------------------------------------------------
@@ -332,12 +381,19 @@ def _divider() -> Dict[str, Any]:
 # -------------------------------------------------------------
 # Single Summary -> Notion Blocks
 # -------------------------------------------------------------
-def format_single_summary_blocks(summary: Dict[str, Any], title: str, url: str, mode_name: str) -> List[Dict[str, Any]]:
+def format_single_summary_blocks(
+    summary: Dict[str, Any],
+    title: Optional[str] = None,
+    url: str = "",
+    mode_name: str = "Summary"
+) -> List[Dict[str, Any]]:
     """Converts a standard WebBrief AI summary into Notion blocks."""
     blocks: List[Dict[str, Any]] = []
 
     # Metadata callout
-    meta_info = f"Source: {url}\nMode: {mode_name} • Generated with WebBrief AI"
+    source_url = url or summary.get("url", "")
+    active_mode = mode_name or summary.get("mode_name", "Summary")
+    meta_info = f"Source: {source_url}\nMode: {active_mode} • Generated with WebBrief AI"
     blocks.append(_callout(meta_info, emoji="🌐", color="blue_background"))
     blocks.append(_divider())
 
@@ -376,16 +432,16 @@ def format_single_summary_blocks(summary: Dict[str, Any], title: str, url: str, 
 # -------------------------------------------------------------
 # Comparative Summary -> Notion Blocks
 # -------------------------------------------------------------
-def format_comparison_blocks(comp: Dict[str, Any]) -> List[Dict[str, Any]]:
+def format_comparison_blocks(comp: Dict[str, Any], *args, **kwargs) -> List[Dict[str, Any]]:
     """Converts a WebBrief AI comparative analysis into Notion blocks."""
     blocks: List[Dict[str, Any]] = []
 
-    art_a = comp.get("article_a", {})
-    art_b = comp.get("article_b", {})
+    art_a = dict(comp.get("article_a", {}))
+    art_b = dict(comp.get("article_b", {}))
     title_a = art_a.get("title", "Article A")
-    url_a = art_a.get("url", "")
+    url_a = art_a.get("url") or kwargs.get("url_a", "")
     title_b = art_b.get("title", "Article B")
-    url_b = art_b.get("url", "")
+    url_b = art_b.get("url") or kwargs.get("url_b", "")
 
     # Header Callout
     meta_text = (
@@ -475,30 +531,57 @@ def format_comparison_blocks(comp: Dict[str, Any]) -> List[Dict[str, Any]]:
 # -------------------------------------------------------------
 # Notion Page Creation Engine
 # -------------------------------------------------------------
+def archive_notion_page(page_id: str, token: str) -> bool:
+    """Archives (deletes) a page in Notion to cleanly roll back on failed operations."""
+    clean_id = page_id.replace("-", "") if page_id else ""
+    if not clean_id or not token:
+        return False
+    try:
+        resp = requests.patch(
+            f"{NOTION_BASE_URL}/pages/{clean_id}",
+            headers=get_notion_headers(token),
+            json={"archived": True},
+            timeout=NOTION_TIMEOUT,
+        )
+        return resp.status_code in (200, 201)
+    except Exception as e:
+        logger.warning("Failed to rollback/archive Notion page %s: %s", page_id, e)
+        return False
+
+
 def create_notion_page(
     parent_page_id: str,
-    page_title: str,
-    blocks: List[Dict[str, Any]],
-    token: str,
-    emoji_icon: str = "📄"
+    page_title: Optional[str] = None,
+    blocks: Optional[List[Dict[str, Any]]] = None,
+    token: Optional[str] = None,
+    emoji_icon: str = "📄",
+    title: Optional[str] = None,
+    api_key: Optional[str] = None,
+    **kwargs
 ) -> Dict[str, Any]:
     """
     Creates a new page inside Notion under the specified parent page.
     Handles block batching (Notion max 100 children per request).
+    Accepts title/page_title and token/api_key interchangeably to prevent signature mismatch errors.
+    Validates every HTTP response during block chunk append and handles 429 rate limits.
 
     Returns:
-        {"success": True, "page_id": ..., "url": ...} or raises NotionError.
+        {"success": True, "page_id": ..., "url": ..., "title": ...} or raises NotionError.
     """
-    if not token or not token.strip():
+    effective_token = (token or api_key or "").strip()
+    if not effective_token:
         raise NotionError("Missing Notion integration token. Please connect Notion in Settings.")
+
+    effective_title = (page_title or title or "Webpage Summary").strip()
+    blocks_list = blocks if blocks is not None else []
 
     clean_parent = parent_page_id.strip().replace("-", "")
     if not clean_parent or not re.match(r"^[0-9a-fA-F]{32}$", clean_parent):
         raise NotionError("Invalid destination Notion Page ID format. Expected a 32-character hexadecimal page ID.")
 
     # Step 1: Initial page creation with first chunk of blocks (up to 95)
-    first_chunk = blocks[:95]
-    remaining_chunks = [blocks[i:i + 95] for i in range(95, len(blocks), 95)]
+    first_chunk = blocks_list[:95]
+    remaining_chunks = [blocks_list[i:i + 95] for i in range(95, len(blocks_list), 95)]
 
     url = f"{NOTION_BASE_URL}/pages"
     payload = {
@@ -506,7 +589,7 @@ def create_notion_page(
         "icon": {"type": "emoji", "emoji": emoji_icon},
         "properties": {
             "title": {
-                "title": _rich_text(page_title[:100])
+                "title": _rich_text(effective_title[:100])
             }
         },
         "children": first_chunk
@@ -515,7 +598,7 @@ def create_notion_page(
     try:
         resp = requests.post(
             url,
-            headers=get_notion_headers(token),
+            headers=get_notion_headers(effective_token),
             json=payload,
             timeout=NOTION_TIMEOUT
         )
@@ -545,22 +628,55 @@ def create_notion_page(
     created_page_id = page_data.get("id")
     page_url = page_data.get("url") or f"https://notion.so/{clean_parent}"
 
-    # Step 2: Append any remaining block chunks
-    for chunk in remaining_chunks:
+    # Step 2: Append any remaining block chunks with response validation and 429 backoff
+    failed_chunks = 0
+    total_chunks = len(remaining_chunks)
+    for chunk_idx, chunk in enumerate(remaining_chunks, 1):
         append_url = f"{NOTION_BASE_URL}/blocks/{created_page_id}/children"
-        try:
-            requests.patch(
-                append_url,
-                headers=get_notion_headers(token),
-                json={"children": chunk},
-                timeout=NOTION_TIMEOUT
-            )
-        except Exception as e:
-            logger.warning("Failed to append subsequent block chunk to Notion page: %s", str(e))
+        chunk_success = False
+        for attempt in range(2):
+            try:
+                patch_resp = requests.patch(
+                    append_url,
+                    headers=get_notion_headers(effective_token),
+                    json={"children": chunk},
+                    timeout=NOTION_TIMEOUT
+                )
+                if patch_resp.status_code == 429 and attempt == 0:
+                    import time
+                    time.sleep(1.0)
+                    continue
+                if patch_resp.status_code in (200, 201):
+                    chunk_success = True
+                    break
+                else:
+                    err_msg = patch_resp.text[:200]
+                    try:
+                        err_msg = patch_resp.json().get("message", err_msg)
+                    except Exception:
+                        pass
+                    logger.warning("Failed to append block chunk %d to Notion page %s: %s", chunk_idx, created_page_id, err_msg)
+            except Exception as e:
+                logger.warning("Network error appending block chunk %d to Notion: %s", chunk_idx, str(e))
+                if attempt == 0:
+                    import time
+                    time.sleep(0.5)
+
+        if not chunk_success:
+            failed_chunks += 1
+
+    if failed_chunks > 0:
+        # Roll back orphaned page to avoid leaving corrupt/half-written documents in user's workspace
+        archive_notion_page(created_page_id, effective_token)
+        raise NotionError(
+            f"Page was created successfully (ID: {created_page_id}), but {failed_chunks} of {total_chunks} "
+            f"subsequent block sections failed to append. The partial page was rolled back (archived). "
+            f"View or restore in Notion trash if desired: {page_url}"
+        )
 
     return {
         "success": True,
         "page_id": created_page_id,
         "url": page_url,
-        "title": page_title
+        "title": effective_title
     }

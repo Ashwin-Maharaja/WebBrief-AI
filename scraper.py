@@ -1,6 +1,9 @@
 import ipaddress
 import logging
+import os
+import re
 import socket
+import time
 import urllib.parse
 import requests
 from bs4 import BeautifulSoup
@@ -13,8 +16,13 @@ logger = logging.getLogger(__name__)
 STATIC_TIMEOUT = 15          # Timeout in seconds for static requests
 BROWSER_TIMEOUT = 15         # Timeout in seconds for Playwright browser fallback
 MIN_SUFFICIENT_LENGTH = 60   # Minimum characters of readable text to consider static extraction adequate
-MAX_RESPONSE_BYTES = 5 * 1024 * 1024  # 5 MB maximum allowed webpage download size
 MAX_SUBREQUESTS = 50         # Maximum subrequests allowed per dynamic browser page load
+
+# Independent Scraper-side Size Limits (Configurable via ENV; Defaults to 10 MiB = 10,485,760 bytes)
+MAX_RESPONSE_BYTES = int(os.getenv("MAX_RESPONSE_BYTES", 10 * 1024 * 1024))
+MAX_BROWSER_NETWORK_BYTES = int(os.getenv("MAX_BROWSER_NETWORK_BYTES", 10 * 1024 * 1024))
+MAX_RENDERED_HTML_BYTES = int(os.getenv("MAX_RENDERED_HTML_BYTES", 10 * 1024 * 1024))
+MAX_EXTRACTED_CONTENT_BYTES = int(os.getenv("MAX_EXTRACTED_CONTENT_BYTES", 10 * 1024 * 1024))
 
 
 class ScraperError(Exception):
@@ -176,25 +184,29 @@ def validate_safe_url(url: str) -> str:
 
 class PinnedHTTPConnection(HTTPConnection):
     """HTTPConnection that connects directly to a verified IP, preventing connection-time DNS rebinding."""
+    _pinned_ip = None
+
     def _new_conn(self):
         extra_kw = {}
         if self.source_address:
             extra_kw["source_address"] = self.source_address
         if self.socket_options:
             extra_kw["socket_options"] = self.socket_options
-        target_ip = getattr(self, "_pinned_ip", self.host)
+        target_ip = self._pinned_ip or getattr(self, "_pinned_ip", None) or self.host
         return socket.create_connection((target_ip, self.port), self.timeout, **extra_kw)
 
 
 class PinnedHTTPSConnection(HTTPSConnection):
     """HTTPSConnection that connects socket to verified IP while preserving TLS SNI & hostname cert checks."""
+    _pinned_ip = None
+
     def _new_conn(self):
         extra_kw = {}
         if self.source_address:
             extra_kw["source_address"] = self.source_address
         if self.socket_options:
             extra_kw["socket_options"] = self.socket_options
-        target_ip = getattr(self, "_pinned_ip", self.host)
+        target_ip = self._pinned_ip or getattr(self, "_pinned_ip", None) or self.host
         return socket.create_connection((target_ip, self.port), self.timeout, **extra_kw)
 
 
@@ -205,14 +217,30 @@ class PinnedIPAdapter(HTTPAdapter):
         super().__init__(*args, **kwargs)
 
     def get_connection(self, url, proxies=None):
-        conn = super().get_connection(url, proxies=proxies)
+        # Force proxies=None to prevent proxy bypass of pinned IP validation (P2-SCR-01)
+        conn = super().get_connection(url, proxies=None)
         host = urllib.parse.urlparse(url).hostname
         if host and host in self.pinned_ips:
-            conn._pinned_ip = self.pinned_ips[host]
+            pinned_ip = self.pinned_ips[host]
+            conn._pinned_ip = pinned_ip
+
+            class BoundPinnedHTTPSConnection(PinnedHTTPSConnection):
+                _pinned_ip = pinned_ip
+
+            class BoundPinnedHTTPConnection(PinnedHTTPConnection):
+                _pinned_ip = pinned_ip
+
             if conn.scheme == "https":
-                conn.ConnectionCls = PinnedHTTPSConnection
+                conn.ConnectionCls = BoundPinnedHTTPSConnection
             else:
-                conn.ConnectionCls = PinnedHTTPConnection
+                conn.ConnectionCls = BoundPinnedHTTPConnection
+
+            orig_new_conn = conn._new_conn
+            def _pinned_new_conn():
+                c = orig_new_conn()
+                c._pinned_ip = pinned_ip
+                return c
+            conn._new_conn = _pinned_new_conn
         return conn
 
 
@@ -268,7 +296,7 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
     Attempts to fetch webpage HTML statically using requests.
     Enforces strict pre-flight SSRF validation and IP pinning on every redirect hop (max 5 hops)
     with allow_redirects=False to prevent DNS rebinding and internal network pivot attacks.
-    Enforces a strict 5 MB streaming download limit to prevent memory exhaustion DoS.
+    Enforces a strict 10 MiB (10,485,760 bytes) streaming download limit to prevent memory exhaustion DoS.
     """
     headers = {
         "User-Agent": (
@@ -287,6 +315,8 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
 
     try:
         with requests.Session() as session:
+            # Explicitly disable environment proxies (SCR-02) so all connections are pinned by PinnedIPAdapter
+            session.trust_env = False
             adapter = PinnedIPAdapter(pinned_ips)
             session.mount("https://", adapter)
             session.mount("http://", adapter)
@@ -328,21 +358,26 @@ def scrape_with_requests(url: str, timeout: int = STATIC_TIMEOUT) -> str:
             if content_length:
                 try:
                     if int(content_length) > MAX_RESPONSE_BYTES:
+                        response.close()
                         raise ScraperError(
-                            f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+                            f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MiB)."
                         )
                 except ValueError:
                     pass
 
             content_chunks = []
             total_bytes = 0
-            for chunk in response.iter_content(chunk_size=65536):
-                total_bytes += len(chunk)
-                if total_bytes > MAX_RESPONSE_BYTES:
-                    raise ScraperError(
-                        f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
-                    )
-                content_chunks.append(chunk)
+            try:
+                for chunk in response.iter_content(chunk_size=65536):
+                    total_bytes += len(chunk)
+                    if total_bytes > MAX_RESPONSE_BYTES:
+                        response.close()
+                        raise ScraperError(
+                            f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MiB)."
+                        )
+                    content_chunks.append(chunk)
+            finally:
+                response.close()
 
             raw_bytes = b"".join(content_chunks)
             encoding = response.encoding or "utf-8"
@@ -379,7 +414,7 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
     """
     Headless browser scraper using Playwright as fallback for JavaScript-rendered websites.
     Enforces SSRF validation on all subrequests and redirects, enforces a 50-request subrequest budget,
-    enforces a 5 MB cumulative content limit, and guarantees browser process termination.
+    enforces a 10 MiB (10,485,760 bytes) cumulative content limit, and guarantees browser process termination.
     """
     # Defense-in-depth: re-verify target URL before launching browser engine
     validate_safe_url(url)
@@ -391,8 +426,9 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
             "Dynamic browser rendering is not available on this server (Playwright is not installed)."
         )
 
-    browser = None
+    page = None
     context = None
+    browser = None
     playwright_cm = None
 
     try:
@@ -433,11 +469,27 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
         subrequest_count = 0
         total_downloaded_bytes = 0
         size_exceeded = False
+        nav_error = None
+
+        # SCR-01: Intercept main frame navigations and redirects to validate safe URLs
+        def on_framenavigated(frame):
+            nonlocal nav_error
+            if frame == page.main_frame and frame.url and frame.url != "about:blank":
+                try:
+                    validate_safe_url(frame.url)
+                except Exception as e:
+                    nav_error = str(e)
+                    try:
+                        page.close()
+                    except Exception:
+                        pass
+
+        page.on("framenavigated", on_framenavigated)
 
         # Resource optimization & SSRF interception handler
         def route_handler(route):
             nonlocal subrequest_count, total_downloaded_bytes, size_exceeded
-            if size_exceeded:
+            if size_exceeded or nav_error:
                 route.abort("aborted")
                 return
 
@@ -475,14 +527,14 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
             try:
                 resp = route.fetch()
                 cl = resp.headers.get("content-length")
-                if cl and cl.isdigit() and (total_downloaded_bytes + int(cl)) > MAX_RESPONSE_BYTES:
+                if cl and cl.isdigit() and (total_downloaded_bytes + int(cl)) > MAX_BROWSER_NETWORK_BYTES:
                     size_exceeded = True
                     route.abort("aborted")
                     return
 
                 body = resp.body()
                 actual_bytes = len(body)
-                if (total_downloaded_bytes + actual_bytes) > MAX_RESPONSE_BYTES:
+                if (total_downloaded_bytes + actual_bytes) > MAX_BROWSER_NETWORK_BYTES:
                     size_exceeded = True
                     route.abort("aborted")
                     return
@@ -498,41 +550,57 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
 
         page.route("**/*", route_handler)
 
+        # One authoritative byte counter: route_handler accounts for actual network response bodies.
+        # on_response does not re-add content-length to prevent double counting.
         def on_response(resp):
-            nonlocal total_downloaded_bytes, size_exceeded
-            try:
-                cl = resp.headers.get("content-length")
-                if cl and cl.isdigit():
-                    total_downloaded_bytes += int(cl)
-                    if total_downloaded_bytes > MAX_RESPONSE_BYTES:
-                        size_exceeded = True
-            except Exception:
-                pass
+            nonlocal size_exceeded
+            # Auxiliary monitor in case total downloaded bytes exceeded threshold
+            if total_downloaded_bytes > MAX_BROWSER_NETWORK_BYTES:
+                size_exceeded = True
 
         page.on("response", on_response)
 
-        try:
-            # Navigate to the target page
-            page.goto(url, wait_until="domcontentloaded", timeout=timeout * 1000)
+        # SCR-04: Enforce strict monotonic scraping deadline
+        start_time = time.monotonic()
+        deadline = start_time + timeout
 
-            # Wait briefly for dynamic client-side DOM rendering
-            try:
-                page.wait_for_selector("p, article, main, [role='main']", timeout=5000)
-            except PlaywrightTimeoutError:
-                pass
+        try:
+            remaining_ms = int(max(0.5, deadline - time.monotonic()) * 1000)
+            # Navigate to the target page within monotonic remaining budget
+            page.goto(url, wait_until="domcontentloaded", timeout=remaining_ms)
+
+            if nav_error:
+                raise ScraperError(f"Navigation blocked for security: {nav_error}")
+
+            # Wait briefly for dynamic client-side DOM rendering within remaining budget
+            remaining_for_dom = deadline - time.monotonic()
+            if remaining_for_dom > 0.5:
+                selector_timeout = int(min(5.0, remaining_for_dom) * 1000)
+                try:
+                    page.wait_for_selector("p, article, main, [role='main']", timeout=selector_timeout)
+                except PlaywrightTimeoutError:
+                    pass
 
         except PlaywrightTimeoutError:
             raise ScraperError("Connection timed out while loading JavaScript-rendered webpage.")
         except PlaywrightError as e:
+            if nav_error:
+                raise ScraperError(f"Navigation blocked for security: {nav_error}")
             if size_exceeded:
                 raise ScraperError(
-                    f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+                    f"Webpage content exceeds maximum allowed size ({MAX_BROWSER_NETWORK_BYTES // (1024 * 1024)} MiB)."
                 )
             raise ScraperError(f"Browser navigation failed: {str(e)}")
 
-        if size_exceeded or total_downloaded_bytes > MAX_RESPONSE_BYTES:
+        if nav_error:
+            raise ScraperError(f"Navigation blocked for security: {nav_error}")
+
+        if time.monotonic() >= deadline:
+            raise ScraperError("Connection timed out while loading JavaScript-rendered webpage.")
+
+        if size_exceeded or total_downloaded_bytes > MAX_BROWSER_NETWORK_BYTES:
             raise ScraperError(
-                f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+                f"Webpage content exceeds maximum allowed size ({MAX_BROWSER_NETWORK_BYTES // (1024 * 1024)} MiB)."
             )
 
         # Validate destination URL after any redirects
@@ -540,9 +608,9 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
 
         content = page.content()
         content_bytes = len(content.encode("utf-8"))
-        if (total_downloaded_bytes + content_bytes) > MAX_RESPONSE_BYTES or content_bytes > MAX_RESPONSE_BYTES:
+        if total_downloaded_bytes > MAX_BROWSER_NETWORK_BYTES or content_bytes > MAX_RENDERED_HTML_BYTES:
             raise ScraperError(
-                f"Webpage content exceeds maximum allowed size ({MAX_RESPONSE_BYTES // (1024 * 1024)} MB)."
+                f"Webpage content exceeds maximum allowed size ({MAX_RENDERED_HTML_BYTES // (1024 * 1024)} MiB)."
             )
 
         return content
@@ -552,6 +620,11 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
     except Exception as e:
         raise ScraperError(f"Browser rendering encountered an error: {str(e)}")
     finally:
+        if page:
+            try:
+                page.close()
+            except Exception:
+                pass
         if context:
             try:
                 context.close()
@@ -569,12 +642,13 @@ def scrape_with_browser(url: str, timeout: int = BROWSER_TIMEOUT) -> str:
                 pass
 
 
-def scrape_article(url: str) -> str:
+def scrape_article_with_metadata(url: str) -> tuple[str, str, dict]:
     """
-    Extracts readable article content from the given URL.
+    Extracts (page_title, article_text, metadata) from the given URL.
     Attempts static extraction first (requests + BeautifulSoup).
     If static extraction yields inadequate content (or fails with a recoverable error),
     automatically invokes dynamic browser rendering (Playwright) as a fallback.
+    Returns metadata with extraction method ('static' or 'browser') and size info.
 
     Raises:
         ScraperError: When the URL is invalid, blocked for SSRF security, unreachable,
@@ -586,6 +660,7 @@ def scrape_article(url: str) -> str:
     static_error = None
     page_title = ""
     article_text = ""
+    method = "static"
 
     # Step 2: Attempt standard static extraction
     try:
@@ -616,6 +691,7 @@ def scrape_article(url: str) -> str:
             if len(b_text.strip()) >= len(article_text.strip()) and len(b_text.strip()) > 0:
                 article_text = b_text
                 page_title = b_title or page_title
+                method = "browser"
             elif not article_text.strip() and not b_text.strip():
                 raise ScraperError("Could not extract readable article text from this webpage.")
         except Exception as be:
@@ -653,7 +729,42 @@ def scrape_article(url: str) -> str:
     if not article_text:
         raise ScraperError("Could not extract readable article text from this webpage.")
 
+    # Enforce maximum extracted content size limit (UTF-8 bytes)
+    title_prefix = f"Page Title: {page_title}\n\n" if page_title else ""
+    total_extracted_bytes = len(title_prefix.encode("utf-8")) + len(article_text.encode("utf-8"))
+    if total_extracted_bytes > MAX_EXTRACTED_CONTENT_BYTES:
+        raise ScraperError(
+            f"Extracted article content exceeds maximum allowed size ({MAX_EXTRACTED_CONTENT_BYTES // (1024 * 1024)} MiB)."
+        )
+
+    meta = {
+        "method": method,
+        "truncated": False,
+        "byte_count": total_extracted_bytes,
+        "url": safe_url
+    }
+    return page_title, article_text, meta
+
+
+def scrape_article_with_title(url: str) -> tuple[str, str]:
+    """
+    Extracts (page_title, article_text) from the given URL.
+    Attempts static extraction first (requests + BeautifulSoup).
+    If static extraction yields inadequate content (or fails with a recoverable error),
+    automatically invokes dynamic browser rendering (Playwright) as a fallback.
+    """
+    page_title, article_text, _ = scrape_article_with_metadata(url)
+    return page_title, article_text
+
+
+def scrape_article(url: str) -> str:
+    """
+    Extracts readable article content from the given URL.
+    Attempts static extraction first (requests + BeautifulSoup).
+    If static extraction yields inadequate content (or fails with a recoverable error),
+    automatically invokes dynamic browser rendering (Playwright) as a fallback.
+    """
+    page_title, article_text = scrape_article_with_title(url)
     if page_title:
         article_text = f"Page Title: {page_title}\n\n{article_text}"
-
     return article_text

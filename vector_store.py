@@ -1,23 +1,20 @@
 """
-WebBrief AI — Local Knowledge Retrieval & Vector Store Engine (v1.6.0).
+WebBrief AI — Local Knowledge Retrieval & Vector Store Engine.
 Provides SQLite binary float vector indexing and semantic retrieval.
 Uses Google Gemini embeddings when configured, with a zero-cost deterministic
 hashing fallback for unauthenticated or offline environments.
 """
 
 import hashlib
-import json
 import logging
 import math
-import os
 import re
-import sqlite3
 import struct
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 
 from dotenv import load_dotenv
 from byok import is_serverless_env
-from history import get_db_connection, init_db, get_history, get_history_entry, get_default_db_path
+from history import get_db_connection, init_db, get_history_entry, get_default_db_path
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -48,8 +45,8 @@ def init_vector_store(db_path: Optional[str] = None) -> None:
     if target_path in _INITIALIZED_VECTOR_DBS:
         return
 
-    init_db(db_path)
     try:
+        init_db(db_path)
         conn = get_db_connection(db_path)
         with conn:
             conn.execute("""
@@ -69,7 +66,9 @@ def init_vector_store(db_path: Optional[str] = None) -> None:
         conn.close()
         _INITIALIZED_VECTOR_DBS.add(target_path)
     except Exception as e:
-        logger.warning("Failed to initialize vector store table: %s", str(e))
+        _INITIALIZED_VECTOR_DBS.discard(target_path)
+        logger.error("Failed to initialize vector store table at '%s': %s", target_path, str(e))
+        raise VectorStoreError(f"Failed to initialize vector store table: {str(e)}") from e
 
 
 # -------------------------------------------------------------
@@ -117,7 +116,7 @@ compute_cosine_similarity = cosine_similarity
 def prepare_search_text(entry: Dict[str, Any]) -> str:
     """
     Constructs a clean, semantically rich text document from a saved history entry.
-    Handles both standard single summaries and v1.3 comparative briefs.
+    Handles both standard single summaries and comparative briefs.
     """
     title = entry.get("title") or "Webpage Summary"
     url = entry.get("url") or ""
@@ -222,15 +221,18 @@ def _deterministic_hash_vector(text: str, dim: int = EMBEDDING_DIMENSIONS) -> Li
 # -------------------------------------------------------------
 # Multi-Provider Embedding Generator
 # -------------------------------------------------------------
-def generate_embedding(
+def generate_embedding_with_model(
     text: str,
     api_key: Optional[str] = None,
     model: str = DEFAULT_EMBEDDING_MODEL,
     provider_config: Optional[Dict[str, Any]] = None,
-) -> List[float]:
+    allow_fallback: bool = True,
+) -> Tuple[List[float], str]:
     """
-    Generates a vector embedding for the input text using Google Gemini
-    or deterministic semantic hashing fallback.
+    Generates a dense vector embedding and returns (vector, model_identifier).
+    Returns real neural embeddings if credentials exist and API succeeds.
+    When allow_fallback is True, falls back to deterministic hash vector on API error.
+    When allow_fallback is False, raises VectorStoreError on API failure.
     """
     if not text or not str(text).strip():
         raise VectorStoreError("Cannot generate embedding for empty text.")
@@ -247,12 +249,31 @@ def generate_embedding(
             gp = GeminiProvider(api_key=gemini_key)
             vec = gp.embed_text(text=text)
             if vec:
-                return vec
+                return vec, model
         except Exception as e:
+            if not allow_fallback:
+                raise VectorStoreError(f"Neural embedding generation failed: {str(e)}") from e
             logger.warning("Gemini embedding call failed; using deterministic hash fallback: %s", str(e))
 
+    if not allow_fallback and not gemini_key:
+        raise VectorStoreError("No AI provider credentials configured for neural embedding.")
+
     # Deterministic feature hashing fallback
-    return _deterministic_hash_vector(text, dim=EMBEDDING_DIMENSIONS)
+    return _deterministic_hash_vector(text, dim=EMBEDDING_DIMENSIONS), "deterministic-hash-fallback"
+
+
+def generate_embedding(
+    text: str,
+    api_key: Optional[str] = None,
+    model: str = DEFAULT_EMBEDDING_MODEL,
+    provider_config: Optional[Dict[str, Any]] = None,
+) -> List[float]:
+    """
+    Generates a vector embedding for the input text using Google Gemini
+    or deterministic semantic hashing fallback.
+    """
+    vec, _ = generate_embedding_with_model(text, api_key=api_key, model=model, provider_config=provider_config)
+    return vec
 
 
 # -------------------------------------------------------------
@@ -268,6 +289,7 @@ def index_summary_entry(
     """
     Generates and stores the vector embedding for a single saved summary history entry.
     Skips generation if an identical content hash is already indexed.
+    Returns True if indexed or skipped, False on failure.
     """
     init_vector_store(db_path)
     entry = get_history_entry(entry_id, db_path=db_path)
@@ -292,7 +314,9 @@ def index_summary_entry(
                 conn.close()
                 return True
 
-        vector = generate_embedding(search_text, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL, provider_config=provider_config)
+        vector, actual_model = generate_embedding_with_model(
+            search_text, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL, provider_config=provider_config
+        )
         vector_blob = pack_vector(vector)
 
         with conn:
@@ -311,7 +335,7 @@ def index_summary_entry(
                 """,
                 (
                     entry_id,
-                    DEFAULT_EMBEDDING_MODEL,
+                    actual_model,
                     len(vector),
                     content_hash,
                     search_text,
@@ -355,21 +379,59 @@ def clear_all_embeddings(db_path: Optional[str] = None) -> bool:
         return False
 
 
+def cleanup_orphaned_vectors(db_path: Optional[str] = None) -> int:
+    """
+    Deletes orphaned embedding records where the associated summary_history record no longer exists (P2-SRCH-02).
+    Returns the count of deleted orphaned rows.
+    """
+    if is_serverless_env() and db_path is None:
+        return 0
+
+    init_vector_store(db_path)
+    try:
+        conn = get_db_connection(db_path)
+        with conn:
+            cursor = conn.execute("""
+                DELETE FROM summary_embeddings
+                WHERE summary_id NOT IN (SELECT id FROM summary_history)
+            """)
+            deleted = cursor.rowcount
+        conn.close()
+        return deleted
+    except Exception as e:
+        logger.warning("Failed to cleanup orphaned vectors: %s", str(e))
+        return 0
+
+
 def rebuild_vector_index(
     api_key: Optional[str] = None,
     db_path: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
-    """Rebuilds vector embeddings across all saved summaries in SQLite history."""
+    """Rebuilds vector embeddings across ALL saved summaries in SQLite history without an arbitrary limit."""
     init_vector_store(db_path)
-    all_entries = get_history(limit=1000, db_path=db_path)
-    total = len(all_entries)
+    # Purge any orphaned vectors first (P2-SRCH-02)
+    orphaned_cleaned = cleanup_orphaned_vectors(db_path=db_path)
+    conn = get_db_connection(db_path)
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM summary_history ORDER BY created_at ASC")
+    rows = cursor.fetchall()
+    conn.close()
+
+    total = len(rows)
     indexed = 0
     failed = 0
 
-    for item in all_entries:
+    for r in rows:
+        entry_id = r["id"]
         try:
-            success = index_summary_entry(item["id"], api_key=api_key, db_path=db_path, provider_config=provider_config)
+            success = index_summary_entry(
+                entry_id,
+                api_key=api_key,
+                db_path=db_path,
+                force_refresh=True,
+                provider_config=provider_config,
+            )
             if success:
                 indexed += 1
             else:
@@ -381,24 +443,36 @@ def rebuild_vector_index(
         "total": total,
         "indexed": indexed,
         "failed": failed,
+        "orphaned_cleaned": orphaned_cleaned,
         "model": DEFAULT_EMBEDDING_MODEL,
         "dimensions": EMBEDDING_DIMENSIONS,
     }
 
 
 def get_vector_store_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
-    """Returns vector storage metadata and total indexed count."""
+    """Returns vector storage metadata, model breakdown, and total indexed count."""
     init_vector_store(db_path)
     try:
         conn = get_db_connection(db_path)
         cursor = conn.cursor()
         cursor.execute("SELECT COUNT(*) AS cnt FROM summary_embeddings")
         cnt = cursor.fetchone()["cnt"]
+
+        cursor.execute("SELECT model, dimensions, COUNT(*) AS cnt FROM summary_embeddings GROUP BY model, dimensions")
+        group_rows = cursor.fetchall()
         conn.close()
+
+        breakdown = {
+            f"{r['model']}:{r['dimensions']}": r["cnt"] for r in group_rows
+        }
+        primary_model = group_rows[0]["model"] if group_rows else DEFAULT_EMBEDDING_MODEL
+        primary_dims = group_rows[0]["dimensions"] if group_rows else EMBEDDING_DIMENSIONS
+
         return {
             "indexed_count": cnt,
-            "model": DEFAULT_EMBEDDING_MODEL,
-            "dimensions": EMBEDDING_DIMENSIONS,
+            "model": primary_model,
+            "dimensions": primary_dims,
+            "model_breakdown": breakdown,
             "status": "ready" if cnt > 0 else "empty"
         }
     except Exception as e:
@@ -406,6 +480,7 @@ def get_vector_store_stats(db_path: Optional[str] = None) -> Dict[str, Any]:
             "indexed_count": 0,
             "model": DEFAULT_EMBEDDING_MODEL,
             "dimensions": EMBEDDING_DIMENSIONS,
+            "model_breakdown": {},
             "status": f"error: {str(e)}"
         }
 
@@ -445,36 +520,76 @@ def semantic_search(
     filter_type: Optional[str] = None,
     db_path: Optional[str] = None,
     provider_config: Optional[Dict[str, Any]] = None,
-) -> List[Dict[str, Any]]:
-    """Executes semantic similarity search across saved summary embeddings."""
+    return_metadata: bool = False,
+) -> Union[List[Dict[str, Any]], Tuple[List[Dict[str, Any]], Dict[str, Any]]]:
+    """
+    Executes semantic similarity search across saved summary embeddings.
+    When return_metadata=True, returns (results, metadata_dict) where metadata_dict contains
+    search_mode, embedding_model, and status_detail (P2-SRCH-03, P2-SRCH-04).
+    """
     cleaned_query = (query or "").strip()
     if not cleaned_query:
+        if return_metadata:
+            return [], {"search_mode": "none", "embedding_model": None, "status_detail": "empty_query"}
         return []
 
     active_filter = filter_type or entry_type_filter
     init_vector_store(db_path)
 
-    query_vector = generate_embedding(cleaned_query, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL, provider_config=provider_config)
+    query_vector, query_model = generate_embedding_with_model(
+        cleaned_query, api_key=api_key, model=DEFAULT_EMBEDDING_MODEL, provider_config=provider_config
+    )
+    query_dims = len(query_vector)
+    search_mode = "hash_vector" if query_model == "deterministic-hash-fallback" else "semantic"
 
     conn = get_db_connection(db_path)
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT e.summary_id, e.search_text, e.vector_blob,
+        SELECT e.summary_id, e.model, e.dimensions, e.search_text, e.vector_blob,
                h.title, h.url, h.mode, h.mode_name, h.entry_type, h.url_b, h.title_b, h.created_at_formatted
         FROM summary_embeddings e
         JOIN summary_history h ON e.summary_id = h.id
     """)
     rows = cursor.fetchall()
-    conn.close()
 
     if not rows:
+        try:
+            cursor.execute("SELECT COUNT(*) AS cnt FROM summary_history")
+            hist_count = cursor.fetchone()["cnt"]
+            cursor.execute("SELECT COUNT(*) AS cnt FROM summary_embeddings")
+            embed_count = cursor.fetchone()["cnt"]
+        except Exception:
+            hist_count = 0
+            embed_count = 0
+        conn.close()
+
+        status_detail = "no_records" if hist_count == 0 else ("index_empty" if embed_count == 0 else "no_matching_records")
+        if return_metadata:
+            return [], {
+                "search_mode": search_mode,
+                "embedding_model": query_model,
+                "status_detail": status_detail,
+            }
         return []
 
+    conn.close()
+
     scored_candidates = []
+    compatible_count = 0
+    filtered_count = 0
+
     for r in rows:
+        # Enforce model and dimension compatibility (SRCH-01)
+        r_model = r["model"]
+        r_dims = r["dimensions"]
+        if r_model != query_model or r_dims != query_dims:
+            continue
+        compatible_count += 1
+
         r_type = r["entry_type"] or "single"
         if active_filter and active_filter != "all" and r_type != active_filter:
             continue
+        filtered_count += 1
 
         try:
             stored_vector = unpack_vector(r["vector_blob"])
@@ -490,6 +605,8 @@ def semantic_search(
                     "mode": r["mode"],
                     "mode_name": r["mode_name"],
                     "entry_type": r_type,
+                    "model": r_model,
+                    "dimensions": r_dims,
                     "created_at_formatted": r["created_at_formatted"],
                     "score": round(score, 4),
                     "similarity": round(score, 4),
@@ -502,4 +619,21 @@ def semantic_search(
             continue
 
     scored_candidates.sort(key=lambda x: x["score"], reverse=True)
-    return scored_candidates[:top_k]
+    results = scored_candidates[:top_k]
+
+    if results:
+        status_detail = "ready"
+    elif compatible_count == 0:
+        status_detail = "no_compatible_vectors"
+    elif filtered_count == 0:
+        status_detail = "filter_no_match"
+    else:
+        status_detail = "below_threshold"
+
+    if return_metadata:
+        return results, {
+            "search_mode": search_mode,
+            "embedding_model": query_model,
+            "status_detail": status_detail,
+        }
+    return results

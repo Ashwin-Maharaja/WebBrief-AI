@@ -9,7 +9,6 @@ import datetime
 import html
 import io
 import re
-import urllib.parse
 from typing import Dict, Any, Optional
 
 try:
@@ -23,7 +22,6 @@ try:
         Table,
         TableStyle,
         HRFlowable,
-        KeepTogether,
         PageBreak,
     )
     from reportlab.pdfgen import canvas
@@ -262,6 +260,30 @@ def generate_summary_pdf(
     ]))
     elements.append(meta_table)
     elements.append(Spacer(1, 14))
+
+    # Partial summary warning banner (P2-PDF-01)
+    if summary.get("partial") or summary.get("is_partial"):
+        warning_msg = summary.get("warning") or "Partial Summary: Some content sections encountered errors during generation."
+        warn_style = ParagraphStyle(
+            "PartialWarning",
+            parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=8.5,
+            leading=12,
+            textColor=colors.HexColor("#b45309"),
+        )
+        warn_table = Table([[Paragraph(sanitize_text_for_pdf(f"⚠️ {warning_msg}"), warn_style)]], colWidths=[content_width])
+        warn_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fef3c7")),
+            ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#f59e0b")),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elements.append(warn_table)
+        elements.append(Spacer(1, 10))
 
     # 4. Overview Section
     overview = summary.get("overview", "")
@@ -584,13 +606,24 @@ def get_custom_pdf_styles():
     return styles
 
 
-def generate_comparison_pdf(comp: Dict[str, Any]) -> io.BytesIO:
+def generate_comparison_pdf(
+    comp: Optional[Dict[str, Any]] = None,
+    comparison: Optional[Dict[str, Any]] = None,
+    url_a: str = "",
+    url_b: str = "",
+    created_at: Optional[str] = None,
+    **kwargs
+) -> io.BytesIO:
     """
     Generates a beautifully styled, multi-page ReportLab PDF
     specifically structured for comparative research briefs.
+    Accepts data as positional 'comp' or keyword 'comparison=', with optional url_a/url_b and created_at.
     """
     if not REPORTLAB_AVAILABLE:
         raise RuntimeError("PDF export is unavailable because the reportlab library is not installed.")
+
+    comp = comp if comp is not None else (comparison or {})
+    comp_data = comp
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
         buffer,
@@ -606,8 +639,13 @@ def generate_comparison_pdf(comp: Dict[str, Any]) -> io.BytesIO:
 
     content_width = letter[0] - 80  # 612 - 80 = 532 pt
 
-    art_a = comp.get("article_a", {})
-    art_b = comp.get("article_b", {})
+    art_a = dict(comp_data.get("article_a", {}))
+    art_b = dict(comp_data.get("article_b", {}))
+    if not art_a.get("url") and url_a:
+        art_a["url"] = url_a
+    if not art_b.get("url") and url_b:
+        art_b["url"] = url_b
+
     title_a = sanitize_text_for_pdf(art_a.get("title", "Article A"))
     url_a = sanitize_text_for_pdf(art_a.get("url", ""))
     overview_a = sanitize_text_for_pdf(art_a.get("overview", ""))
@@ -616,8 +654,8 @@ def generate_comparison_pdf(comp: Dict[str, Any]) -> io.BytesIO:
     url_b = sanitize_text_for_pdf(art_b.get("url", ""))
     overview_b = sanitize_text_for_pdf(art_b.get("overview", ""))
 
-    comp_title = sanitize_text_for_pdf(comp.get("title", f"Comparative Analysis: {title_a} vs {title_b}"))
-    date_str = datetime.datetime.now().strftime("%B %d, %Y • %I:%M %p")
+    comp_title = sanitize_text_for_pdf(comp_data.get("title", f"Comparative Analysis: {title_a} vs {title_b}"))
+    date_str = created_at or datetime.datetime.now().strftime("%B %d, %Y • %I:%M %p")
 
     # Document Header Banner
     header_data = [
@@ -638,6 +676,29 @@ def generate_comparison_pdf(comp: Dict[str, Any]) -> io.BytesIO:
     # Main Title
     elements.append(Paragraph(comp_title, styles["Title"]))
     elements.append(Spacer(1, 10))
+
+    if comp.get("partial") or comp.get("is_partial"):
+        warning_msg = comp.get("warning") or "Partial Comparative Analysis: Some content sections encountered errors during generation."
+        warn_style = ParagraphStyle(
+            "PartialComparisonWarning",
+            parent=styles["Normal"],
+            fontName="Helvetica-Bold",
+            fontSize=8.5,
+            leading=12,
+            textColor=colors.HexColor("#b45309"),
+        )
+        warn_table = Table([[Paragraph(sanitize_text_for_pdf(f"⚠️ {warning_msg}"), warn_style)]], colWidths=[content_width])
+        warn_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#fef3c7")),
+            ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#f59e0b")),
+            ("TOPPADDING", (0, 0), (-1, -1), 6),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+            ("LEFTPADDING", (0, 0), (-1, -1), 10),
+            ("RIGHTPADDING", (0, 0), (-1, -1), 10),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ]))
+        elements.append(warn_table)
+        elements.append(Spacer(1, 10))
 
     # Side-by-side Source Overview Cards Table
     url_a_html = f'<link href="{url_a}" color="#2563eb"><u>{url_a[:55]}...</u></link>' if len(url_a) > 55 else f'<link href="{url_a}" color="#2563eb"><u>{url_a}</u></link>'

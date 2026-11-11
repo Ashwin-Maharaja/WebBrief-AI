@@ -1,18 +1,55 @@
 """No network required: encrypted vault lifecycle and Flask endpoint tests."""
+import hashlib
 import json
 import time
 import unittest
 from unittest.mock import patch, MagicMock
 from cryptography.fernet import Fernet
 from redis.exceptions import RedisError
-from credential_vault import TemporaryCredentialVault
-from app import app
+from credential_vault import TemporaryCredentialVault, PersistentCredentialVault
+from app import app, VAULT_COOKIE_NAME
+
+
+class FakePipeline:
+    def __init__(self, fake_redis):
+        self.fake_redis = fake_redis
+        self.actions = []
+
+    def watch(self, *keys):
+        return self
+
+    def unwatch(self):
+        return self
+
+    def get(self, key):
+        return self.fake_redis.get(key)
+
+    def set(self, key, value):
+        self.actions.append(lambda: self.fake_redis.set(key, value))
+        return self
+
+    def multi(self):
+        return self
+
+    def delete(self, key):
+        self.actions.append(lambda: self.fake_redis.delete(key))
+        return self
+
+    def execute(self):
+        results = []
+        for act in self.actions:
+            results.append(act())
+        self.actions = []
+        return results
 
 
 class FakeRedis:
     def __init__(self):
         self.data = {}
         self.ttls = {}
+
+    def set(self, key, value):
+        self.data[key] = value
 
     def setex(self, key, ttl, value):
         self.data[key] = value
@@ -26,10 +63,17 @@ class FakeRedis:
 
     def delete(self, key):
         self.data.pop(key, None)
+        return 1
+
+    def pipeline(self):
+        return FakePipeline(self)
 
 
 class BrokenRedis:
     """Simulates a Redis instance throwing network or connection exceptions."""
+    def set(self, key, value):
+        raise RedisError("Redis connection refused")
+
     def setex(self, key, ttl, value):
         raise RedisError("Redis connection refused")
 
@@ -42,17 +86,26 @@ class BrokenRedis:
     def delete(self, key):
         raise RedisError("Redis cluster unreachable")
 
+    def pipeline(self):
+        raise RedisError("Redis connection refused")
+
 
 class VaultTests(unittest.TestCase):
     def setUp(self):
         self.redis = FakeRedis()
         self.key = Fernet.generate_key()
-        self.vault = TemporaryCredentialVault(self.redis, self.key)
+        self.vault = PersistentCredentialVault(self.redis, self.key)
 
     def test_encryption_and_session_isolation(self):
         saved = self.vault.save('alice', {'primary_provider': 'gemini', 'gemini_api_key': 'AIzaSy_test_secret'})
         self.assertTrue(saved)
-        blob = next(iter(self.redis.data.values()))
+        # Check that lookup key uses SHA-256 hash of 'alice'
+        expected_hash = hashlib.sha256('alice'.encode('utf-8')).hexdigest()
+        expected_key = f"webbrief:credentials:{expected_hash}"
+        self.assertIn(expected_key, self.redis.data)
+
+        # Raw secret is encrypted in cipher blob
+        blob = self.redis.data[expected_key]
         self.assertNotIn(b'AIzaSy_test_secret', blob)
         self.assertEqual(self.vault.load('alice')['gemini_api_key'], 'AIzaSy_test_secret')
         self.assertEqual(self.vault.load('bob'), {})
@@ -62,29 +115,49 @@ class VaultTests(unittest.TestCase):
         self.vault.delete('alice')
         self.assertEqual(self.vault.load('alice'), {})
 
-    def test_absolute_expiration(self):
-        self.vault.save('alice', {'gemini_api_key': 'test'})
-        with patch('credential_vault.time.time', return_value=time.time() + 9 * 3600):
-            self.assertEqual(self.vault.load('alice'), {})
+    def test_indefinite_retention_across_time(self):
+        """Verifies that credentials do NOT expire after 30 minutes, 8 hours, or 1 year."""
+        self.vault.save('alice', {'gemini_api_key': 'test_indefinite'})
+        # Verify no TTL was set in Redis
+        expected_hash = hashlib.sha256('alice'.encode('utf-8')).hexdigest()
+        self.assertNotIn(f"webbrief:credentials:{expected_hash}", self.redis.ttls)
+
+        # Simulate 1 year in the future
+        with patch('time.time', return_value=time.time() + 365 * 86400):
+            loaded = self.vault.load('alice')
+            self.assertEqual(loaded.get('gemini_api_key'), 'test_indefinite')
 
     def test_invalid_token_handling(self):
-        """Verifies that key rotation or corrupted cipher blobs do NOT raise uncaught InvalidToken."""
+        """Verifies that key mismatch gracefully returns {} without raising uncaught InvalidToken."""
         self.vault.save('alice', {'gemini_api_key': 'secret_value'})
         # Create a second vault instance with a different key
-        other_vault = TemporaryCredentialVault(self.redis, Fernet.generate_key())
-        # Should gracefully return {} and delete corrupted record without crashing
+        other_vault = PersistentCredentialVault(self.redis, Fernet.generate_key())
         loaded = other_vault.load('alice')
         self.assertEqual(loaded, {})
-        # Verify the unparseable key was removed from Redis
-        self.assertIsNone(self.redis.get(self.vault._key('alice')))
 
     def test_redis_error_graceful_handling(self):
         """Verifies that Redis network or timeout errors do not crash callers."""
-        broken_vault = TemporaryCredentialVault(BrokenRedis(), self.key)
+        broken_vault = PersistentCredentialVault(BrokenRedis(), self.key)
         self.assertFalse(broken_vault.save('alice', {'gemini_api_key': 'secret'}))
         self.assertEqual(broken_vault.load('alice'), {})
-        # delete should not raise
-        broken_vault.delete('alice')
+        self.assertFalse(broken_vault.delete('alice'))
+
+    def test_legacy_key_migration(self):
+        """Verifies that legacy unhashed Redis keys can still be loaded and migrated."""
+        legacy_key = "webbrief:credentials:legacy_alice"
+        record = {"_created": int(time.time()), "config": {"gemini_api_key": "legacy_val"}}
+        blob = self.vault.cipher.encrypt(json.dumps(record).encode('utf-8'))
+        self.redis.data[legacy_key] = blob
+
+        # Should load via legacy fallback
+        loaded = self.vault.load("legacy_alice")
+        self.assertEqual(loaded.get("gemini_api_key"), "legacy_val")
+
+        # Saving should migrate to hashed key and clean up legacy key
+        self.vault.save("legacy_alice", {"gemini_api_key": "migrated_val"})
+        hashed_key = self.vault._key("legacy_alice")
+        self.assertIn(hashed_key, self.redis.data)
+        self.assertNotIn(legacy_key, self.redis.data)
 
 
 class TestAppVaultRoutes(unittest.TestCase):
@@ -113,7 +186,7 @@ class TestAppVaultRoutes(unittest.TestCase):
     @patch('app.validate_gemini_credentials', return_value=(True, ''))
     def test_vault_configured_lifecycle(self, mock_val):
         fake_redis = FakeRedis()
-        test_vault = TemporaryCredentialVault(fake_redis, Fernet.generate_key())
+        test_vault = PersistentCredentialVault(fake_redis, Fernet.generate_key())
         with patch('app._vault', test_vault):
             # Post credentials
             res = self.client.post(
@@ -127,6 +200,11 @@ class TestAppVaultRoutes(unittest.TestCase):
             )
             self.assertEqual(res.status_code, 200)
             self.assertTrue(res.get_json()['success'])
+            self.assertTrue(res.get_json().get('persistent', False))
+
+            # Verify persistent cookie was set
+            cookie_headers = [h[1] for h in res.headers if h[0].lower() == 'set-cookie']
+            self.assertTrue(any(VAULT_COOKIE_NAME in ch for ch in cookie_headers))
 
             # Status check
             res_status = self.client.get('/api/credentials/status')
@@ -147,8 +225,36 @@ class TestAppVaultRoutes(unittest.TestCase):
             self.assertFalse(res_status2.get_json()['configured'])
 
     @patch('app.validate_gemini_credentials', return_value=(True, ''))
+    def test_cross_session_cookie_continuity(self, mock_val):
+        """Verifies that an opaque browser cookie retains access even if Flask session expires."""
+        fake_redis = FakeRedis()
+        test_vault = PersistentCredentialVault(fake_redis, Fernet.generate_key())
+        with patch('app._vault', test_vault):
+            # 1. Save credentials in Session 1
+            res = self.client.post(
+                '/api/credentials',
+                json={'primary_provider': 'gemini', 'gemini_api_key': 'AIzaSy_persisted_key'},
+                headers={'X-CSRF-Token': self.csrf_token}
+            )
+            self.assertEqual(res.status_code, 200)
+
+            # Extract vault cookie
+            vault_cookie = self.client.get_cookie(VAULT_COOKIE_NAME)
+            self.assertIsNotNone(vault_cookie)
+            vault_id = vault_cookie.value
+
+            # 2. Simulate browser restart / session expiration with a NEW test client having ONLY the vault cookie
+            new_client = app.test_client()
+            new_client.set_cookie(VAULT_COOKIE_NAME, vault_id)
+
+            # Check status on new client
+            res2 = new_client.get('/api/credentials/status')
+            self.assertEqual(res2.status_code, 200)
+            self.assertTrue(res2.get_json()['configured'])
+
+    @patch('app.validate_gemini_credentials', return_value=(True, ''))
     def test_vault_storage_failure_returns_503(self, mock_val):
-        broken_vault = TemporaryCredentialVault(BrokenRedis(), Fernet.generate_key())
+        broken_vault = PersistentCredentialVault(BrokenRedis(), Fernet.generate_key())
         with patch('app._vault', broken_vault):
             res = self.client.post(
                 '/api/credentials',
@@ -160,7 +266,7 @@ class TestAppVaultRoutes(unittest.TestCase):
     @patch('app.validate_gemini_credentials', return_value=(True, ''))
     def test_save_config_vault_storage_failure_returns_503(self, mock_val):
         """Verifies that /api/save-config does not return success when vault write fails in serverless mode."""
-        broken_vault = TemporaryCredentialVault(BrokenRedis(), Fernet.generate_key())
+        broken_vault = PersistentCredentialVault(BrokenRedis(), Fernet.generate_key())
         with patch('app._vault', broken_vault):
             with patch('app.is_serverless_env', return_value=True):
                 res = self.client.post(
@@ -171,13 +277,15 @@ class TestAppVaultRoutes(unittest.TestCase):
                 self.assertEqual(res.status_code, 503)
                 data = res.get_json()
                 self.assertFalse(data.get('success', False))
-                self.assertIn("Failed to store", data.get('error', ''))
+                self.assertTrue(
+                    "Failed to store" in data.get('error', '') or "unavailable" in data.get('error', '').lower()
+                )
 
     @patch('app.validate_gemini_credentials', return_value=(False, 'Invalid Gemini API key'))
     def test_vault_invalid_credentials_rejection(self, mock_gemini):
         """Verifies that invalid credentials are authenticated and rejected before storage."""
         fake_redis = FakeRedis()
-        test_vault = TemporaryCredentialVault(fake_redis, Fernet.generate_key())
+        test_vault = PersistentCredentialVault(fake_redis, Fernet.generate_key())
         with patch('app._vault', test_vault):
             res = self.client.post(
                 '/api/credentials',

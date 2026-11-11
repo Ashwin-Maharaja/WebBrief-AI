@@ -1,5 +1,5 @@
 """
-WebBrief AI — Abstract Base Provider (v1.6.0).
+WebBrief AI — Abstract Base Provider.
 Defines the standard interface that all AI provider adapters must implement.
 """
 
@@ -9,7 +9,7 @@ import logging
 import re
 from typing import Dict, Any, List, Optional, Tuple
 
-from .exceptions import ProviderError, ProviderBadRequestError
+from .exceptions import ProviderError
 
 logger = logging.getLogger(__name__)
 

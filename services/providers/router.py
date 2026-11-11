@@ -12,16 +12,6 @@ from typing import Dict, Any, List, Optional, Tuple
 from .base import BaseProvider
 from .gemini import GeminiProvider
 from .catalogue import validate_model_id
-from .exceptions import (
-    ProviderError,
-    ProviderAuthError,
-    ProviderInvalidModelError,
-    ProviderBadRequestError,
-    ProviderRateLimitError,
-    ProviderQuotaError,
-    ProviderUnavailableError,
-    ProviderTimeoutError,
-)
 
 logger = logging.getLogger(__name__)
 

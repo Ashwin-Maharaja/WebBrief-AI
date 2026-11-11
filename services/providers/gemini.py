@@ -3,9 +3,9 @@ WebBrief AI — Google Gemini Developer API Provider.
 Implements integration with Google Gemini Developer API using the official google-genai SDK.
 """
 
-import json
 import logging
-import re
+import random
+import time
 from typing import Dict, Any, List, Optional, Tuple
 
 from google import genai
@@ -22,7 +22,7 @@ from .exceptions import (
     ProviderUnavailableError,
     ProviderTimeoutError,
 )
-from .catalogue import get_models_for_provider, get_default_model, validate_model_id, is_valid_model
+from .catalogue import get_models_for_provider, get_default_model, validate_model_id
 
 logger = logging.getLogger(__name__)
 
@@ -153,30 +153,51 @@ class GeminiProvider(BaseProvider):
         if max_tokens:
             config.max_output_tokens = max_tokens
 
-        try:
-            response = client.models.generate_content(
-                model=active_model,
-                contents=contents,
-                config=config,
-            )
-            return response.text or ""
-        except errors.APIError as e:
-            self._handle_api_error(e, active_model)
-        except Exception as e:
-            err_str = str(e)
-            if (
-                isinstance(e, TimeoutError)
-                or (hasattr(errors, "httpx") and isinstance(e, errors.httpx.TimeoutException))
-                or "timeout" in err_str.lower()
-                or "timed out" in err_str.lower()
-                or "deadline" in err_str.lower()
-            ):
-                raise ProviderTimeoutError(
-                    f"Inference request timed out after {eff_timeout}s",
-                    provider=self.provider_id,
+        max_retries = 2
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.models.generate_content(
                     model=active_model,
+                    contents=contents,
+                    config=config,
                 )
-            raise ProviderError(f"Google Gemini execution error: {err_str}", provider=self.provider_id, model=active_model)
+                return response.text or ""
+            except errors.APIError as e:
+                code = getattr(e, "code", 500)
+                msg = getattr(e, "message", str(e)) or str(e)
+                # Never retry client-side/auth/invalid model or quota exhausted errors (AI-03)
+                if code in (400, 401, 403, 404) or (code == 429 and "quota" in msg.lower()) or attempt >= max_retries:
+                    self._handle_api_error(e, active_model)
+                # Transient error (500, 502, 503, 504): backoff with jitter and retry
+                backoff = (0.5 * (2 ** attempt)) + (random.uniform(0.1, 0.3))
+                logger.warning(
+                    "Gemini transient API error (%d) on attempt %d/%d; retrying in %.2fs: %s",
+                    code, attempt + 1, max_retries, backoff, str(e)
+                )
+                time.sleep(backoff)
+            except Exception as e:
+                err_str = str(e)
+                is_timeout = (
+                    isinstance(e, TimeoutError)
+                    or (getattr(errors, "httpx", None) is not None and isinstance(e, errors.httpx.TimeoutException))
+                    or "timeout" in err_str.lower()
+                    or "timed out" in err_str.lower()
+                    or "deadline" in err_str.lower()
+                )
+                if attempt >= max_retries or not is_timeout:
+                    if is_timeout:
+                        raise ProviderTimeoutError(
+                            f"Inference request timed out after {eff_timeout}s",
+                            provider=self.provider_id,
+                            model=active_model,
+                        )
+                    raise ProviderError(f"Google Gemini execution error: {err_str}", provider=self.provider_id, model=active_model)
+                backoff = (0.5 * (2 ** attempt)) + (random.uniform(0.1, 0.3))
+                logger.warning(
+                    "Gemini network/timeout on attempt %d/%d; retrying in %.2fs: %s",
+                    attempt + 1, max_retries, backoff, err_str
+                )
+                time.sleep(backoff)
 
     def embed_text(self, text: str) -> List[float]:
         """Generates vector embeddings using Gemini Embedding model."""

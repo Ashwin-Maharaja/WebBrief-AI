@@ -22,9 +22,6 @@ class TestUIResponsiveness(unittest.TestCase):
 
         cls.template_files = {
             "index": os.path.join(TEMPLATES_DIR, "index.html"),
-            "result": os.path.join(TEMPLATES_DIR, "result.html"),
-            "history": os.path.join(TEMPLATES_DIR, "history.html"),
-            "settings": os.path.join(TEMPLATES_DIR, "settings.html"),
         }
         cls.templates = {}
         for name, path in cls.template_files.items():
@@ -219,6 +216,29 @@ class TestUIResponsiveness(unittest.TestCase):
         self.assertIn(".claims-table", mq_480)
         self.assertIn(".stat-pills-row", mq_480)
 
+    def test_ultra_compact_mobile_breakpoint_380px(self):
+        """Ensure 380px breakpoint optimizes ultra-narrow screens (iPhone SE, Galaxy Fold cover)."""
+        mq_380 = self._extract_media_query("380px")
+        self.assertIsNotNone(mq_380)
+        self.assertIn("padding: 8px 4px;", mq_380)
+        self.assertIn(".history-actions", mq_380)
+        self.assertIn(".tab-btn", mq_380)
+
+    def test_tablet_breakpoint_1024px(self):
+        """Ensure 1024px media query optimizes tablet and small laptop viewports."""
+        self.assertIn("@media (max-width: 1024px)", self.css_content)
+
+    def test_landscape_mobile_breakpoint(self):
+        """Ensure landscape mobile media query optimizes vertical real estate."""
+        self.assertIn("@media (max-height: 520px) and (orientation: landscape)", self.css_content)
+        self.assertIn(".notion-modal-card", self.css_content)
+
+    def test_touch_device_and_ios_zoom_prevention(self):
+        """Ensure touch devices prevent iOS focus zoom with 16px font and maintain 44px targets."""
+        self.assertIn("@media (hover: none) and (pointer: coarse)", self.css_content)
+        self.assertIn("font-size: 16px !important;", self.css_content)
+        self.assertIn("min-height: 44px;", self.css_content)
+
     def test_setup_page_and_button_removed(self):
         """Ensure the setup wizard template and button are completely removed and route redirects."""
         setup_template_path = os.path.join(TEMPLATES_DIR, "setup.html")
@@ -228,12 +248,12 @@ class TestUIResponsiveness(unittest.TestCase):
         self.assertNotIn('href="{{ url_for(\'setup\') }}"', self.templates["index"])
         self.assertNotIn("Configure Cloudflare / Groq", self.templates["index"])
 
-        # Ensure /setup route redirects to /settings
+        # Ensure /setup route redirects to / (home)
         from app import app
         with app.test_client() as client:
             resp = client.get("/setup", follow_redirects=False)
             self.assertEqual(resp.status_code, 301)
-            self.assertIn("/settings", resp.headers.get("Location", ""))
+            self.assertEqual(resp.headers.get("Location"), "/")
 
     def test_hosted_model_select_and_key_input(self):
         """Ensure index.html contains the hosted BYOK model dropdown and Gemini key input."""
@@ -247,25 +267,22 @@ class TestUIResponsiveness(unittest.TestCase):
         self.assertIsNotNone(mq_640)
         self.assertIn("#hosted-model-select", mq_640)
 
-    def test_settings_page_streamlined(self):
-        """Ensure settings.html is named Settings, first segment is Appearance & Theme, and has no legacy setup blocks."""
-        settings_html = self.templates["settings"]
-        self.assertRegex(settings_html, r"<title>WebBrief AI\s*[—–-]\s*Settings</title>")
-        self.assertIn("<h3>Appearance & Theme</h3>", settings_html)
-        self.assertNotIn('<div class="settings-header">', settings_html)
-        self.assertNotIn("AI Provider & Multi-Provider BYOK", settings_html)
-        self.assertNotIn("Configure Google Gemini API", settings_html)
-        self.assertNotIn("Remove Saved Credentials", settings_html)
-        self.assertNotIn("setup wizard", settings_html.lower())
+    def test_settings_page_scrapped_and_redirects_to_home(self):
+        """Ensure settings.html is deleted and /settings route redirects to home in SPA."""
+        settings_template_path = os.path.join(TEMPLATES_DIR, "settings.html")
+        self.assertFalse(os.path.exists(settings_template_path), "templates/settings.html must be scrapped.")
 
-        # Verify index.html navigation links cleanly to 'Settings'
+        # Ensure /settings route redirects to /
+        from app import app
+        with app.test_client() as client:
+            resp = client.get("/settings", follow_redirects=False)
+            self.assertEqual(resp.status_code, 301)
+            self.assertEqual(resp.headers.get("Location"), "/")
+
+        # Verify index.html contains the integrated theme toggle and prompt directives
         index_html = self.templates["index"]
-        self.assertNotIn("BYOK Settings", index_html)
-        self.assertIn("<span>⚙️ Settings</span>", index_html)
-
-        # Verify settings header has working theme toggle button
-        self.assertIn('id="theme-toggle-btn"', settings_html)
-        self.assertIn('themeBtn.addEventListener("click"', settings_html)
+        self.assertIn('id="theme-toggle-btn"', index_html)
+        self.assertIn('id="directives-accordion"', index_html)
 
     # --------------------------------------------------------------------------
     # Helper Methods
